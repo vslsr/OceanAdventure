@@ -1,0 +1,72 @@
+# Unreal Engine generated directories
+/Binaries/
+/Build/
+/DerivedDataCache/
+/Intermediate/
+/Saved/
+
+# Generated files inside project plugins
+/Plugins/**/Binaries/
+/Plugins/**/Intermediate/
+/Plugins/**/DerivedDataCache/
+/Plugins/**/Saved/
+
+# Per-user Unreal content
+/Content/Developers/
+
+# Visual Studio and VS Code
+/.vs/
+/.vscode/
+**/.history/
+*.sln
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+*.opendb
+*.opensdf
+*.sdf
+
+# JetBrains Rider
+/.idea/
+/.Rider/
+*.csproj
+*.sln.DotSettings
+*.sln.DotSettings.user
+
+# Xcode
+*.xcworkspace/
+*.xcodeproj/
+xcuserdata/
+
+# Compiled symbols and temporary files
+*.pdb
+*.obj
+*.ipch
+*.iobj
+*.ipdb
+*.tmp
+*.temp
+*.bak
+*.orig
+*.log
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Archives
+*.zip
+
+# EOS SDK files supplied outside source control
+/Plugins/EOSIntegrationKit/Source/ThirdParty/EIKSDK/Tools/
+/Plugins/EOSIntegrationKit/Source/ThirdParty/EIKSDK/Lib/
+/Plugins/EOSIntegrationKit/Source/ThirdParty/EIKSDK/Include/
+/Plugins/EOSIntegrationKit/Source/ThirdParty/EIKSDK/Bin/
+
+# Local EOS credentials and runtime configuration
+/Config/Custom/EosClient/
+/Config/Custom/EosDedicatedServer/
