@@ -11,13 +11,22 @@ This script creates that pair:
     /OceanAdventure/Experience/BP_Experience_Ocean         (ULyraExperienceDefinition)
     /OceanAdventure/Experience/DA_Facing_Experience_Ocean  (ULyraUserFacingExperienceDefinition)
 
-Both live under the OceanAdventure game feature so the experience ships with
-the feature that implements it. That only works because Config/DefaultGame.ini
-lists /OceanAdventure/Experience in the LyraExperienceDefinition and
-LyraUserFacingExperienceDefinition entries of PrimaryAssetTypesToScan, the same
-way /OceanCore/Maps was added to the Map entry. Without those scan directories
-the assets would resolve in the editor (via bShouldGuessTypeAndNameInEditor)
-but go missing in a packaged build.
+Everything the front-end reaches lives under the OceanAdventure game feature,
+which owns this gameplay mode: the experience pair, and the map it launches.
+OceanCore stays underneath as the chunk-streaming runtime and exposes no
+front-end content of its own.
+
+That works because Config/DefaultGame.ini lists /OceanAdventure/Experience in
+the LyraExperienceDefinition and LyraUserFacingExperienceDefinition scan rules,
+and /OceanAdventure/Maps in the Map rule. Without those scan directories the
+assets resolve in the editor (via bShouldGuessTypeAndNameInEditor) but go
+missing in a packaged build.
+
+Note that a primary asset id is (type, asset name) — the path is not part of
+it. OceanCore ships a map with the same L_OceanChunkTest name, so scanning both
+/OceanCore/Maps and /OceanAdventure/Maps would make two assets claim the id
+("Map", "L_OceanChunkTest") and the AssetManager would pick one arbitrarily.
+Only the OceanAdventure map is scanned, which keeps the id unambiguous.
 
 Usage:
     Run from the editor Python console:
@@ -34,7 +43,7 @@ decisions and are deliberately left for you to fill in the editor.
 import unreal
 
 
-MAP_ASSET_PATH = "/OceanCore/Maps/L_OceanChunkTest"
+MAP_ASSET_PATH = "/OceanAdventure/Maps/L_OceanChunkTest"
 
 EXPERIENCE_PACKAGE_PATH = "/OceanAdventure/Experience"
 EXPERIENCE_ASSET_NAME = "BP_Experience_Ocean"
