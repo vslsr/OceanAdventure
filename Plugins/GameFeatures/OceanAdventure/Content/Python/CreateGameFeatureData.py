@@ -11,13 +11,15 @@ plugin and its scan rules leave with it.
 
 This mirrors what SimpleExperience already does.
 
-Run from the editor Python console. This file lives in Scripts/, which Unreal
-does not put on sys.path -- only a plugin's Content/Python folder gets that --
-so it has to be executed by path rather than imported:
+Run from the editor Python console. Unreal puts this plugin's Content/Python
+folder on sys.path, so import by module name:
 
-    import unreal, os
-    exec(open(os.path.join(unreal.Paths.project_dir(),
-        "Plugins/GameFeatures/OceanAdventure/Scripts/CreateGameFeatureData.py")).read())
+    import CreateGameFeatureData
+
+To run again in the same editor session:
+
+    import importlib, CreateGameFeatureData
+    importlib.reload(CreateGameFeatureData)
 
 Idempotent: the asset is created if missing, and the scan rules are rewritten
 to match SCAN_TYPES either way.

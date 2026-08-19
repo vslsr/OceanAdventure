@@ -30,7 +30,7 @@ front-end content of its own.
 For the AssetManager to resolve these by primary asset id, /OceanAdventure/Maps
 and /OceanAdventure/Experience have to be scanned. Those scan rules belong to
 the plugin, declared on its GameFeatureData and applied when the feature
-registers -- see Scripts/CreateGameFeatureData.py. Run that first; the project's
+registers -- see CreateGameFeatureData.py. Run that first; the project's
 Config/DefaultGame.ini deliberately says nothing about /OceanAdventure.
 
 Note that a primary asset id is (type, asset name) — the path is not part of
