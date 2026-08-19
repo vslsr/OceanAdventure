@@ -40,19 +40,19 @@ ASSET_PATH = f"{PACKAGE_PATH}/{ASSET_NAME}"
 SCAN_TYPES = [
     (
         "Map",
-        "/Script/Engine.World",
+        unreal.World,
         False,
         ["/OceanAdventure/Maps"],
     ),
     (
         "LyraExperienceDefinition",
-        "/Script/LyraGame.LyraExperienceDefinition",
+        unreal.LyraExperienceDefinition,
         True,
         ["/OceanAdventure/Experience"],
     ),
     (
         "LyraUserFacingExperienceDefinition",
-        "/Script/LyraGame.LyraUserFacingExperienceDefinition",
+        unreal.LyraUserFacingExperienceDefinition,
         False,
         ["/OceanAdventure/Experience"],
     ),
@@ -75,10 +75,12 @@ def make_directory_path(path):
     return directory
 
 
-def make_type_info(type_name, base_class_path, has_blueprint_classes, directories):
+def make_type_info(type_name, base_class, has_blueprint_classes, directories):
     info = unreal.PrimaryAssetTypeInfo()
     info.set_editor_property("primary_asset_type", unreal.Name(type_name))
-    info.set_editor_property("asset_base_class", unreal.SoftClassPath(base_class_path))
+    # AssetBaseClass is a soft class property: it takes the class itself, not a
+    # SoftClassPath wrapping its path.
+    info.set_editor_property("asset_base_class", base_class)
     info.set_editor_property("has_blueprint_classes", has_blueprint_classes)
     info.set_editor_property("is_editor_only", False)
     info.set_editor_property(
