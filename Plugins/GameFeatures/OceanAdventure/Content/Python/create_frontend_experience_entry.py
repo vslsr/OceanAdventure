@@ -8,8 +8,19 @@ that declares which Game Feature plugins to activate.
 
 This script creates that pair:
 
-    /OceanAdventure/Experience/BP_Experience_Ocean         (ULyraExperienceDefinition)
-    /OceanAdventure/Experience/DA_Facing_Experience_Ocean  (ULyraUserFacingExperienceDefinition)
+    /OceanAdventure/Experience/BP_Experience_Ocean
+        a Blueprint class deriving from ULyraExperienceDefinition
+    /OceanAdventure/Experience/DA_Facing_Experience_Ocean
+        a ULyraUserFacingExperienceDefinition data asset
+
+The two asset kinds are not interchangeable, and PrimaryAssetTypesToScan says
+which is which: LyraExperienceDefinition is scanned with bHasBlueprintClasses
+True, so an experience is a Blueprint class, while
+LyraUserFacingExperienceDefinition is scanned with it False, so a front-end
+tile is a data asset. That is why Lyra's own assets are named BP_Experience_*
+and DA_Facing_Experience_*. An experience built as a data asset is invisible to
+the class pickers that select one, such as World Settings > Default Gameplay
+Experience.
 
 Everything the front-end reaches lives under the OceanAdventure game feature,
 which owns this gameplay mode: the experience pair, and the map it launches.
@@ -113,21 +124,62 @@ def make_primary_asset_id(asset_type, asset_name):
         return asset_id
 
 
+def load_existing(asset_path, expected_class):
+    """Return the asset at asset_path, or None. Rejects a wrong-typed leftover."""
+    if not unreal.EditorAssetLibrary.does_asset_exist(asset_path):
+        return None
+
+    existing = require(
+        unreal.EditorAssetLibrary.load_asset(asset_path),
+        f"Unable to load asset: {asset_path}",
+    )
+    if not isinstance(existing, expected_class):
+        raise RuntimeError(
+            f"{asset_path} already exists as {type(existing).__name__}, expected "
+            f"{expected_class.__name__}. An earlier version of this script created "
+            "the experience as a data asset instead of a Blueprint class. Delete "
+            "the asset in the editor and run this again."
+        )
+    log(f"Updating existing asset: {asset_path}")
+    return existing
+
+
 def get_or_create_data_asset(asset_name, package_path, asset_class):
     asset_path = f"{package_path}/{asset_name}"
-    if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
-        log(f"Updating existing asset: {asset_path}")
-        return require(
-            unreal.EditorAssetLibrary.load_asset(asset_path),
-            f"Unable to load asset: {asset_path}",
-        )
+    existing = load_existing(asset_path, asset_class)
+    if existing is not None:
+        return existing
 
-    log(f"Creating asset: {asset_path} ({asset_class.__name__})")
+    log(f"Creating data asset: {asset_path} ({asset_class.__name__})")
     factory = unreal.DataAssetFactory()
     factory.set_editor_property("data_asset_class", asset_class)
     return require(
         unreal.AssetToolsHelpers.get_asset_tools().create_asset(
             asset_name, package_path, asset_class, factory
+        ),
+        f"Unable to create asset: {asset_path}",
+    )
+
+
+def get_or_create_blueprint(asset_name, package_path, parent_class):
+    """Create a Blueprint class asset deriving from parent_class.
+
+    ULyraExperienceDefinition is scanned with bHasBlueprintClasses=True, so an
+    experience must be a Blueprint class (the BP_ prefix in Lyra's own assets),
+    not a data asset instance. A data asset would never appear in the class
+    pickers that select an experience.
+    """
+    asset_path = f"{package_path}/{asset_name}"
+    existing = load_existing(asset_path, unreal.Blueprint)
+    if existing is not None:
+        return existing
+
+    log(f"Creating Blueprint class: {asset_path} (parent {parent_class.__name__})")
+    factory = unreal.BlueprintFactory()
+    factory.set_editor_property("parent_class", parent_class)
+    return require(
+        unreal.AssetToolsHelpers.get_asset_tools().create_asset(
+            asset_name, package_path, unreal.Blueprint, factory
         ),
         f"Unable to create asset: {asset_path}",
     )
@@ -146,10 +198,23 @@ def verify_map():
 
 
 def create_experience_definition():
-    experience = get_or_create_data_asset(
+    experience = get_or_create_blueprint(
         EXPERIENCE_ASSET_NAME, EXPERIENCE_PACKAGE_PATH, unreal.LyraExperienceDefinition
     )
-    experience.set_editor_property("game_features_to_enable", GAME_FEATURES_TO_ENABLE)
+
+    # Settings on a Blueprint class live on its class default object.
+    generated_class = require(
+        experience.generated_class(),
+        f"{EXPERIENCE_ASSET_NAME} has no generated class; the Blueprint failed to "
+        "compile.",
+    )
+    defaults = require(
+        unreal.get_default_object(generated_class),
+        f"Unable to reach the class defaults of {EXPERIENCE_ASSET_NAME}",
+    )
+    defaults.set_editor_property("game_features_to_enable", GAME_FEATURES_TO_ENABLE)
+
+    unreal.BlueprintEditorLibrary.compile_blueprint(experience)
     require(
         unreal.EditorAssetLibrary.save_loaded_asset(experience),
         f"Unable to save {EXPERIENCE_ASSET_NAME}",
