@@ -98,10 +98,19 @@ def require(value, message):
 
 
 def make_primary_asset_id(asset_type, asset_name):
-    return unreal.PrimaryAssetId(
-        primary_asset_type=unreal.PrimaryAssetType(asset_type),
-        primary_asset_name=unreal.Name(asset_name),
-    )
+    # Struct construction from keywords is not available on every engine build,
+    # so fall back to default-constructing and assigning the two fields.
+    type_value = unreal.PrimaryAssetType(asset_type)
+    name_value = unreal.Name(asset_name)
+    try:
+        return unreal.PrimaryAssetId(
+            primary_asset_type=type_value, primary_asset_name=name_value
+        )
+    except (TypeError, ValueError):
+        asset_id = unreal.PrimaryAssetId()
+        asset_id.set_editor_property("primary_asset_type", type_value)
+        asset_id.set_editor_property("primary_asset_name", name_value)
+        return asset_id
 
 
 def get_or_create_data_asset(asset_name, package_path, asset_class):
@@ -113,7 +122,7 @@ def get_or_create_data_asset(asset_name, package_path, asset_class):
             f"Unable to load asset: {asset_path}",
         )
 
-    log(f"Creating asset: {asset_path} ({asset_class.get_name()})")
+    log(f"Creating asset: {asset_path} ({asset_class.__name__})")
     factory = unreal.DataAssetFactory()
     factory.set_editor_property("data_asset_class", asset_class)
     return require(
@@ -166,9 +175,9 @@ def create_user_facing_experience():
         "experience_id",
         make_primary_asset_id("LyraExperienceDefinition", EXPERIENCE_ASSET_NAME),
     )
-    facing.set_editor_property("tile_title", unreal.Text(TILE_TITLE))
-    facing.set_editor_property("tile_sub_title", unreal.Text(TILE_SUB_TITLE))
-    facing.set_editor_property("tile_description", unreal.Text(TILE_DESCRIPTION))
+    facing.set_editor_property("tile_title", TILE_TITLE)
+    facing.set_editor_property("tile_sub_title", TILE_SUB_TITLE)
+    facing.set_editor_property("tile_description", TILE_DESCRIPTION)
     facing.set_editor_property("max_player_count", MAX_PLAYER_COUNT)
     facing.set_editor_property("show_in_front_end", SHOW_IN_FRONT_END)
 
