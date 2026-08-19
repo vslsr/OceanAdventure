@@ -29,10 +29,29 @@ it. OceanCore ships a map with the same L_OceanChunkTest name, so scanning both
 Only the OceanAdventure map is scanned, which keeps the id unambiguous.
 
 Usage:
-    Run from the editor Python console:
-        exec(open(r"Plugins/GameFeatures/OceanAdventure/Content/Python/create_frontend_experience_entry.py").read())
-    Or headless:
-        UnrealEditor-Cmd <project>.uproject -run=pythonscript -script="<this file>"
+    From the editor Python console. The console's working directory is the
+    engine binaries folder, not the project, so a relative path will not
+    resolve. This plugin's Content/Python folder is on sys.path automatically
+    (Unreal adds it for every enabled plugin), so import by module name:
+
+        import create_frontend_experience_entry
+
+    Importing runs it. To run again in the same editor session:
+
+        import importlib, create_frontend_experience_entry
+        importlib.reload(create_frontend_experience_entry)
+
+    If the import fails, the plugin is not enabled or the editor was started
+    before it was added; restart the editor and try again. As a fallback,
+    build an absolute path from the project directory:
+
+        import unreal, os
+        exec(open(os.path.join(unreal.Paths.project_dir(),
+            "Plugins/GameFeatures/OceanAdventure/Content/Python",
+            "create_frontend_experience_entry.py")).read())
+
+    Headless:
+        UnrealEditor-Cmd <project>.uproject -run=pythonscript -script="<abs path>"
 
 The script is idempotent: existing assets are updated in place.
 
