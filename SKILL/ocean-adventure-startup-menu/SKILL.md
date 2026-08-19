@@ -1,6 +1,6 @@
 ---
 name: ocean-adventure-startup-menu
-description: Explain, trace, modify, or troubleshoot OceanAdventure's Lyra/CommonUI startup menu flow, including the default frontend map and Experience, press-start and main screens, UI policy/layers, session travel, and the separate in-game Escape menu. Use for questions about where the startup, main, press-start, return-to-menu, or Escape menu is configured in this project.
+description: Explain, trace, modify, or troubleshoot OceanAdventure's Lyra/CommonUI startup and direct-map Experience flow, including the default frontend map, GameFeature-owned Experience discovery, fallback-to-menu behavior, press-start and main screens, UI policy/layers, session travel, and the separate in-game Escape menu. Use when asking where a startup or Escape menu is configured, how to bypass StartMenu for level debugging, or why a map with Default Gameplay Experience still opens Menu. Use general Lyra or UE skills for unrelated gameplay and GameFeature work.
 ---
 
 # OceanAdventure Startup Menu
@@ -84,6 +84,21 @@ Do not assume `DefaultExperienceId` always wins. `ALyraGameMode::HandleMatchAssi
 7. `ULyraFrameworkSettings::DefaultExperienceId` fallback.
 
 When the wrong screen opens, establish which Experience actually loaded before editing menu assets.
+
+## Direct-Map Experience Debugging
+
+For a gameplay map and Experience owned by a GameFeature plugin, read
+[references/direct-map-experience.md](references/direct-map-experience.md). It covers:
+
+- why plugin content discovery happens at `Registered` rather than `Active`;
+- which scan paths belong in GameFeatureData and which type/cook rules remain project-level;
+- the required Blueprint versus DataAsset shapes;
+- how to refresh a plugin registration without restarting the editor;
+- the log signatures that distinguish a valid World Settings Experience from fallback to the frontend Menu.
+
+Do not solve a Primary Asset discovery failure by changing menu widgets. If
+`DefaultGameplayExperience` cannot resolve to an asset ID, Lyra has already
+failed before the frontend component or CommonUI layer flow becomes relevant.
 
 ## Where To Make Changes
 
