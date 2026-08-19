@@ -93,6 +93,12 @@ TILE_DESCRIPTION = "Test map for ocean chunk streaming and island generation."
 MAX_PLAYER_COUNT = 4
 SHOW_IN_FRONT_END = True
 
+# Also point the map's World Settings at the experience, so opening the map
+# directly (PIE straight into it, or a server opening it) runs the experience
+# without going through the front end. This opens and saves the map, so save
+# anything unsaved in the level you have open before running.
+SET_MAP_DEFAULT_EXPERIENCE = True
+
 
 def log(message):
     unreal.log(f"[OceanFrontendEntry] {message}")
@@ -227,6 +233,39 @@ def create_experience_definition():
     return experience
 
 
+def set_map_default_experience(generated_class):
+    """Point the map's ALyraWorldSettings at the experience class."""
+    level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+    editor_subsystem = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
+
+    current_world = editor_subsystem.get_editor_world()
+    current_map_path = (
+        current_world.get_path_name().split(".", 1)[0] if current_world else None
+    )
+    if current_map_path != MAP_ASSET_PATH:
+        require(
+            level_subsystem.load_level(MAP_ASSET_PATH),
+            f"Unable to load {MAP_ASSET_PATH}",
+        )
+        current_world = editor_subsystem.get_editor_world()
+
+    world_settings = require(
+        unreal.GameplayStatics.get_world_settings(current_world),
+        f"Unable to reach the World Settings of {MAP_ASSET_PATH}",
+    )
+    if not isinstance(world_settings, unreal.LyraWorldSettings):
+        warn(
+            f"{MAP_ASSET_PATH} uses {type(world_settings).__name__}, not "
+            "LyraWorldSettings, so it has no DefaultGameplayExperience. Set the "
+            "World Settings class in Project Settings > Engine > General Settings."
+        )
+        return
+
+    world_settings.set_editor_property("default_gameplay_experience", generated_class)
+    require(level_subsystem.save_current_level(), f"Unable to save {MAP_ASSET_PATH}")
+    log(f"{MAP_ASSET_PATH}: DefaultGameplayExperience = {EXPERIENCE_ASSET_NAME}")
+
+
 def create_user_facing_experience():
     facing = get_or_create_data_asset(
         FACING_ASSET_NAME,
@@ -256,8 +295,11 @@ def create_user_facing_experience():
 
 def main():
     map_exists = verify_map()
-    create_experience_definition()
+    experience = create_experience_definition()
     create_user_facing_experience()
+
+    if SET_MAP_DEFAULT_EXPERIENCE and map_exists:
+        set_map_default_experience(experience.generated_class())
 
     log("Done. Restart the editor (or PIE into the front-end) to see the new tile.")
     if not map_exists:
