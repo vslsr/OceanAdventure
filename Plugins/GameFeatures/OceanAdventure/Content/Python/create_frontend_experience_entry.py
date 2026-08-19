@@ -27,17 +27,16 @@ which owns this gameplay mode: the experience pair, and the map it launches.
 OceanCore stays underneath as the chunk-streaming runtime and exposes no
 front-end content of its own.
 
-That works because Config/DefaultGame.ini lists /OceanAdventure/Experience in
-the LyraExperienceDefinition and LyraUserFacingExperienceDefinition scan rules,
-and /OceanAdventure/Maps in the Map rule. Without those scan directories the
-assets resolve in the editor (via bShouldGuessTypeAndNameInEditor) but go
-missing in a packaged build.
+For the AssetManager to resolve these by primary asset id, /OceanAdventure/Maps
+and /OceanAdventure/Experience have to be scanned. Those scan rules belong to
+the plugin, declared on its GameFeatureData and applied when the feature
+registers -- see Scripts/CreateGameFeatureData.py. Run that first; the project's
+Config/DefaultGame.ini deliberately says nothing about /OceanAdventure.
 
 Note that a primary asset id is (type, asset name) — the path is not part of
-it. OceanCore ships a map with the same L_OceanChunkTest name, so scanning both
-/OceanCore/Maps and /OceanAdventure/Maps would make two assets claim the id
-("Map", "L_OceanChunkTest") and the AssetManager would pick one arbitrarily.
-Only the OceanAdventure map is scanned, which keeps the id unambiguous.
+it. OceanCore ships a map with the same L_OceanChunkTest name, so if it were
+ever scanned as well, two assets would claim ("Map", "L_OceanChunkTest") and
+the AssetManager would pick one arbitrarily.
 
 Usage:
     From the editor Python console. The console's working directory is the
