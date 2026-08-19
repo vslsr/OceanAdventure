@@ -11,8 +11,8 @@ class ULyraPawnData;
 /**
  * Player pawn base class for the Ocean Adventure experience.
  *
- * Deliberately thin. It only carries what "a character that lives in the ocean" needs
- * (swim-capable movement defaults); it owns no chunk streaming and no camera logic.
+ * Deliberately thin. It provides a stable native type for experience-specific component
+ * injection and diagnostics; it owns no chunk streaming, camera logic, or tuning values.
  *
  * Everything else is injected: BP_Experience_Ocean enables the game features, and their
  * GameFeatureData actions add the components onto this pawn.
@@ -31,9 +31,6 @@ class OCEANADVENTURERUNTIME_API AOceanAdventurePawn : public ALyraCharacter
 	GENERATED_BODY()
 
 public:
-
-	AOceanAdventurePawn(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
-
 	/** PawnData this pawn was spawned from, or null before the experience has initialized it. */
 	UFUNCTION(BlueprintPure, Category = "Ocean Adventure")
 	const ULyraPawnData* GetOceanAdventurePawnData() const;

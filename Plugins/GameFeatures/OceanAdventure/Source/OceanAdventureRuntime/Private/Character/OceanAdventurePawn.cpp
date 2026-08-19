@@ -4,23 +4,9 @@
 
 #include "Character/LyraPawnData.h"
 #include "Character/LyraPawnExtensionComponent.h"
-#include "GameFramework/CharacterMovementComponent.h"
 #include "OceanAdventureRuntimeModule.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventurePawn)
-
-AOceanAdventurePawn::AOceanAdventurePawn(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer)
-{
-	UCharacterMovementComponent* MovementComponent = GetCharacterMovement();
-	check(MovementComponent);
-
-	// Starting values only. Tune them on the pawn blueprint's CharacterMovement component
-	// rather than here, so designers do not need a recompile.
-	MovementComponent->GetNavAgentPropertiesRef().bCanSwim = true;
-	MovementComponent->MaxSwimSpeed = 600.0f;
-	MovementComponent->Buoyancy = 1.0f;
-}
 
 void AOceanAdventurePawn::BeginPlay()
 {

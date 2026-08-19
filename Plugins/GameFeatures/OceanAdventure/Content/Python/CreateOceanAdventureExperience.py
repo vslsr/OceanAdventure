@@ -6,6 +6,7 @@ that turns it into the mode's player, and the wiring that injects everything els
     BP_Experience_Ocean
       DefaultPawnData ------> DA_OceanAdventure_PawnData
                                 PawnClass        -> BP_OceanAdventure_Pawn
+                                AbilitySets      -> [] (intentional)
                                 DefaultCameraMode-> ULyraCameraMode_TopDownFollow
       GameFeaturesToEnable -> "OceanAdventure", "TopDownFeature"
 
@@ -39,7 +40,8 @@ have been run first so /OceanAdventure/OceanAdventure exists.
 
 Idempotent: assets are created if missing, and their properties are rewritten either
 way, so re-running repairs hand edits. Note that this rewrites the GameFeatureData's
-Actions list and the experience's GameFeaturesToEnable / ActionSets wholesale.
+Actions list, PawnData AbilitySets, and the experience's GameFeaturesToEnable / ActionSets
+wholesale. Pawn movement tuning is stored on BP_OceanAdventure_Pawn, not its C++ base.
 """
 
 import unreal
@@ -51,6 +53,7 @@ GAME_FEATURE_DATA_PATH = "/OceanAdventure/OceanAdventure"
 EXPERIENCE_PATH = "/OceanAdventure/Experience/BP_Experience_Ocean"
 
 INPUT_CONFIG_PATH = "/Game/Input/DA_InputConfig_Base"
+MAX_SWIM_SPEED = 600.0
 
 ACTION_SET_PATHS = [
     "/Game/ActionSet/LSA_Standard_Components",
@@ -142,7 +145,7 @@ def get_or_create_data_asset(asset_path, asset_class):
 
 
 def get_blueprint_class(blueprint, asset_path):
-    generated = blueprint.get_editor_property("generated_class")
+    generated = blueprint.generated_class()
     if generated is not None:
         return generated
     return require(
@@ -151,30 +154,51 @@ def get_blueprint_class(blueprint, asset_path):
     )
 
 
-def make_component_entry(actor_class, component_class):
-    entry = unreal.GameFeatureComponentEntry()
-    # ActorClass and ComponentClass are soft class properties: they take the class
-    # itself, not a SoftClassPath wrapping its path.
-    entry.set_editor_property("actor_class", actor_class)
-    entry.set_editor_property("component_class", component_class)
-    entry.set_editor_property("client_component", True)
-    entry.set_editor_property("server_component", True)
-    return entry
+def configure_pawn_blueprint(pawn_blueprint_class):
+    pawn_defaults = unreal.get_default_object(pawn_blueprint_class)
+    movement_component_class = require_type(
+        "CharacterMovementComponent", "the Engine module"
+    )
+    movement_component = require(
+        pawn_defaults.get_component_by_class(movement_component_class),
+        f"{PAWN_BLUEPRINT_PATH} has no CharacterMovement component",
+    )
+    movement_component.set_editor_property("max_swim_speed", MAX_SWIM_SPEED)
+
+    configured_speed = movement_component.get_editor_property("max_swim_speed")
+    if abs(float(configured_speed) - MAX_SWIM_SPEED) > 0.01:
+        raise RuntimeError(
+            f"Failed to set {PAWN_BLUEPRINT_PATH} MaxSwimSpeed: {configured_speed}"
+        )
+
+    log(f"Pawn blueprint MaxSwimSpeed is {configured_speed}")
 
 
-def make_add_components_action(outer, entries):
-    action_class = require_type("GameFeatureAction_AddComponents", "the ModularGameplay plugin")
-    # The action must be outered to the GameFeatureData it is stored on, otherwise saving
-    # the package fails on a reference to a transient object.
-    action = unreal.new_object(action_class, outer=outer)
-    action.set_editor_property("component_list", entries)
-    return action
+def make_add_components_action(outer, component_specs):
+    asset_library = require_type(
+        "OceanAdventureAssetLibrary", "the OceanAdventureRuntime module"
+    )
+    actor_classes = [actor_class for actor_class, _ in component_specs]
+    component_classes = [component_class for _, component_class in component_specs]
+
+    # FGameFeatureComponentEntry and the AddComponents subclass properties are not
+    # exposed to UE 5.7 Python. The native bridge creates and fills the action while
+    # Python retains responsibility for asset composition and saving.
+    return require(
+        asset_library.create_add_components_action(
+            outer, actor_classes, component_classes, True, True
+        ),
+        "Failed to create the AddComponents action",
+    )
 
 
 def create_pawn_data(pawn_blueprint_class):
     pawn_data = get_or_create_data_asset(PAWN_DATA_PATH, unreal.LyraPawnData)
 
     pawn_data.set_editor_property("pawn_class", pawn_blueprint_class)
+    # This mode currently uses native movement/input only. Add a real Ocean-owned
+    # AbilitySet when the mode gains abilities; do not reference a sibling GameFeature.
+    pawn_data.set_editor_property("ability_sets", [])
 
     input_config = require(
         load_existing(INPUT_CONFIG_PATH), f"Missing input config: {INPUT_CONFIG_PATH}"
@@ -187,7 +211,10 @@ def create_pawn_data(pawn_blueprint_class):
     pawn_data.set_editor_property("default_camera_mode", camera_mode)
 
     save(PAWN_DATA_PATH)
-    log(f"PawnData points at {PAWN_BLUEPRINT_PATH} with the top down camera")
+    log(
+        f"PawnData points at {PAWN_BLUEPRINT_PATH} with the top down camera "
+        "and intentionally empty AbilitySets"
+    )
     return pawn_data
 
 
@@ -200,17 +227,17 @@ def configure_game_feature_data(pawn_class):
     manager_class = require_type("OceanWorldManagerComponent", "the OceanCore plugin")
     invoker_class = require_type("OceanChunkInvokerComponent", "the OceanCore plugin")
 
-    entries = [
+    component_specs = [
         # The manager is the authority on which chunks exist. Clients get it too so they
         # can read the replicated WorldSeed and ChunkSize for local generation.
-        make_component_entry(unreal.LyraGameState, manager_class),
+        (unreal.LyraGameState, manager_class),
         # The invoker is what makes the player trigger chunk loading around themselves.
         # Target the C++ base rather than the blueprint so any pawn variant of this mode
         # gets it, and so the GameFeatureData does not depend on a specific content asset.
-        make_component_entry(pawn_class, invoker_class),
+        (pawn_class, invoker_class),
     ]
 
-    action = make_add_components_action(game_feature_data, entries)
+    action = make_add_components_action(game_feature_data, component_specs)
     game_feature_data.set_editor_property("actions", [action])
 
     save(GAME_FEATURE_DATA_PATH)
@@ -221,18 +248,42 @@ def configure_experience(pawn_data):
     blueprint = require(
         load_existing(EXPERIENCE_PATH), f"Missing experience: {EXPERIENCE_PATH}"
     )
-    experience = unreal.get_default_object(get_blueprint_class(blueprint, EXPERIENCE_PATH))
-
-    experience.set_editor_property("default_pawn_data", pawn_data)
-    experience.set_editor_property("game_features_to_enable", GAME_FEATURES_TO_ENABLE)
-
     action_sets = [
         require(load_existing(path), f"Missing action set: {path}")
         for path in ACTION_SET_PATHS
     ]
+
+    experience = unreal.get_default_object(get_blueprint_class(blueprint, EXPERIENCE_PATH))
+    experience.set_editor_property("default_pawn_data", pawn_data)
+    experience.set_editor_property("game_features_to_enable", GAME_FEATURES_TO_ENABLE)
     experience.set_editor_property("action_sets", action_sets)
 
-    save(EXPERIENCE_PATH)
+    # Blueprint defaults must be compiled into the generated class and the loaded
+    # Blueprint asset itself must be saved. Reacquire the CDO after compilation because
+    # compilation may replace the generated class.
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    configured_experience = unreal.get_default_object(
+        get_blueprint_class(blueprint, EXPERIENCE_PATH)
+    )
+    configured_pawn_data = configured_experience.get_editor_property("default_pawn_data")
+    configured_features = list(
+        configured_experience.get_editor_property("game_features_to_enable")
+    )
+    configured_action_sets = list(configured_experience.get_editor_property("action_sets"))
+
+    if configured_pawn_data != pawn_data:
+        raise RuntimeError("Experience DefaultPawnData did not persist after compilation")
+    if configured_features != GAME_FEATURES_TO_ENABLE:
+        raise RuntimeError(
+            f"Experience GameFeaturesToEnable did not persist: {configured_features}"
+        )
+    if configured_action_sets != action_sets:
+        raise RuntimeError("Experience ActionSets did not persist after compilation")
+
+    require(
+        unreal.EditorAssetLibrary.save_loaded_asset(blueprint),
+        f"Failed to save: {EXPERIENCE_PATH}",
+    )
     log(f"Experience enables {', '.join(GAME_FEATURES_TO_ENABLE)}")
 
 
@@ -240,8 +291,10 @@ def main():
     pawn_class = require_type("OceanAdventurePawn", "the OceanAdventureRuntime module")
 
     blueprint = get_or_create_blueprint(PAWN_BLUEPRINT_PATH, pawn_class)
-    save(PAWN_BLUEPRINT_PATH)
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
     pawn_blueprint_class = get_blueprint_class(blueprint, PAWN_BLUEPRINT_PATH)
+    configure_pawn_blueprint(pawn_blueprint_class)
+    save(PAWN_BLUEPRINT_PATH)
 
     pawn_data = create_pawn_data(pawn_blueprint_class)
     configure_game_feature_data(pawn_class)

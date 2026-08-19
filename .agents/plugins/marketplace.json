@@ -1,0 +1,20 @@
+{
+  "name": "mcpmarket-me",
+  "interface": {
+    "displayName": "MCPmarket"
+  },
+  "plugins": [
+    {
+      "name": "mcpmarket-me",
+      "source": {
+        "source": "local",
+        "path": "./.agents/plugins/mcpmarket-me"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "mcp"
+    }
+  ]
+}

@@ -70,3 +70,11 @@ Desktop.ini
 # Local EOS credentials and runtime configuration
 /Config/Custom/EosClient/
 /Config/Custom/EosDedicatedServer/
+
+# Local MCPmarket credentials
+/.agents/plugins/mcpmarket-me/.mcp.json
+/.agents/plugins/mcpmarket-me/mcp-servers.toml
+
+# Local MCPmarket credentials
+/.agents/plugins/mcpmarket-me/.mcp.json
+/.agents/plugins/mcpmarket-me/mcp-servers.toml

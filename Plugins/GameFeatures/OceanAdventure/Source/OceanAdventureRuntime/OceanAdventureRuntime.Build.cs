@@ -10,7 +10,9 @@ public class OceanAdventureRuntime : ModuleRules
 
 		// No dependency on OceanCoreRuntime or TopDownFeatureRuntime on purpose. The pawn
 		// carries no chunk streaming or camera code of its own: both arrive as components
-		// injected by the experience, so this module only needs the Lyra pawn framework.
+		// injected by the experience, so its gameplay code only needs the Lyra pawn framework.
+		// GameFeatures is used by the narrow reflected asset factory that lets the editor
+		// Python script build an AddComponents action without depending on feature classes.
 		//
 		// ALyraCharacter implements IGenericTeamAgentInterface (AIModule), IGameplayCueInterface
 		// and IAbilitySystemInterface (GameplayAbilities), and IGameplayTagAssetInterface
@@ -27,6 +29,7 @@ public class OceanAdventureRuntime : ModuleRules
 				"GameplayAbilities",
 				"GameplayTags",
 				"GameplayTasks",
+				"GameFeatures",
 				"LyraGame",
 				"ModularGameplay",
 				"ModularGameplayActors"

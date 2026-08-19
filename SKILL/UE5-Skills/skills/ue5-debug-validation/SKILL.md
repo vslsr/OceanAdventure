@@ -1,6 +1,6 @@
 ---
 name: ue5-debug-validation
-description: UE5.6/UE5.7 debugging and validation workflow for logs, asset checks, and regression triage. Use when requests involve troubleshooting why gameplay does not work, validating expected output, narrowing minimal repro, and producing concrete fix steps.
+description: UE5.6/UE5.7 debugging and validation workflow for logs, asset checks, Editor Python automation, and regression triage. Use when requests involve troubleshooting why gameplay or an editor asset script does not work, validating expected output, narrowing minimal repro, and producing concrete fix steps.
 ---
 
 # Quick Start
@@ -49,6 +49,7 @@ description: UE5.6/UE5.7 debugging and validation workflow for logs, asset check
 - Verify key assets/classes/config entries exist and resolve correctly.
 - Check dependencies/referencers for missing or mismatched assets.
 - Confirm runtime-loaded data matches expected environment.
+- For an Unreal Editor Python traceback or Blueprint/DataAsset generation failure, read [references/editor-python-asset-scripts.md](references/editor-python-asset-scripts.md).
 
 ## 4) Locate First Bad Transition
 - Walk pipeline step-by-step and identify earliest divergence point.
