@@ -8,17 +8,16 @@ that declares which Game Feature plugins to activate.
 
 This script creates that pair:
 
-    /Game/Experience/BP_Experience_Ocean          (ULyraExperienceDefinition)
-    /Game/Experience/DA_Facing_Experience_Ocean   (ULyraUserFacingExperienceDefinition)
+    /OceanAdventure/Experience/BP_Experience_Ocean         (ULyraExperienceDefinition)
+    /OceanAdventure/Experience/DA_Facing_Experience_Ocean  (ULyraUserFacingExperienceDefinition)
 
-Both are written to /Game/Experience because Config/DefaultGame.ini only scans
-that directory for the two experience primary asset types. /OceanCore/Maps is
-already covered by the Map scan rule, so MAP_ASSET_NAME resolves without any
-config change. If you move the experience assets into a plugin, extend the
-LyraExperienceDefinition and LyraUserFacingExperienceDefinition entries of
-PrimaryAssetTypesToScan the same way the Map entry was extended, otherwise the
-assets only resolve in the editor (via bShouldGuessTypeAndNameInEditor) and go
-missing in a packaged build.
+Both live under the OceanAdventure game feature so the experience ships with
+the feature that implements it. That only works because Config/DefaultGame.ini
+lists /OceanAdventure/Experience in the LyraExperienceDefinition and
+LyraUserFacingExperienceDefinition entries of PrimaryAssetTypesToScan, the same
+way /OceanCore/Maps was added to the Map entry. Without those scan directories
+the assets would resolve in the editor (via bShouldGuessTypeAndNameInEditor)
+but go missing in a packaged build.
 
 Usage:
     Run from the editor Python console:
@@ -37,7 +36,7 @@ import unreal
 
 MAP_ASSET_PATH = "/OceanCore/Maps/L_OceanChunkTest"
 
-EXPERIENCE_PACKAGE_PATH = "/Game/Experience"
+EXPERIENCE_PACKAGE_PATH = "/OceanAdventure/Experience"
 EXPERIENCE_ASSET_NAME = "BP_Experience_Ocean"
 FACING_ASSET_NAME = "DA_Facing_Experience_Ocean"
 
