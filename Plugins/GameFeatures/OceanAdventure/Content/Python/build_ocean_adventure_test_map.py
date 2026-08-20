@@ -77,7 +77,12 @@ def create_test_floor(actor_subsystem):
         actor_subsystem,
         "/Script/Engine.StaticMeshActor",
         "Ocean Test Floor",
-        unreal.Vector(0.0, 0.0, -50.0),
+        # Kept well below the chunk terrain, which reaches about -350 at its lowest.
+        # This used to sit at -50, putting its top face at exactly Z=0 -- the same plane as
+        # every chunk's water mesh, which z-fought across the whole view and made the screen
+        # flicker. The floor is only a safety net now; the terrain has BlockAll collision and
+        # is what you actually stand on.
+        unreal.Vector(0.0, 0.0, -3000.0),
     )
     # Engine BasicShapes/Cube is one meter wide, so this creates a 10 km floor.
     floor.set_actor_scale3d(unreal.Vector(10000.0, 10000.0, 1.0))

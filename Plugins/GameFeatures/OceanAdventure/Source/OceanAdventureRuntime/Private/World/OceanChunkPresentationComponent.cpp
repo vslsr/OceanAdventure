@@ -21,6 +21,36 @@ namespace
 		TEXT("/OceanAdventure/Environment/WildOmission/WorldGeneration/SM_Water.SM_Water");
 	const TCHAR* WaterMaterialPath =
 		TEXT("/OceanAdventure/Environment/WildOmission/WildOmissionCore/Art/Environment/M_Water.M_Water");
+
+	/**
+	 * Deterministic 0..1 value for one island cell.
+	 *
+	 * Deliberately not an engine RNG: height has to stay a pure function of world position
+	 * and seed, or two chunks would disagree about the terrain along the edge they share and
+	 * the seam would crack open.
+	 */
+	float HashIslandCell(int32 CellX, int32 CellY, int32 Seed, int32 Salt)
+	{
+		uint32 Hash = static_cast<uint32>(CellX) * 374761393u
+			+ static_cast<uint32>(CellY) * 668265263u
+			+ static_cast<uint32>(Seed) * 2246822519u
+			+ static_cast<uint32>(Salt) * 3266489917u;
+		Hash = (Hash ^ (Hash >> 13)) * 1274126177u;
+		Hash ^= Hash >> 16;
+		return static_cast<float>(Hash & 0xFFFFFFu) / static_cast<float>(0xFFFFFF);
+	}
+
+	/** Hermite falloff: 1 inside Inner, 0 beyond Outer. */
+	float IslandFalloff(float Inner, float Outer, float Distance)
+	{
+		if (Outer <= Inner)
+		{
+			return Distance <= Inner ? 1.0f : 0.0f;
+		}
+
+		const float T = FMath::Clamp((Distance - Inner) / (Outer - Inner), 0.0f, 1.0f);
+		return 1.0f - (T * T * (3.0f - 2.0f * T));
+	}
 }
 
 UOceanChunkPresentationComponent::UOceanChunkPresentationComponent()
@@ -131,6 +161,11 @@ void UOceanChunkPresentationComponent::BuildTerrain(AOceanChunkActor& Chunk)
 	VertexColors.Reserve(VerticesPerSide * VerticesPerSide);
 	Triangles.Reserve(QuadsPerSide * QuadsPerSide * 6);
 
+	// Beach sits just above the waterline; rock takes over near the peaks. Derived from the
+	// island height so retuning IslandPeakHeight does not silently make everything sand.
+	const float SandLine = WaterHeight + 250.0f;
+	const float StoneLine = WaterHeight + FMath::Max(500.0f, (IslandPeakHeight - WaterHeight) * 0.55f);
+
 	const FVector ChunkOrigin = Chunk.GetChunkWorldOrigin();
 	for (int32 X = 0; X <= QuadsPerSide; ++X)
 	{
@@ -142,11 +177,11 @@ void UOceanChunkPresentationComponent::BuildTerrain(AOceanChunkActor& Chunk)
 			Vertices.Emplace(LocalX, LocalY, Height);
 			UVs.Emplace(X * 0.0625f, Y * 0.0625f);
 
-			if (Height < WaterHeight + 80.0f)
+			if (Height < SandLine)
 			{
 				VertexColors.Emplace(255, 255, 0); // Sand in WildOmission's terrain material.
 			}
-			else if (Height > WaterHeight + TerrainHeightAmplitude * 0.7f)
+			else if (Height > StoneLine)
 			{
 				VertexColors.Emplace(255, 0, 0); // Stone.
 			}
@@ -231,9 +266,71 @@ float UOceanChunkPresentationComponent::GetTerrainHeight(
 	const float Seed = static_cast<float>(Chunk.GetWorldSeed());
 	const FVector2D SeedOffset(Seed * 0.0137f, Seed * 0.0211f);
 	const FVector2D WorldPosition(static_cast<float>(WorldX), static_cast<float>(WorldY));
+
+	// Surface roughness. On its own this is just a sheet undulating about a mean -- two
+	// octaves of Perlin around a base height give gentle swells, never a coastline. That is
+	// why the world used to be open ocean everywhere.
 	const float MacroNoise = FMath::PerlinNoise2D(WorldPosition / SafeNoiseScale + SeedOffset);
 	const float DetailNoise = FMath::PerlinNoise2D(
 		WorldPosition / (SafeNoiseScale * 0.28f) + SeedOffset * 1.7f);
-	return TerrainBaseHeight
-		+ (MacroNoise * 0.78f + DetailNoise * 0.22f) * TerrainHeightAmplitude;
+	const float Roughness = MacroNoise * 0.78f + DetailNoise * 0.22f;
+
+	// The island mask is what actually decides land from sea.
+	const float Mask = GetIslandMask(Chunk, WorldPosition);
+	const float Shape = OceanFloorHeight + Mask * (IslandPeakHeight - OceanFloorHeight);
+
+	// Roughness is strongest on land so the seabed stays calm and the shoreline stays legible.
+	return Shape + Roughness * TerrainHeightAmplitude * (0.25f + 0.75f * Mask);
+}
+
+float UOceanChunkPresentationComponent::GetIslandMask(
+	const AOceanChunkActor& Chunk, const FVector2D& WorldPosition) const
+{
+	// The world is cut into IslandCellSize squares, each holding at most one island centre
+	// jittered deterministically from the seed. Only the 3x3 cells around the sample can
+	// reach it, so this stays O(9) however far out the player travels.
+	const float CellSize = FMath::Max(1000.0f, IslandCellSize);
+	const float NominalRadius = FMath::Max(100.0f, IslandRadius);
+	const int32 Seed = Chunk.GetWorldSeed();
+
+	const int32 BaseCellX = FMath::FloorToInt32(WorldPosition.X / CellSize);
+	const int32 BaseCellY = FMath::FloorToInt32(WorldPosition.Y / CellSize);
+
+	float BestMask = 0.0f;
+	for (int32 OffsetX = -1; OffsetX <= 1; ++OffsetX)
+	{
+		for (int32 OffsetY = -1; OffsetY <= 1; ++OffsetY)
+		{
+			const int32 CellX = BaseCellX + OffsetX;
+			const int32 CellY = BaseCellY + OffsetY;
+
+			// Leaving cells empty is what makes it an archipelago instead of a regular grid.
+			if (HashIslandCell(CellX, CellY, Seed, 3) > IslandDensity)
+			{
+				continue;
+			}
+
+			const FVector2D Centre(
+				(static_cast<float>(CellX) + HashIslandCell(CellX, CellY, Seed, 0)) * CellSize,
+				(static_cast<float>(CellY) + HashIslandCell(CellX, CellY, Seed, 1)) * CellSize);
+
+			const float CellRadius = NominalRadius * (0.6f + 0.8f * HashIslandCell(CellX, CellY, Seed, 2));
+
+			// Warping the distance instead of the radius is what turns a circle into a
+			// coastline with bays and headlands.
+			// Offset per island, not per sample, so the warp stays continuous across one
+			// island while two worlds with different seeds get different coastlines.
+			const FVector2D ShapeOffset(
+				HashIslandCell(CellX, CellY, Seed, 4) * 64.0f,
+				HashIslandCell(CellX, CellY, Seed, 5) * 64.0f);
+			const float ShapeNoise =
+				FMath::PerlinNoise2D(WorldPosition / (CellRadius * 0.5f) + ShapeOffset);
+			const float Distance = FVector2D::Distance(WorldPosition, Centre)
+				+ ShapeNoise * CellRadius * IslandEdgeDistortion;
+
+			BestMask = FMath::Max(BestMask, IslandFalloff(CellRadius * 0.25f, CellRadius, Distance));
+		}
+	}
+
+	return FMath::Clamp(BestMask, 0.0f, 1.0f);
 }
