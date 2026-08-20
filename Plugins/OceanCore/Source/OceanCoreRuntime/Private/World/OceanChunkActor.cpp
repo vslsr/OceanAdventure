@@ -2,6 +2,7 @@
 
 #include "World/OceanChunkActor.h"
 
+#include "Components/GameFrameworkComponentManager.h"
 #include "Components/SceneComponent.h"
 #include "DrawDebugHelpers.h"
 #include "GameFramework/Pawn.h"
@@ -42,15 +43,29 @@ AOceanChunkActor::AOceanChunkActor()
 	SetNetCullDistanceSquared(CalculateChunkCullDistanceSquared(20000.0f));
 }
 
+void AOceanChunkActor::PreInitializeComponents()
+{
+	Super::PreInitializeComponents();
+	UGameFrameworkComponentManager::AddGameFrameworkComponentReceiver(this);
+}
+
 void AOceanChunkActor::BeginPlay()
 {
 	Super::BeginPlay();
+	UGameFrameworkComponentManager::SendGameFrameworkComponentExtensionEvent(
+		this, UGameFrameworkComponentManager::NAME_GameActorReady);
 
 	bBeginPlayFinished = true;
 	#if ENABLE_DRAW_DEBUG
 	SetActorTickEnabled(bDrawDebugBounds);
 	#endif
 	NotifyChunkInitialized();
+}
+
+void AOceanChunkActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UGameFrameworkComponentManager::RemoveGameFrameworkComponentReceiver(this);
+	Super::EndPlay(EndPlayReason);
 }
 
 void AOceanChunkActor::Tick(float DeltaSeconds)

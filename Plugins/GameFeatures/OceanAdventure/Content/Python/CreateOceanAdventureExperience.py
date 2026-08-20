@@ -12,7 +12,9 @@ that turns it into the mode's player, and the wiring that injects everything els
 
     OceanAdventure (GameFeatureData)
       AddComponents        -> LyraGameState        gets UOceanWorldManagerComponent
+                              AOceanAdventurePawn  gets ULyraHeroComponent
                               AOceanAdventurePawn  gets UOceanChunkInvokerComponent
+                              AOceanChunkActor     gets UOceanChunkPresentationComponent
 
     TopDownFeature (GameFeatureData, already configured)
       AddComponents        -> UTopDownPawnComponent, AddInputMapping -> IMC_TopDown
@@ -87,8 +89,8 @@ def require_type(type_name, source):
 
 
 def load_existing(asset_path):
-    if not unreal.EditorAssetLibrary.does_asset_exist(asset_path):
-        return None
+    # GameFeature packages can exist on disk before the commandlet's cached AssetRegistry
+    # notices them. Loading by package path avoids a false "missing" result here.
     return unreal.EditorAssetLibrary.load_asset(asset_path)
 
 
@@ -226,22 +228,35 @@ def configure_game_feature_data(pawn_class):
 
     manager_class = require_type("OceanWorldManagerComponent", "the OceanCore plugin")
     invoker_class = require_type("OceanChunkInvokerComponent", "the OceanCore plugin")
+    chunk_class = require_type("OceanChunkActor", "the OceanCore plugin")
+    hero_class = require_type("LyraHeroComponent", "the LyraGame module")
+    presentation_class = require_type(
+        "OceanChunkPresentationComponent", "the OceanAdventureRuntime module"
+    )
 
     component_specs = [
         # The manager is the authority on which chunks exist. Clients get it too so they
         # can read the replicated WorldSeed and ChunkSize for local generation.
         (unreal.LyraGameState, manager_class),
+        # LyraHeroComponent bridges PawnData to input and the camera mode stack. The
+        # deliberately thin Ocean pawn does not own it as a construction-time default.
+        (pawn_class, hero_class),
         # The invoker is what makes the player trigger chunk loading around themselves.
         # Target the C++ base rather than the blueprint so any pawn variant of this mode
         # gets it, and so the GameFeatureData does not depend on a specific content asset.
         (pawn_class, invoker_class),
+        # OceanCore owns replicated chunk state; this feature supplies its concrete art.
+        (chunk_class, presentation_class),
     ]
 
     action = make_add_components_action(game_feature_data, component_specs)
     game_feature_data.set_editor_property("actions", [action])
 
     save(GAME_FEATURE_DATA_PATH)
-    log("GameFeatureData injects the ocean world manager and the chunk invoker")
+    log(
+        "GameFeatureData injects the ocean world manager, Lyra hero bridge, "
+        "chunk invoker, and chunk presentation"
+    )
 
 
 def configure_experience(pawn_data):
@@ -288,6 +303,9 @@ def configure_experience(pawn_data):
 
 
 def main():
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    registry.scan_paths_synchronous(["/OceanAdventure"], True, True)
+
     pawn_class = require_type("OceanAdventurePawn", "the OceanAdventureRuntime module")
 
     blueprint = get_or_create_blueprint(PAWN_BLUEPRINT_PATH, pawn_class)

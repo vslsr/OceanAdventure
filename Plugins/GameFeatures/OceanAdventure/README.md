@@ -23,7 +23,9 @@ BP_Experience_Ocean  (LyraExperienceDefinition)
 │
 └─ GameFeaturesToEnable
    ├─ "OceanAdventure"  ──► AddComponents: LyraGameState       ← UOceanWorldManagerComponent
+   │                        AddComponents: AOceanAdventurePawn ← ULyraHeroComponent
    │                        AddComponents: AOceanAdventurePawn ← UOceanChunkInvokerComponent
+   │                        AddComponents: AOceanChunkActor    ← UOceanChunkPresentationComponent
    └─ "TopDownFeature"  ──► AddComponents: LyraCharacter       ← UTopDownPawnComponent
                             AddInputMapping: IMC_TopDown
 ```
@@ -44,6 +46,11 @@ plain plugin, so the ocean algorithms stay reusable and free of Lyra coupling.
 does not need to be a game feature to be injected -- this plugin activates and its action
 does the injecting. The dependency direction stays one-way: game feature → plain plugin.
 
+`ULyraHeroComponent` is injected here as the bridge from PawnData to Lyra's input and
+camera-mode stack. `LSA_Standard_Components` does not provide it; that ActionSet contains
+inventory, equipment, marker, nameplate, and indicator components. Without the hero
+component, the Pawn can spawn while `ULyraCameraComponent` has an empty camera-mode stack.
+
 ### Why this mode needs its own PawnData
 
 The top down camera is not a component. Lyra resolves it from
@@ -52,8 +59,18 @@ own PawnData. `/TopDownFeature/Pawn/DA_TopDown_PawnData` cannot serve here: it b
 SimpleExperience's pawn, and TopDownFeature's own README asks consumers to own a derived
 PawnData instead.
 
-`OceanAdventureRuntime` still has no build dependency on `TopDownFeatureRuntime` or
-`OceanCoreRuntime` -- the references are data-level, set on the assets by the script below.
+`OceanAdventureRuntime` has no build dependency on `TopDownFeatureRuntime`; the camera
+reference remains data-level. It does depend on `OceanCoreRuntime` because the local
+`UOceanChunkPresentationComponent` consumes `AOceanChunkActor` state and builds the
+terrain and water presentation for that chunk.
+
+### Environment assets
+
+The terrain material, water mesh, water material, their material functions, and textures
+are migrated from WildOmission into `/OceanAdventure/Environment/WildOmission`. They are
+owned by this GameFeature and used only by the injected presentation component; OceanCore
+therefore remains art-agnostic. WildOmission is MIT licensed. Its notice is retained at
+`ThirdParty/WildOmission/LICENSE`.
 
 ## Setup
 
@@ -76,6 +93,16 @@ PawnData instead.
 5. Open the mode's map and set World Settings → `Default Gameplay Experience` to
    `BP_Experience_Ocean`.
 
+To install the WildOmission environment assets, close the editor and run:
+
+```powershell
+py Plugins/GameFeatures/OceanAdventure/Content/Python/MigrateWildOmissionEnvironment.py
+```
+
+The script deliberately prepares the packages in an isolated UE 5.3 project before
+validating them read-only in UE 5.7. Directly resaving `T_FoliageNoise` in UE 5.7.4
+crashes the Interchange save path because the old texture has no Interchange reimport data.
+
 Then give `BP_OceanAdventure_Pawn` a mesh, an animation blueprint and a capsule size, and
 tune its remaining CharacterMovement settings for the water.
 
@@ -86,4 +113,6 @@ log LogOceanAdventure Verbose
 ```
 
 On spawn the pawn logs every component attached to it. `UOceanChunkInvokerComponent` and
-`UTopDownPawnComponent` in that list means both features activated and their actions ran.
+`UTopDownPawnComponent` in that list means both features activated and their pawn actions
+ran. Each initialized chunk also logs `Built terrain and water presentation for chunk`
+when `UOceanChunkPresentationComponent` creates its local meshes.

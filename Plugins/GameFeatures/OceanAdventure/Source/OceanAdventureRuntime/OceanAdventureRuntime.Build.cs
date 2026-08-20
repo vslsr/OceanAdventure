@@ -8,9 +8,9 @@ public class OceanAdventureRuntime : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		// No dependency on OceanCoreRuntime or TopDownFeatureRuntime on purpose. The pawn
-		// carries no chunk streaming or camera code of its own: both arrive as components
-		// injected by the experience, so its gameplay code only needs the Lyra pawn framework.
+		// The pawn remains independent of chunk streaming and camera implementations. This
+		// module depends on OceanCoreRuntime only for the optional chunk presentation component
+		// that OceanAdventure injects into AOceanChunkActor instances.
 		// GameFeatures is used by the narrow reflected asset factory that lets the editor
 		// Python script build an AddComponents action without depending on feature classes.
 		//
@@ -32,7 +32,9 @@ public class OceanAdventureRuntime : ModuleRules
 				"GameFeatures",
 				"LyraGame",
 				"ModularGameplay",
-				"ModularGameplayActors"
+				"ModularGameplayActors",
+				"OceanCoreRuntime",
+				"ProceduralMeshComponent"
 			}
 		);
 

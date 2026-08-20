@@ -17,5 +17,12 @@ public class OceanCoreRuntime : ModuleRules
 				"NetCore"
 			}
 		);
+
+		PrivateDependencyModuleNames.AddRange(
+			new string[]
+			{
+				"ModularGameplay"
+			}
+		);
 	}
 }

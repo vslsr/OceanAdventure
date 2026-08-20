@@ -18,6 +18,7 @@ class ULyraPawnData;
  * GameFeatureData actions add the components onto this pawn.
  *
  *   OceanAdventure  -> UOceanChunkInvokerComponent (OceanCore) -- streams the chunks around the player
+ *   OceanAdventure  -> ULyraHeroComponent                      -- connects PawnData input and camera
  *   TopDownFeature  -> UTopDownPawnComponent                   -- click-to-move input
  *
  * The top down camera itself is not a component: it comes from DefaultCameraMode on the
