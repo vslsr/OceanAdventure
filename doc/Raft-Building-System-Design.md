@@ -141,25 +141,134 @@ ARaftActor 同时实现 IBuildStructureHost：提供坐标空间、挂载点、�
 调整 `WaterlineOffset`。这一步仅在服务端执行，客户端通过已有的 ReplicatedMovement +
 `DeckBoxExtent` 复制值同步。
 
-## 4. 交互流程（GAS）
+## 4. 交互流程：建造是不是一个 Ability？
 
-1. 玩家从快捷栏装备"建造锤"（`ULyraInventoryItemDefinition` + `InventoryFragment_EquippableItem`），
-   `ULyraEquipmentDefinition` 的 AbilitySet 授予 `GA_Build_Mode`。
-2. `GA_Build_Mode` 激活：加 `Status.Build.Active` Tag，推入建造 HUD
-   （GameFeatureAction_AddWidgets，Lyra UI 分层），启动本地幽灵预览 Actor。
-3. 每帧本地：相机射线 → 命中木筏 → `WorldToGrid()` → `CanPlacePiece()` 本地预判
-   → 幽灵材质绿/红。**只读判定，不改状态**。
-4. `InputTag.Build.Confirm` → `GA_Build_PlacePiece`：
-   本地立即播放动画/音效（Cosmetic），`Server` RPC 携带 `{Coord, Slot, Edge, Rotation, DefinitionId}`。
-5. 服务端 `UBuildStructureComponent`：重新完整校验（槽位空闲、支撑规则、距离/视线防作弊、
-   资源足够 → 从 `ULyraInventoryManagerComponent` 扣除），通过则 `AddEntry` + `MarkItemDirty`。
-   失败则广播 `Build.Message.Failed`（带失败原因 Tag）回给发起者。
-6. 拆除 `GA_Build_RemovePiece`：额外做**连通性校验**——从锚定 Foundation 集合做
-   Flood Fill，若移除后出现孤岛则拒绝（或按设计：孤岛整体掉落/沉没）。
-   成功后按 `Fragment_BuildCost` 的回收比例返还材料。
+**是，但只有玩家交互层是 Ability；结构真值与校验不在 Ability 里。**
+Ability 是"玩家意图的表达与提交"，`UBuildStructureComponent` 是"世界状态的唯一真值"。
+这条线划错，后面作弊命令、存档恢复、岛屿建造就会各走各的路径。
 
-所有失败原因用 Tag 表达（`Build.Fail.Occupied` / `.NoSupport` / `.NoResource` /
-`.WouldOrphan`），UI 直接订阅消息展示，不做 C++ ↔ UI 硬耦合。
+### 4.1 职责边界
+
+| 归 Ability（`Building` GF，依赖 LyraGame + GAS） | 归组件（`BuildingCore`，不依赖 GAS） |
+| --- | --- |
+| 进入/退出建造模式，加 `Status.Build.Active` Tag | 槽位表、`FBuildPieceList` 复制 |
+| 输入绑定（确认/取消/旋转/换件） | `CanPlacePiece` 规则校验 |
+| 幽灵预览、绿红反馈、蒙太奇、音效 | 支撑与连通性判定 |
+| 本地射线求槽位，打包 TargetData 上传 | 服务端最终扣料与写入 |
+| 材料不足时置灰按钮（CheckCost 预判） | ISM 重建、包围盒回调 |
+| 失败原因转成 UI 消息 | 失败原因 Tag 的产生 |
+
+**组件必须能在没有 GAS 的情况下工作** —— P0 的作弊命令、存档恢复、编辑器工具都直接调
+`TryPlacePiece`，这也是 `BuildingCore` 不引入 `GameplayAbilities` 依赖的原因。
+
+### 4.2 三个 Ability，不多不少
+
+| Ability | 类型 | 触发 | 职责 |
+| --- | --- | --- | --- |
+| `GA_Build_Mode` | 持续（ActivationPolicy = OnInputTriggered，ActivationGroup = Exclusive_Replaceable） | 装备"建造锤"后按建造键 | 开关建造模式、幽灵预览、HUD 层、输入上下文 |
+| `GA_Build_PlacePiece` | 瞬发 | `InputTag.Build.Confirm` | 本地求槽位 → TargetData → 服务端 `TryPlacePiece` |
+| `GA_Build_RemovePiece` | 瞬发 | `InputTag.Build.Remove` | 同上，调 `TryRemovePiece` |
+
+旋转、切换建造件、取消**不需要 Ability** —— 纯本地状态，放在 `GA_Build_Mode` 内部的
+AbilityTask 里处理即可。给每个按键都开一个 Ability 是常见的过度设计。
+
+Ability 由装备授予，走 Lyra 既有链路：
+`ULyraInventoryItemDefinition`（建造锤）→ `InventoryFragment_EquippableItem` →
+`ULyraEquipmentDefinition::AbilitySetsToGrant` → 卸下装备自动收回，不需要手动管理生命周期。
+
+### 4.3 提交通道：与 Lyra 武器射击完全同构
+
+放置一件建筑和开一枪是同一类问题：**本地瞄准 → 目标数据上传 → 服务端校验 → 应用**。
+直接照抄 `ULyraGameplayAbility_RangedWeapon` 的 TargetData 流程，不要自己写 Server RPC：
+
+```cpp
+/** 自定义 TargetData：一次放置需要的全部信息 */
+USTRUCT()
+struct FGameplayAbilityTargetData_BuildPlacement : public FGameplayAbilityTargetData
+{
+    GENERATED_BODY()
+    UPROPERTY() FBuildSlotKey Key;
+    UPROPERTY() uint16 PieceIndex = 0;
+    UPROPERTY() uint8  Rotation   = 0;
+    UPROPERTY() TWeakObjectPtr<AActor> HostActor;   // 站在哪个木筏/地基上
+
+    virtual UScriptStruct* GetScriptStruct() const override { return StaticStruct(); }
+    bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);
+};
+
+void UGA_Build_PlacePiece::ActivateAbility(...)
+{
+    // 客户端与服务端都会走到；只有本地控制端负责“求槽位”
+    if (CurrentActorInfo->IsLocallyControlled())
+    {
+        FBuildSlotKey Key;
+        if (!TraceForSlot(Key)) { K2_EndAbility(); return; }
+
+        FGameplayAbilityTargetDataHandle Handle;
+        auto* Data = new FGameplayAbilityTargetData_BuildPlacement();
+        Data->Key = Key; /* … */
+        Handle.Add(Data);
+
+        // 非权威端把 TargetData 发给服务端（GAS 自带通道，带预测键）
+        if (!CurrentActorInfo->IsNetAuthority())
+        {
+            ASC->CallServerSetReplicatedTargetData(CurrentSpecHandle,
+                CurrentActivationInfo.GetActivationPredictionKey(), Handle,
+                FGameplayTag(), ASC->ScopedPredictionKey);
+        }
+        OnTargetDataReady(Handle);
+    }
+    else
+    {
+        // 服务端等客户端的 TargetData（AbilityTargetDataSetDelegate 回调）
+    }
+}
+
+void UGA_Build_PlacePiece::OnTargetDataReady(const FGameplayAbilityTargetDataHandle& Handle)
+{
+    if (HasAuthority(&CurrentActivationInfo))
+    {
+        const auto* Data = static_cast<const FGameplayAbilityTargetData_BuildPlacement*>(Handle.Get(0));
+        if (UBuildStructureComponent* Build = ResolveBuildComponent(Data->HostActor.Get()))
+        {
+            // 服务端唯一入口：重新完整校验（含防作弊的距离/视线），与作弊命令走同一函数
+            Build->TryPlacePiece(Data->Key, ResolveDef(Data), Data->Rotation, GetControllerFromActorInfo());
+        }
+    }
+    // 本地播蒙太奇 / 音效 / 幽灵消失（纯 Cosmetic）
+    K2_EndAbility();
+}
+```
+
+服务端**绝不信任客户端算出的槽位**：TargetData 只是"我想在这里放"，
+`CanPlacePiece` 会连同距离、视线、槽位占用、支撑、材料重新校验一遍。
+
+### 4.4 预测策略：不预测结构
+
+- **不做**：预测性地在客户端插入 ISM 实例。结构是服务端权威的复制列表，
+  预测失败的回滚成本远高于收益，而建造不是每秒十次的高频动作，
+  100~200ms 的落位延迟完全可接受。
+- **要做**：本地立刻播放挥锤蒙太奇、音效、幽灵消失 —— 手感来自这些，不来自方块本身。
+
+失败时服务端广播 `Build.Message.Failed`（带 `Build.Fail.*` 原因 Tag）回给发起者，
+UI 订阅消息提示，同一套消息也驱动音效与飘字。
+
+### 4.5 材料成本：只扣一次，扣在组件里
+
+Lyra 有现成的 `ULyraAbilityCost_InventoryItem`（挂在 `ULyraGameplayAbility::AdditionalCosts`），
+但**不要用它做实际扣除**：作弊命令与存档恢复不走 Ability，扣料点必须唯一。
+
+- Ability 侧：只用它的 `CheckCost` 做**预判**（材料不足时按钮置灰、幽灵变红），不 Commit。
+- 组件侧：`TryPlacePiece` 内经 `IBuildResourceSource` 扣除，这是唯一真实扣料点。
+- P0 的 `UBuildCreativeResourceSource` 恒真，所以 Ability 层完全可以后加。
+
+Cooldown 反而适合放 Ability：一个很短的 GE Cooldown 防连点刷屏。
+
+### 4.6 为什么不用 Lyra 的 Interaction 系统
+
+`IInteractableTarget` / `InteractionOption` 适合"对世界里某个物体做一次性交互"（开箱、拾取）。
+建造是**持续模式 + 连续放置**，模式状态、幽灵、输入上下文都需要 Ability 的生命周期来承载。
+拆除倒是可以复用交互系统做目标高亮，但落点仍然是 `TryRemovePiece`。
 
 ## 5. GameFeature 装配
 
