@@ -144,17 +144,17 @@ ARaftActor 同时实现 IBuildStructureHost：提供坐标空间、挂载点、�
 ## 4. 交互流程（GAS）
 
 1. 玩家从快捷栏装备"建造锤"（`ULyraInventoryItemDefinition` + `InventoryFragment_EquippableItem`），
-   `ULyraEquipmentDefinition` 的 AbilitySet 授予 `GA_Raft_BuildMode`。
-2. `GA_Raft_BuildMode` 激活：加 `Status.Raft.Building` Tag，推入建造 HUD
+   `ULyraEquipmentDefinition` 的 AbilitySet 授予 `GA_Build_Mode`。
+2. `GA_Build_Mode` 激活：加 `Status.Build.Active` Tag，推入建造 HUD
    （GameFeatureAction_AddWidgets，Lyra UI 分层），启动本地幽灵预览 Actor。
 3. 每帧本地：相机射线 → 命中木筏 → `WorldToGrid()` → `CanPlacePiece()` 本地预判
    → 幽灵材质绿/红。**只读判定，不改状态**。
-4. `InputTag.Raft.Build.Confirm` → `GA_Raft_PlacePiece`：
+4. `InputTag.Build.Confirm` → `GA_Build_PlacePiece`：
    本地立即播放动画/音效（Cosmetic），`Server` RPC 携带 `{Coord, Slot, Edge, Rotation, DefinitionId}`。
 5. 服务端 `UBuildStructureComponent`：重新完整校验（槽位空闲、支撑规则、距离/视线防作弊、
    资源足够 → 从 `ULyraInventoryManagerComponent` 扣除），通过则 `AddEntry` + `MarkItemDirty`。
-   失败则广播 `Raft.Message.BuildFailed`（带失败原因 Tag）回给发起者。
-6. 拆除 `GA_Raft_RemovePiece`：额外做**连通性校验**——从锚定 Foundation 集合做
+   失败则广播 `Build.Message.Failed`（带失败原因 Tag）回给发起者。
+6. 拆除 `GA_Build_RemovePiece`：额外做**连通性校验**——从锚定 Foundation 集合做
    Flood Fill，若移除后出现孤岛则拒绝（或按设计：孤岛整体掉落/沉没）。
    成功后按 `Fragment_BuildCost` 的回收比例返还材料。
 
@@ -166,7 +166,7 @@ ARaftActor 同时实现 IBuildStructureHost：提供坐标空间、挂载点、�
 `Raft` GameFeatureData 中新增 Action（玩法层 Action 在 P1 移到 `Building` GF）：
 - `AddComponents`：`ARaftActor` ← `UBuildStructureComponent` + `UBuildStructureVisualComponent`；
   `ALyraCharacter` ← `URaftBuilderComponent`（玩家侧：当前选中件、幽灵、射线）。
-- `AddAbilities`：给 Pawn 授予建造 AbilitySet 与 `InputTag.Raft.Build.*` 映射（`ULyraInputConfig`）。
+- `AddAbilities`：给 Pawn 授予建造 AbilitySet 与 `InputTag.Build.*` 映射（`ULyraInputConfig`）。
 - `AddWidgets`：建造轮盘 / 材料条挂到 Lyra HUD 层。
 - `AddGameplayCuePath` / `AddDataRegistry`：建造件 Definition 集合（可用 DataRegistry 做解锁与配方表）。
 
@@ -186,7 +186,7 @@ ARaftActor 同时实现 IBuildStructureHost：提供坐标空间、挂载点、�
 | 背包 | `LyraGame/Inventory`：`ULyraInventoryManagerComponent`（含 `AddItemDefinition` / `ConsumeItemsByDefinition` / 槽位与堆叠） | 扣材料、返还材料 |
 | 装备与快捷栏 | `LyraGame/Equipment`：`ULyraEquipmentDefinition` / `ULyraQuickBarComponent` | "建造锤"装备后授予建造 AbilitySet |
 | GAS | `LyraGame/AbilitySystem` + `ULyraAbilitySet` | 建造模式、放置、拆除三个能力 |
-| 输入 | `ULyraInputConfig` + `InputTag.*` | `InputTag.Raft.Build.Confirm/Cancel/Rotate/Cycle` |
+| 输入 | `ULyraInputConfig` + `InputTag.*` | `InputTag.Build.Confirm/Cancel/Rotate/Cycle` |
 | 消息总线 | `GameplayMessageRouter` | 放置/拆除/失败 → UI、音效、任务 |
 | 模式装配 | Experience + GameFeatureAction | 建造能力只在开启建造的 Experience 生效 |
 | 作弊/调试入口 | `ULyraCheatManager` + `UCheatManagerExtension`（参考 `ULyraBotCheats`、`ULyraTeamCheats`） | 建造 GM 命令（见第 8 节） |
