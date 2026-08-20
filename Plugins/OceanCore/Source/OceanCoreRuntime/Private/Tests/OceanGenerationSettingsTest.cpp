@@ -109,6 +109,24 @@ bool FOceanGenerationSettingsDeterminismTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Above-water beach slopes remain walkable"),
 		MaximumLandSlope <= FMath::Tan(FMath::DegreesToRadians(35.0f)));
 
+	const FVector2D WaterSamplePosition(1234.0f, -5678.0f);
+	const FOceanWaterSurfaceSample FirstWaterSample = Settings->SampleWaterSurface(
+		WaterSamplePosition, 12.5f);
+	const FOceanWaterSurfaceSample SecondWaterSample = Settings->SampleWaterSurface(
+		WaterSamplePosition, 12.5f);
+	TestTrue(TEXT("Water surface samples are valid"), FirstWaterSample.bIsValid);
+	TestTrue(TEXT("Water surface sampling is deterministic"),
+		FirstWaterSample.Position.Equals(SecondWaterSample.Position, UE_KINDA_SMALL_NUMBER)
+		&& FirstWaterSample.Normal.Equals(SecondWaterSample.Normal, UE_KINDA_SMALL_NUMBER)
+		&& FirstWaterSample.Velocity.Equals(SecondWaterSample.Velocity, UE_KINDA_SMALL_NUMBER));
+	TestTrue(TEXT("Water surface normals are normalized and face upward"),
+		FMath::IsNearlyEqual(FirstWaterSample.Normal.SizeSquared(), 1.0f, UE_KINDA_SMALL_NUMBER)
+		&& FirstWaterSample.Normal.Z > 0.0f);
+	TestFalse(TEXT("Water surface samples contain no NaNs"),
+		FirstWaterSample.Position.ContainsNaN()
+		|| FirstWaterSample.Normal.ContainsNaN()
+		|| FirstWaterSample.Velocity.ContainsNaN());
+
 	return !HasAnyErrors();
 }
 

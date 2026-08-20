@@ -198,6 +198,24 @@ int32 UOceanWorldManagerComponent::GetRegisteredInvokerCount() const
 	return ValidInvokerCount;
 }
 
+FOceanWaterSurfaceSample UOceanWorldManagerComponent::SampleWaterSurface(
+	FVector WorldLocation, float TimeSeconds) const
+{
+	const FIntPoint ChunkCoord = GetChunkCoordFromWorldLocation(WorldLocation);
+	if (const AOceanChunkActor* Chunk = GetChunkAtCoord(ChunkCoord))
+	{
+		return Chunk->SampleWaterSurface(WorldLocation, TimeSeconds);
+	}
+
+	const UOceanGenerationSettings* Settings = GenerationSettings
+		? GenerationSettings.Get()
+		: GetDefault<UOceanGenerationSettings>();
+	FOceanWaterSurfaceSample Result = Settings->SampleWaterSurface(
+		FVector2D(WorldLocation.X, WorldLocation.Y), TimeSeconds);
+	Result.Position.Z += ChunkBaseZ;
+	return Result;
+}
+
 bool UOceanWorldManagerComponent::HasAuthority() const
 {
 	const AActor* OwnerActor = GetOwner();

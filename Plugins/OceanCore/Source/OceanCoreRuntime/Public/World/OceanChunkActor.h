@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "World/OceanWaterSurface.h"
 
 #include "OceanChunkActor.generated.h"
 
@@ -89,6 +90,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Ocean|Chunk")
 	bool IsChunkInitialized() const { return ChunkState.bInitialized; }
+
+	/** Samples this chunk's water surface in world space, including the chunk base Z. */
+	UFUNCTION(BlueprintPure, Category = "Ocean|Water")
+	FOceanWaterSurfaceSample SampleWaterSurface(FVector WorldLocation, float TimeSeconds) const;
 
 	UPROPERTY(BlueprintAssignable, Category = "Ocean|Chunk")
 	FOceanChunkInitializedSignature OnChunkInitialized;

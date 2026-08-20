@@ -196,6 +196,25 @@ FVector AOceanChunkActor::GetChunkWorldOrigin() const
 		ChunkState.BaseZ);
 }
 
+FOceanWaterSurfaceSample AOceanChunkActor::SampleWaterSurface(
+	FVector WorldLocation, float TimeSeconds) const
+{
+	FOceanWaterSurfaceSample Result;
+	Result.Position = WorldLocation;
+	if (!ChunkState.bInitialized)
+	{
+		return Result;
+	}
+
+	const UOceanGenerationSettings* Settings = ChunkState.GenerationSettings
+		? ChunkState.GenerationSettings.Get()
+		: GetDefault<UOceanGenerationSettings>();
+	Result = Settings->SampleWaterSurface(
+		FVector2D(WorldLocation.X, WorldLocation.Y), TimeSeconds);
+	Result.Position.Z += ChunkState.BaseZ;
+	return Result;
+}
+
 void AOceanChunkActor::OnRep_ChunkState()
 {
 	if (ChunkState.bInitialized)

@@ -5,6 +5,7 @@
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
 #include "TimerManager.h"
+#include "World/OceanWaterSurface.h"
 
 #include "OceanWorldManagerComponent.generated.h"
 
@@ -67,6 +68,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Ocean|Generation")
 	UOceanGenerationSettings* GetGenerationSettings() const { return GenerationSettings; }
+
+	/** Samples the active chunk at this location, falling back to the manager's shared settings. */
+	UFUNCTION(BlueprintPure, Category = "Ocean|Water")
+	FOceanWaterSurfaceSample SampleWaterSurface(FVector WorldLocation, float TimeSeconds) const;
 
 	UPROPERTY(BlueprintAssignable, Category = "Ocean|Chunk")
 	FOceanChunkLifecycleSignature OnChunkActivated;

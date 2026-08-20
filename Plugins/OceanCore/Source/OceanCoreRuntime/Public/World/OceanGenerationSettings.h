@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "World/OceanWaterSurface.h"
 
 #include "OceanGenerationSettings.generated.h"
 
@@ -26,6 +27,10 @@ public:
 	/** Returns the generated terrain Z at a world-space XY position, in centimeters. */
 	UFUNCTION(BlueprintPure, Category = "Ocean|Generation")
 	float SampleTerrainHeight(FVector2D WorldPosition) const;
+
+	/** Returns the deterministic water height, normal, and vertical velocity at a world-space point. */
+	UFUNCTION(BlueprintPure, Category = "Ocean|Water")
+	FOceanWaterSurfaceSample SampleWaterSurface(FVector2D WorldPosition, float TimeSeconds) const;
 
 	int32 GetWorldSeed() const { return WorldSeed; }
 	float GetChunkSize() const { return FMath::Max(100.0f, ChunkSize); }
@@ -111,6 +116,36 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water", meta = (Units = "cm"))
 	float WaterHeight = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water|Waves",
+		meta = (ClampMin = "0.0", Units = "cm"))
+	float PrimaryWaveAmplitude = 18.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water|Waves",
+		meta = (ClampMin = "100.0", Units = "cm"))
+	float PrimaryWaveLength = 2200.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water|Waves",
+		meta = (ClampMin = "0.0", Units = "cm/s"))
+	float PrimaryWaveSpeed = 160.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water|Waves")
+	FVector2D PrimaryWaveDirection = FVector2D(1.0f, 0.35f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water|Waves",
+		meta = (ClampMin = "0.0", Units = "cm"))
+	float SecondaryWaveAmplitude = 8.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water|Waves",
+		meta = (ClampMin = "100.0", Units = "cm"))
+	float SecondaryWaveLength = 1200.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water|Waves",
+		meta = (ClampMin = "0.0", Units = "cm/s"))
+	float SecondaryWaveSpeed = 100.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water|Waves")
+	FVector2D SecondaryWaveDirection = FVector2D(-0.25f, 1.0f);
 
 	/** Height range above the waterline displayed as the yellow island edge. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Water",

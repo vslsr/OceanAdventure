@@ -8,7 +8,7 @@ that turns it into the mode's player, and the wiring that injects everything els
                                 PawnClass        -> BP_OceanAdventure_Pawn
                                 AbilitySets      -> [] (intentional)
                                 DefaultCameraMode-> ULyraCameraMode_TopDownFollow
-      GameFeaturesToEnable -> "OceanAdventure", "TopDownFeature"
+      GameFeaturesToEnable -> "OceanAdventure", "TopDownFeature", "Raft"
 
     OceanAdventure (GameFeatureData)
       AddComponents        -> LyraGameState        gets UOceanWorldManagerComponent
@@ -66,7 +66,7 @@ ACTION_SET_PATHS = [
 # Plugin names, not paths: Lyra resolves these through GetPluginURLByName.
 # OceanAdventure enables itself so its own AddComponents action runs, the same way
 # Lyra's ShooterCore experiences do.
-GAME_FEATURES_TO_ENABLE = ["OceanAdventure", "TopDownFeature"]
+GAME_FEATURES_TO_ENABLE = ["OceanAdventure", "TopDownFeature", "Raft"]
 
 
 def log(message):
