@@ -135,14 +135,113 @@ ARaftActor
 `FPrimaryAssetId` 而非硬指针）+ 木筏世界变换。载入时按 Level 升序批量
 `AddEntry`，全部完成后再触发一次 `OnStructureChanged`（避免 N 次重建 ISM 与浮力）。
 
-## 7. 落地阶段建议
-1. **P0 结构核心**：`FRaftGridCoord`/`URaftPieceDefinition`/`URaftBuildComponent`（含 FastArray）
-   + ISM 可视化；用控制台命令 `Raft.PlacePiece` 验证复制与行走。
-2. **P1 建造玩法**：GAS 能力、输入、幽灵预览、放置/拆除规则、资源消耗。
+## 7. 前置模块与依赖关系
+
+### 7.1 已就绪（直接复用，不需要新写）
+
+| 能力 | 现有落点 | 建造系统怎么用 |
+| --- | --- | --- |
+| 海面高度/法线采样 | `OceanCoreRuntime`：`UOceanWorldManagerComponent` | 浮力重算、木筏姿态 |
+| 木筏本体与浮力 | `Raft` GF：`ARaftActor` / `URaftBuoyancyComponent` / `URaftDefinition` | 建造挂载宿主、结构变化后重算 |
+| 背包 | `LyraGame/Inventory`：`ULyraInventoryManagerComponent`（含 `AddItemDefinition` / `ConsumeItemsByDefinition` / 槽位与堆叠） | 扣材料、返还材料 |
+| 装备与快捷栏 | `LyraGame/Equipment`：`ULyraEquipmentDefinition` / `ULyraQuickBarComponent` | "建造锤"装备后授予建造 AbilitySet |
+| GAS | `LyraGame/AbilitySystem` + `ULyraAbilitySet` | 建造模式、放置、拆除三个能力 |
+| 输入 | `ULyraInputConfig` + `InputTag.*` | `InputTag.Raft.Build.Confirm/Cancel/Rotate/Cycle` |
+| 消息总线 | `GameplayMessageRouter` | 放置/拆除/失败 → UI、音效、任务 |
+| 模式装配 | Experience + GameFeatureAction | 建造能力只在开启建造的 Experience 生效 |
+| 作弊/调试入口 | `ULyraCheatManager` + `UCheatManagerExtension`（参考 `ULyraBotCheats`、`ULyraTeamCheats`） | 建造 GM 命令（见第 8 节） |
+
+### 7.2 需要新增（本系统自己的模块，全部在 `Raft` GF 内）
+
+1. `RaftGrid`：`FRaftGridCoord`、`FRaftSlotKey`、世界↔局部网格换算、Debug 绘制。**零依赖，最先做。**
+2. `RaftPieceDefinition` + Fragment 集合：数据层，依赖 1。
+3. `URaftBuildComponent`：`FRaftPieceList` FastArray + 放置/拆除/校验，依赖 1、2。
+4. `URaftStructureVisualComponent`：ISM 表现与碰撞，依赖 3。
+5. `IRaftBuildResourceSource`：**资源来源抽象**（见 7.3），依赖 2。
+6. GAS 能力 + 输入 + 幽灵预览，依赖 3、5。
+7. 建造 UI（轮盘/材料条），依赖 3、6。
+8. 存档，依赖 3。
+
+### 7.3 背包是不是硬前置？——不是，用接口隔离
+
+建造的资源检查不要直接调 `ULyraInventoryManagerComponent`，而是走一层窄接口：
+
+```cpp
+UINTERFACE() class URaftBuildResourceSource : public UInterface { GENERATED_BODY() };
+class IRaftBuildResourceSource
+{
+    virtual bool HasResources(const TArray<FRaftBuildCost>& Costs) const = 0;
+    virtual bool ConsumeResources(const TArray<FRaftBuildCost>& Costs) = 0;   // 服务端调用
+    virtual void RefundResources(const TArray<FRaftBuildCost>& Costs) = 0;
+};
+```
+
+两个实现：
+
+- `URaftCreativeResourceSource`：永远返回 true，什么都不扣 —— 建造 GM / 单元测试用。
+- `URaftInventoryResourceSource`：转发到 `ULyraInventoryManagerComponent`（`ConsumeItemsByDefinition` / `AddItemDefinition`）—— 正式玩法用。
+
+这样 P0 阶段完全不碰背包也能跑通建造闭环；背包接入只是换一个实现类，`URaftBuildComponent`
+一行不改。同理，**建造 UI 也不是前置**：GM 用 Exec 命令选件，正式玩法用轮盘，两者调同一个
+`TryPlacePiece` 入口。
+
+真正的硬前置只有两条：`OceanCore` 的水面采样（已有）和 `ARaftActor` 的稳定甲板与
+MovementBase（已有）。
+
+## 8. 建造 GM（先行测试沙盒）
+
+**可以，而且建议先做。** 它让 P0 在没有 UI、没有美术、没有背包的情况下就能验证四件核心事：
+网格映射是否正确、FastArray 复制是否正确、角色站在新建地板上是否抖动、结构变化后浮力包围盒
+是否正确重算。GM 与正式玩法**共用同一个服务端入口**（`URaftBuildComponent::TryPlacePiece`），
+杜绝"测试路径能跑、正式路径不行"。
+
+### 8.1 作弊命令（Lyra 原生方式）
+
+`URaftBuildCheats : UCheatManagerExtension`，在 `URaftBuildComponent::BeginPlay` 里
+`CheatManager->AddCheatManagerExtension(...)` 注册（对照 `ULyraBotCheats`）：
+
+| 命令 | 作用 |
+| --- | --- |
+| `RaftBuildCreative 0/1` | 切换无限材料（切换 `IRaftBuildResourceSource` 实现） |
+| `RaftBuildSelect <PieceTag>` | 选中当前建造件，如 `Raft.Piece.Floor.Wood` |
+| `RaftBuildPlace [X Y Level]` | 在准星位置或指定格放置（服务端权威） |
+| `RaftBuildRemove [X Y Level]` | 拆除 |
+| `RaftBuildFill <SizeX> <SizeY>` | 批量铺地板，压测复制与 ISM 数量 |
+| `RaftBuildClear` | 清空所有扩展件，回到基础木筏 |
+| `RaftBuildDump` | 打印结构表：槽位、定义、支撑关系、连通分量 |
+| `RaftBuildDebug 0/1` | 屏幕上绘制网格、占用槽位、支撑箭头、当前包围盒 |
+
+约束：`UFUNCTION(Exec, BlueprintAuthorityOnly)`，Shipping 下随 Lyra 的 CheatManager 一起编译剔除；
+客户端输入的命令经 `ServerCheat` 到服务端执行，保证与正式流程一样是服务端权威。
+
+### 8.2 测试 Experience 与地图
+
+- `BP_Experience_RaftBuild_Test`（`LyraExperienceDefinition`）：`GameFeaturesToEnable = [OceanAdventure, Raft]`，
+  PawnData 复用 `DA_OceanAdventure_PawnData`，额外挂建造 AbilitySet 与 `URaftCreativeResourceSource`。
+- 地图直接复用 `L_OceanChunkTest`（已有木筏测试 Actor），或加一张 `L_RaftBuildTest`：
+  平静海面参数 + 一个 `BP_Raft_Default` + 出生点。
+- 与线上玩法的差异**只体现在 Experience 资产上**，代码零分叉。
+
+### 8.3 联机验证清单
+
+用 `Play As Client` + 2 客户端 + Dedicated Server 跑：
+
+1. 客户端 A 放置 → B 与 DS 在同一格出现同一件，且只发增量。
+2. 角色站在 A 新建的地板上，木筏随浪起伏时不抖动、不掉落（MovementBase 正确）。
+3. 拆除脚下地板 → 角色正常下落，不留幽灵碰撞。
+4. `RaftBuildFill 10 10` 后甲板包围盒与 Pontoon 重算正确，浮力不跳变。
+5. 断线重连/后加入的客户端能拿到完整结构（初次全量复制）。
+
+## 9. 落地阶段建议
+1. **P0 结构核心 + 建造 GM**：`FRaftGridCoord`/`URaftPieceDefinition`/`URaftBuildComponent`（含 FastArray）
+   + ISM 可视化 + `URaftBuildCheats` + `URaftCreativeResourceSource` + 测试 Experience；
+   按 8.3 清单验证复制与行走。**此阶段不接背包、不做 UI。**
+2. **P1 建造玩法**：GAS 能力、输入、幽灵预览、放置/拆除规则；把资源来源从 Creative 切到
+   `URaftInventoryResourceSource`，接入背包扣料与返还。
 3. **P2 系统联动**：浮力/甲板包围盒动态重算、GameplayMessage 驱动 UI 与音效。
 4. **P3 扩展**：多层楼梯与屋顶、功能件子 Actor、损坏/维修、存档、鲨鱼破坏事件。
 
-## 8. 性能与网络要点
+## 10. 性能与网络要点
 - 每种 Mesh 一个 ISM；单木筏建议软上限 ~500 件，超出提示玩家。
 - FastArray 只传增量；`NetUpdateFrequency` 沿用现有 30/10，结构变化时 `ForceNetUpdate()`。
 - 网格判定全部在木筏局部空间进行，与海浪姿态解耦，避免浮点漂移。
