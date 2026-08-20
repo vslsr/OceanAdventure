@@ -1,15 +1,43 @@
+"""Build the grey-box chunk test blueprints and place an invoker in the test map.
+
+These assets live in OceanAdventure, not OceanCore. OceanCore owns the algorithm and the
+replicated chunk contract; anything you can see -- including debug visualisation -- is the
+consuming game feature's. Keeping them here also means OceanCore never has to reference a
+game feature, which the dependency rules forbid.
+
+Owns:
+
+    /OceanAdventure/Blueprints/BP_OceanChunk_Debug          draws chunk bounds
+    /OceanAdventure/Blueprints/BP_OceanWorldManager_Debug   manager pointed at the above
+    /OceanAdventure/Blueprints/BP_OceanChunk_TestInvoker    actor carrying an invoker
+    the "Ocean Chunk Test Invoker" actor inside the test map
+
+Does *not* own the map itself: build_ocean_adventure_test_map creates and furnishes
+/OceanAdventure/Maps/L_OceanChunkTest. Run that one first.
+
+BP_OceanWorldManager_Debug is for hand-testing only. The shipping path does not use it:
+CreateOceanAdventureExperience injects the C++ UOceanWorldManagerComponent, and
+UOceanChunkPresentationComponent supplies the terrain and water on the chunk actor.
+
+Run from the editor Python console:
+
+    py "<project>/Plugins/GameFeatures/OceanAdventure/Content/Python/build_ocean_chunk_test_assets.py"
+
+Re-running rewrites the three blueprints' defaults and replaces the invoker actor, so hand
+edits to those do not survive.
+"""
+
 import unreal
 
 
-MAP_PATH = "/OceanCore/Maps/L_OceanChunkTest"
-DEBUG_CHUNK_PATH = "/OceanCore/Blueprints/BP_OceanChunk_Debug"
-MANAGER_COMPONENT_PATH = "/OceanCore/Blueprints/BP_OceanWorldManager_Debug"
-TEST_INVOKER_PATH = "/OceanCore/Blueprints/BP_OceanChunk_TestInvoker"
-SOURCE_MAP_PATH = "/Game/Map/L_Map_Default"
+MAP_PATH = "/OceanAdventure/Maps/L_OceanChunkTest"
+DEBUG_CHUNK_PATH = "/OceanAdventure/Blueprints/BP_OceanChunk_Debug"
+MANAGER_COMPONENT_PATH = "/OceanAdventure/Blueprints/BP_OceanWorldManager_Debug"
+TEST_INVOKER_PATH = "/OceanAdventure/Blueprints/BP_OceanChunk_TestInvoker"
 
 
 def log(message):
-    unreal.log(f"[OceanCoreAssetBuilder] {message}")
+    unreal.log(f"[OceanAdventureChunkAssetBuilder] {message}")
 
 
 def load_class(path):
@@ -103,7 +131,7 @@ def configure_test_invoker():
     return blueprint.generated_class()
 
 
-def load_or_create_test_map():
+def load_test_map():
     level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
     editor_subsystem = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
     current_world = editor_subsystem.get_editor_world()
@@ -115,14 +143,12 @@ def load_or_create_test_map():
         log(f"Test map is already open: {MAP_PATH}")
         return level_subsystem
 
+    # Deliberately does not create the map. build_ocean_adventure_test_map owns it, and two
+    # scripts creating the same map from different templates would quietly fight.
     if not unreal.EditorAssetLibrary.does_asset_exist(MAP_PATH):
-        # duplicate_asset loads a UWorld for the destination package. Loading that same
-        # package immediately afterwards triggers UE 5.7's world GC leak guard.
-        if not level_subsystem.new_level_from_template(MAP_PATH, SOURCE_MAP_PATH):
-            raise RuntimeError(
-                f"Unable to create test map {MAP_PATH} from {SOURCE_MAP_PATH}"
-            )
-        return level_subsystem
+        raise RuntimeError(
+            f"Test map {MAP_PATH} does not exist. Run build_ocean_adventure_test_map first."
+        )
 
     if not level_subsystem.load_level(MAP_PATH):
         raise RuntimeError(f"Unable to load test map: {MAP_PATH}")
@@ -148,23 +174,23 @@ def replace_test_invoker(actor_subsystem, test_invoker_class):
 
 def build():
     asset_registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    asset_registry.scan_paths_synchronous(["/OceanCore"], True, False)
+    asset_registry.scan_paths_synchronous(["/OceanAdventure"], True, False)
 
     debug_chunk_class = configure_debug_chunk()
     manager_component_class = configure_manager_component(debug_chunk_class)
     test_invoker_class = configure_test_invoker()
-    level_subsystem = load_or_create_test_map()
+    level_subsystem = load_test_map()
     actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 
     replace_test_invoker(actor_subsystem, test_invoker_class)
     if not level_subsystem.save_current_level():
         raise RuntimeError(f"Unable to save test map: {MAP_PATH}")
 
-    log(f"Created editor test map: {MAP_PATH}")
+    log(f"Placed the test invoker in: {MAP_PATH}")
     log(
-        "Add the generated manager component class to LyraGameState with "
-        "GameFeatureAction_AddComponents: "
-        f"{manager_component_class.get_path_name()}"
+        "For hand testing, add this manager to LyraGameState yourself: "
+        f"{manager_component_class.get_path_name()}. "
+        "The experience injects the C++ UOceanWorldManagerComponent instead."
     )
 
 
