@@ -9,6 +9,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Net/UnrealNetwork.h"
 #include "OceanCoreTypes.h"
+#include "World/OceanGenerationSettings.h"
 #include "World/OceanChunkInvokerComponent.h"
 
 namespace
@@ -142,7 +143,11 @@ void AOceanChunkActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 }
 
 bool AOceanChunkActor::InitializeChunk(
-	FIntPoint InChunkCoord, float InChunkSize, int32 InWorldSeed, float InBaseZ)
+	FIntPoint InChunkCoord,
+	float InChunkSize,
+	int32 InWorldSeed,
+	float InBaseZ,
+	UOceanGenerationSettings* InGenerationSettings)
 {
 	if (!HasAuthority() || InChunkSize <= UE_SMALL_NUMBER)
 	{
@@ -154,13 +159,15 @@ bool AOceanChunkActor::InitializeChunk(
 		return ChunkState.ChunkCoord == InChunkCoord
 			&& FMath::IsNearlyEqual(ChunkState.ChunkSize, InChunkSize)
 			&& ChunkState.WorldSeed == InWorldSeed
-			&& FMath::IsNearlyEqual(ChunkState.BaseZ, InBaseZ);
+			&& FMath::IsNearlyEqual(ChunkState.BaseZ, InBaseZ)
+			&& ChunkState.GenerationSettings == InGenerationSettings;
 	}
 
 	ChunkState.ChunkCoord = InChunkCoord;
 	ChunkState.ChunkSize = InChunkSize;
 	ChunkState.WorldSeed = InWorldSeed;
 	ChunkState.BaseZ = InBaseZ;
+	ChunkState.GenerationSettings = InGenerationSettings;
 	ChunkState.bInitialized = true;
 
 	// Keep coarse network culling aligned with the same radius limit enforced by invokers.

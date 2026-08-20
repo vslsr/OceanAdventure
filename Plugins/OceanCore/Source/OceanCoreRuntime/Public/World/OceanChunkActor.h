@@ -8,6 +8,7 @@
 #include "OceanChunkActor.generated.h"
 
 class AOceanChunkActor;
+class UOceanGenerationSettings;
 class USceneComponent;
 
 USTRUCT(BlueprintType)
@@ -26,6 +27,10 @@ struct OCEANCORERUNTIME_API FOceanChunkState
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ocean|Chunk")
 	float BaseZ = 0.0f;
+
+	/** Optional immutable generation parameters used to build this chunk's presentation. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ocean|Generation")
+	TObjectPtr<UOceanGenerationSettings> GenerationSettings;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ocean|Chunk")
 	bool bInitialized = false;
@@ -53,7 +58,12 @@ public:
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Ocean|Chunk")
-	bool InitializeChunk(FIntPoint InChunkCoord, float InChunkSize, int32 InWorldSeed, float InBaseZ = 0.0f);
+	bool InitializeChunk(
+		FIntPoint InChunkCoord,
+		float InChunkSize,
+		int32 InWorldSeed,
+		float InBaseZ = 0.0f,
+		UOceanGenerationSettings* InGenerationSettings = nullptr);
 
 	UFUNCTION(BlueprintPure, Category = "Ocean|Chunk")
 	FIntPoint GetChunkCoord() const { return ChunkState.ChunkCoord; }
@@ -67,6 +77,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Ocean|Chunk")
 	float GetBaseZ() const { return ChunkState.BaseZ; }
+
+	UFUNCTION(BlueprintPure, Category = "Ocean|Generation")
+	UOceanGenerationSettings* GetGenerationSettings() const { return ChunkState.GenerationSettings; }
 
 	UFUNCTION(BlueprintPure, Category = "Ocean|Chunk")
 	int32 GetChunkSeed() const;

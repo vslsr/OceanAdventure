@@ -69,6 +69,21 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ocean Adventure|Island", meta = (ClampMin = "100.0"))
 	float IslandRadius = 18000.0f;
 
+	/** Horizontal distance from the shoreline to the deep ocean floor. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ocean Adventure|Island",
+		meta = (ClampMin = "100.0", UIMin = "1000.0", Units = "cm"))
+	float UnderwaterShelfWidth = 8000.0f;
+
+	/** Target incline from the waterline to the plateau when no generation settings asset is assigned. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ocean Adventure|Island",
+		meta = (ClampMin = "5.0", ClampMax = "40.0", UIMin = "5.0", UIMax = "40.0", Units = "deg"))
+	float BeachSlopeAngleDegrees = 20.0f;
+
+	/** Fraction of the island radius kept at a flat height before the shoreline transition. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ocean Adventure|Island",
+		meta = (ClampMin = "0.0", ClampMax = "0.95", UIMin = "0.0", UIMax = "0.95"))
+	float IslandPlateauRadiusRatio = 0.55f;
+
 	/** Fraction of cells that actually carry an island. 1 puts one in every cell. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Ocean Adventure|Island", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float IslandDensity = 0.55f;

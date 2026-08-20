@@ -10,6 +10,7 @@
 
 class AOceanChunkActor;
 class UOceanChunkInvokerComponent;
+class UOceanGenerationSettings;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FOceanChunkLifecycleSignature, AOceanChunkActor*, Chunk);
 
@@ -64,6 +65,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Ocean|Generation")
 	int32 GetWorldSeed() const { return WorldSeed; }
 
+	UFUNCTION(BlueprintPure, Category = "Ocean|Generation")
+	UOceanGenerationSettings* GetGenerationSettings() const { return GenerationSettings; }
+
 	UPROPERTY(BlueprintAssignable, Category = "Ocean|Chunk")
 	FOceanChunkLifecycleSignature OnChunkActivated;
 
@@ -74,10 +78,16 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Chunk")
 	TSubclassOf<AOceanChunkActor> ChunkClass;
 
+	/** Optional shared asset. When assigned, it supplies WorldSeed and ChunkSize at startup. */
 	UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category = "Ocean|Generation")
+	TObjectPtr<UOceanGenerationSettings> GenerationSettings;
+
+	UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category = "Ocean|Generation",
+		meta = (EditCondition = "GenerationSettings == nullptr"))
 	int32 WorldSeed = 12345;
 
-	UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category = "Ocean|Chunk", meta = (ClampMin = "100.0"))
+	UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category = "Ocean|Chunk",
+		meta = (ClampMin = "100.0", EditCondition = "GenerationSettings == nullptr"))
 	float ChunkSize = 20000.0f;
 
 	UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category = "Ocean|Chunk")

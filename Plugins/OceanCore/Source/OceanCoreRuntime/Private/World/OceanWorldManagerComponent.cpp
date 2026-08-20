@@ -10,6 +10,7 @@
 #include "OceanCoreRuntimeModule.h"
 #include "World/OceanChunkActor.h"
 #include "World/OceanChunkInvokerComponent.h"
+#include "World/OceanGenerationSettings.h"
 
 UOceanWorldManagerComponent::UOceanWorldManagerComponent()
 {
@@ -26,6 +27,12 @@ void UOceanWorldManagerComponent::BeginPlay()
 	if (!HasAuthority() || !GetWorld())
 	{
 		return;
+	}
+
+	if (GenerationSettings)
+	{
+		WorldSeed = GenerationSettings->GetWorldSeed();
+		ChunkSize = GenerationSettings->GetChunkSize();
 	}
 
 	ChunkSize = GetSafeChunkSize();
@@ -74,6 +81,7 @@ void UOceanWorldManagerComponent::GetLifetimeReplicatedProps(TArray<FLifetimePro
 	DOREPLIFETIME_CONDITION(UOceanWorldManagerComponent, WorldSeed, COND_InitialOnly);
 	DOREPLIFETIME_CONDITION(UOceanWorldManagerComponent, ChunkSize, COND_InitialOnly);
 	DOREPLIFETIME_CONDITION(UOceanWorldManagerComponent, ChunkBaseZ, COND_InitialOnly);
+	DOREPLIFETIME_CONDITION(UOceanWorldManagerComponent, GenerationSettings, COND_InitialOnly);
 }
 
 UOceanWorldManagerComponent* UOceanWorldManagerComponent::Get(const UObject* WorldContextObject)
@@ -340,7 +348,8 @@ AOceanChunkActor* UOceanWorldManagerComponent::SpawnChunk(FIntPoint ChunkCoord)
 	const float SafeChunkSize = GetSafeChunkSize();
 	AOceanChunkActor* Chunk = World->SpawnActor<AOceanChunkActor>(
 		ChunkClass, GetChunkWorldOrigin(ChunkCoord), FRotator::ZeroRotator, SpawnParameters);
-	if (!Chunk || !Chunk->InitializeChunk(ChunkCoord, SafeChunkSize, WorldSeed, ChunkBaseZ))
+	if (!Chunk || !Chunk->InitializeChunk(
+		ChunkCoord, SafeChunkSize, WorldSeed, ChunkBaseZ, GenerationSettings))
 	{
 		UE_LOG(LogOceanCore, Error, TEXT("Failed to initialize ocean chunk [%d, %d]."),
 			ChunkCoord.X, ChunkCoord.Y);

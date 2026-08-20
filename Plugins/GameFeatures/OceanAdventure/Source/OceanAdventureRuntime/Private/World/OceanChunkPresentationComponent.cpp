@@ -10,11 +10,15 @@
 #include "OceanAdventureRuntimeModule.h"
 #include "ProceduralMeshComponent.h"
 #include "World/OceanChunkActor.h"
+#include "World/OceanGenerationSettings.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanChunkPresentationComponent)
 
 namespace
 {
+	constexpr float ShorelineMask = 0.02f;
+	constexpr float BeachRoughnessScale = 0.2f;
+
 	const TCHAR* TerrainMaterialPath =
 		TEXT("/OceanAdventure/Environment/WildOmission/WorldGeneration/M_Terrain.M_Terrain");
 	const TCHAR* WaterMeshPath =
@@ -40,16 +44,46 @@ namespace
 		return static_cast<float>(Hash & 0xFFFFFFu) / static_cast<float>(0xFFFFFF);
 	}
 
-	/** Hermite falloff: 1 inside Inner, 0 beyond Outer. */
-	float IslandFalloff(float Inner, float Outer, float Distance)
+	float IslandProfileMask(
+		float PlateauRadius, float ShorelineRadius, float OceanFloorRadius, float Distance)
 	{
-		if (Outer <= Inner)
+		if (Distance <= PlateauRadius)
 		{
-			return Distance <= Inner ? 1.0f : 0.0f;
+			return 1.0f;
 		}
 
-		const float T = FMath::Clamp((Distance - Inner) / (Outer - Inner), 0.0f, 1.0f);
-		return 1.0f - (T * T * (3.0f - 2.0f * T));
+		if (Distance <= ShorelineRadius)
+		{
+			const float LandAlpha = FMath::Clamp(
+				(Distance - PlateauRadius)
+					/ FMath::Max(ShorelineRadius - PlateauRadius, UE_SMALL_NUMBER),
+				0.0f,
+				1.0f);
+			return FMath::Lerp(1.0f, ShorelineMask, LandAlpha);
+		}
+
+		const float UnderwaterAlpha = FMath::Clamp(
+			(Distance - ShorelineRadius)
+				/ FMath::Max(OceanFloorRadius - ShorelineRadius, UE_SMALL_NUMBER),
+			0.0f,
+			1.0f);
+		return FMath::Lerp(ShorelineMask, 0.0f, UnderwaterAlpha);
+	}
+
+	float GetIslandShapeHeight(
+		float Mask, float OceanFloorHeight, float WaterHeight, float IslandPeakHeight)
+	{
+		if (Mask <= ShorelineMask)
+		{
+			const float UnderwaterAlpha = FMath::Clamp(Mask / ShorelineMask, 0.0f, 1.0f);
+			const float SmoothUnderwaterAlpha = UnderwaterAlpha * UnderwaterAlpha
+				* (3.0f - 2.0f * UnderwaterAlpha);
+			return FMath::Lerp(OceanFloorHeight, WaterHeight, SmoothUnderwaterAlpha);
+		}
+
+		const float LandAlpha = FMath::Clamp(
+			(Mask - ShorelineMask) / (1.0f - ShorelineMask), 0.0f, 1.0f);
+		return FMath::Lerp(WaterHeight, IslandPeakHeight, LandAlpha);
 	}
 }
 
@@ -145,7 +179,10 @@ void UOceanChunkPresentationComponent::BuildTerrain(AOceanChunkActor& Chunk)
 	Chunk.AddInstanceComponent(TerrainMeshComponent);
 	TerrainMeshComponent->RegisterComponent();
 
-	const int32 QuadsPerSide = FMath::Clamp(TerrainQuadsPerSide, 2, 128);
+	const UOceanGenerationSettings* GenerationSettings = Chunk.GetGenerationSettings();
+	const int32 QuadsPerSide = GenerationSettings
+		? FMath::Clamp(GenerationSettings->GetTerrainResolution(), 2, 128)
+		: FMath::Clamp(TerrainQuadsPerSide, 2, 128);
 	const int32 VerticesPerSide = QuadsPerSide + 1;
 	const float ChunkSize = Chunk.GetChunkSize();
 	const float VertexSpacing = ChunkSize / static_cast<float>(QuadsPerSide);
@@ -163,8 +200,18 @@ void UOceanChunkPresentationComponent::BuildTerrain(AOceanChunkActor& Chunk)
 
 	// Beach sits just above the waterline; rock takes over near the peaks. Derived from the
 	// island height so retuning IslandPeakHeight does not silently make everything sand.
-	const float SandLine = WaterHeight + 250.0f;
-	const float StoneLine = WaterHeight + FMath::Max(500.0f, (IslandPeakHeight - WaterHeight) * 0.55f);
+	const float EffectiveWaterHeight = GenerationSettings
+		? GenerationSettings->GetWaterHeight()
+		: WaterHeight;
+	const float EffectiveIslandPeakHeight = GenerationSettings
+		? GenerationSettings->GetIslandPeakHeight()
+		: IslandPeakHeight;
+	const float BeachBandHeight = GenerationSettings
+		? GenerationSettings->GetBeachBandHeight()
+		: 250.0f;
+	const float SandLine = EffectiveWaterHeight + BeachBandHeight;
+	const float StoneLine = EffectiveWaterHeight
+		+ FMath::Max(500.0f, (EffectiveIslandPeakHeight - EffectiveWaterHeight) * 0.55f);
 
 	const FVector ChunkOrigin = Chunk.GetChunkWorldOrigin();
 	for (int32 X = 0; X <= QuadsPerSide; ++X)
@@ -198,15 +245,17 @@ void UOceanChunkPresentationComponent::BuildTerrain(AOceanChunkActor& Chunk)
 		{
 			const int32 Vertex = X * VerticesPerSide + Y;
 			Triangles.Add(Vertex);
-			Triangles.Add(Vertex + VerticesPerSide);
-			Triangles.Add(Vertex + 1);
 			Triangles.Add(Vertex + 1);
 			Triangles.Add(Vertex + VerticesPerSide);
+			Triangles.Add(Vertex + 1);
 			Triangles.Add(Vertex + VerticesPerSide + 1);
+			Triangles.Add(Vertex + VerticesPerSide);
 		}
 	}
 
 	UKismetProceduralMeshLibrary::CalculateTangentsForMesh(Vertices, Triangles, UVs, Normals, Tangents);
+	ensureMsgf(Normals.IsEmpty() || Normals[Normals.Num() / 2].Z > 0.0f,
+		TEXT("Generated ocean terrain normals must face upward."));
 	TerrainMeshComponent->CreateMeshSection(
 		0, Vertices, Triangles, Normals, UVs, VertexColors, Tangents, true);
 	TerrainMeshComponent->SetMaterial(0, Material);
@@ -237,9 +286,13 @@ void UOceanChunkPresentationComponent::BuildWater(AOceanChunkActor& Chunk)
 	const float ScaleX = MeshSize.X > UE_SMALL_NUMBER ? Chunk.GetChunkSize() / MeshSize.X : 1.0f;
 	const float ScaleY = MeshSize.Y > UE_SMALL_NUMBER ? Chunk.GetChunkSize() / MeshSize.Y : 1.0f;
 	const FVector Scale(ScaleX, ScaleY, 1.0f);
+	const UOceanGenerationSettings* GenerationSettings = Chunk.GetGenerationSettings();
+	const float EffectiveWaterHeight = GenerationSettings
+		? GenerationSettings->GetWaterHeight()
+		: WaterHeight;
 	WaterMeshComponent->SetRelativeScale3D(Scale);
 	WaterMeshComponent->SetRelativeLocation(
-		FVector(Chunk.GetChunkSize() * 0.5f, Chunk.GetChunkSize() * 0.5f, WaterHeight)
+		FVector(Chunk.GetChunkSize() * 0.5f, Chunk.GetChunkSize() * 0.5f, EffectiveWaterHeight)
 		- MeshBounds.Origin * Scale);
 }
 
@@ -262,10 +315,15 @@ void UOceanChunkPresentationComponent::DestroyPresentation()
 float UOceanChunkPresentationComponent::GetTerrainHeight(
 	const AOceanChunkActor& Chunk, double WorldX, double WorldY) const
 {
+	const FVector2D WorldPosition(static_cast<float>(WorldX), static_cast<float>(WorldY));
+	if (const UOceanGenerationSettings* GenerationSettings = Chunk.GetGenerationSettings())
+	{
+		return GenerationSettings->SampleTerrainHeight(WorldPosition);
+	}
+
 	const float SafeNoiseScale = FMath::Max(100.0f, TerrainNoiseScale);
 	const float Seed = static_cast<float>(Chunk.GetWorldSeed());
 	const FVector2D SeedOffset(Seed * 0.0137f, Seed * 0.0211f);
-	const FVector2D WorldPosition(static_cast<float>(WorldX), static_cast<float>(WorldY));
 
 	// Surface roughness. On its own this is just a sheet undulating about a mean -- two
 	// octaves of Perlin around a base height give gentle swells, never a coastline. That is
@@ -277,10 +335,13 @@ float UOceanChunkPresentationComponent::GetTerrainHeight(
 
 	// The island mask is what actually decides land from sea.
 	const float Mask = GetIslandMask(Chunk, WorldPosition);
-	const float Shape = OceanFloorHeight + Mask * (IslandPeakHeight - OceanFloorHeight);
+	const float Shape = GetIslandShapeHeight(Mask, OceanFloorHeight, WaterHeight, IslandPeakHeight);
 
-	// Roughness is strongest on land so the seabed stays calm and the shoreline stays legible.
-	return Shape + Roughness * TerrainHeightAmplitude * (0.25f + 0.75f * Mask);
+	// The plateau, waterline, and seabed stay flat. Low-amplitude detail remains on the ramp.
+	const float LandAlpha = FMath::Clamp(
+		(Mask - ShorelineMask) / (1.0f - ShorelineMask), 0.0f, 1.0f);
+	const float TransitionWeight = 4.0f * LandAlpha * (1.0f - LandAlpha);
+	return Shape + Roughness * TerrainHeightAmplitude * BeachRoughnessScale * TransitionWeight;
 }
 
 float UOceanChunkPresentationComponent::GetIslandMask(
@@ -314,7 +375,17 @@ float UOceanChunkPresentationComponent::GetIslandMask(
 				(static_cast<float>(CellX) + HashIslandCell(CellX, CellY, Seed, 0)) * CellSize,
 				(static_cast<float>(CellY) + HashIslandCell(CellX, CellY, Seed, 1)) * CellSize);
 
-			const float CellRadius = NominalRadius * (0.6f + 0.8f * HashIslandCell(CellX, CellY, Seed, 2));
+			const float ShorelineRadius = NominalRadius
+				* (0.6f + 0.8f * HashIslandCell(CellX, CellY, Seed, 2));
+			const float OceanFloorRadius = ShorelineRadius + FMath::Max(100.0f, UnderwaterShelfWidth);
+			const float ConfiguredPlateauRadius = ShorelineRadius
+				* FMath::Clamp(IslandPlateauRadiusRatio, 0.0f, 0.95f);
+			const float HeightAboveWater = FMath::Max(0.0f, IslandPeakHeight - WaterHeight);
+			const float SafeBeachSlopeAngle = FMath::Clamp(BeachSlopeAngleDegrees, 5.0f, 40.0f);
+			const float MinimumTransitionWidth = HeightAboveWater
+				/ FMath::Tan(FMath::DegreesToRadians(SafeBeachSlopeAngle));
+			const float PlateauRadius = FMath::Min(
+				ConfiguredPlateauRadius, FMath::Max(0.0f, ShorelineRadius - MinimumTransitionWidth));
 
 			// Warping the distance instead of the radius is what turns a circle into a
 			// coastline with bays and headlands.
@@ -324,11 +395,19 @@ float UOceanChunkPresentationComponent::GetIslandMask(
 				HashIslandCell(CellX, CellY, Seed, 4) * 64.0f,
 				HashIslandCell(CellX, CellY, Seed, 5) * 64.0f);
 			const float ShapeNoise =
-				FMath::PerlinNoise2D(WorldPosition / (CellRadius * 0.5f) + ShapeOffset);
-			const float Distance = FVector2D::Distance(WorldPosition, Centre)
-				+ ShapeNoise * CellRadius * IslandEdgeDistortion;
+				FMath::PerlinNoise2D(WorldPosition / (ShorelineRadius * 1.5f) + ShapeOffset);
+			const float RadialDistance = FVector2D::Distance(WorldPosition, Centre);
+			const float WarpAlpha = FMath::Clamp(
+				(RadialDistance - PlateauRadius)
+					/ FMath::Max(ShorelineRadius - PlateauRadius, UE_SMALL_NUMBER),
+				0.0f,
+				1.0f);
+			const float WarpWeight = WarpAlpha * WarpAlpha * (3.0f - 2.0f * WarpAlpha);
+			const float Distance = RadialDistance
+				+ ShapeNoise * ShorelineRadius * IslandEdgeDistortion * WarpWeight;
 
-			BestMask = FMath::Max(BestMask, IslandFalloff(CellRadius * 0.25f, CellRadius, Distance));
+			BestMask = FMath::Max(BestMask, IslandProfileMask(
+				PlateauRadius, ShorelineRadius, OceanFloorRadius, Distance));
 		}
 	}
 
