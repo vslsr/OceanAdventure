@@ -132,5 +132,7 @@ private:
 	bool bHasAppliedMaterialState = false;
 	bool bUsingInvalidPreviewMaterial = false;
 	double FailureShakeEndSeconds = 0.0;
-	double NextHostSearchSeconds = 0.0;
+
+	/** Throttle bookkeeping for the const query FindBuildStructure, like SnapCandidateCache. */
+	mutable double NextHostSearchSeconds = 0.0;
 };
