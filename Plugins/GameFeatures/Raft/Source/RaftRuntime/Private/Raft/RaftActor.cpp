@@ -91,18 +91,22 @@ FVector ARaftActor::GetBaseDeckExtent() const
 void ARaftActor::RecomputeGridAlignment()
 {
 	const FVector Extent = GetBaseDeckExtent();
-	const double CellSize = FMath::Max(10.0, BuildGridSettings.CellSize);
+	// A build cell is one complete raft section. Rectangular cells are required because the
+	// authored raft is much longer than it is wide; forcing it into a square is what caused
+	// the old preview to be scaled down and overlap the base raft.
+	BuildGridSettings.CellSizeXY = FVector2D(Extent.X * 2.0, Extent.Y * 2.0);
+	const FVector2D CellSize = BuildGrid::GetCellSize(BuildGridSettings);
 
 	// Only whole cells that fit inside the deck may be anchored; a deck that is not an exact
 	// multiple of CellSize keeps its remainder as an un-buildable visual margin rather than
 	// letting pieces overhang the water.
-	const int32 CountX = FMath::FloorToInt((Extent.X * 2.0) / CellSize);
-	const int32 CountY = FMath::FloorToInt((Extent.Y * 2.0) / CellSize);
+	const int32 CountX = FMath::FloorToInt((Extent.X * 2.0) / CellSize.X);
+	const int32 CountY = FMath::FloorToInt((Extent.Y * 2.0) / CellSize.Y);
 
 	// Odd cell counts need a half-cell shift to stay centred on the raft origin.
 	BuildGridSettings.CellOrigin = FVector2D(
-		(CountX % 2 == 0) ? 0.0 : -CellSize * 0.5,
-		(CountY % 2 == 0) ? 0.0 : -CellSize * 0.5);
+		(CountX % 2 == 0) ? 0.0 : -CellSize.X * 0.5,
+		(CountY % 2 == 0) ? 0.0 : -CellSize.Y * 0.5);
 
 	// Level 0 is the deck's top face, so pieces only need their own half-height as offset.
 	BuildGridSettings.BaseHeight = Extent.Z;
@@ -114,9 +118,9 @@ void ARaftActor::RecomputeGridAlignment()
 		UE_LOG(
 			LogTemp,
 			Warning,
-			TEXT("[Raft] Deck %s is smaller than one %.0fcm build cell; building is disabled."),
+			TEXT("[Raft] Deck %s is smaller than one %s build cell; building is disabled."),
 			*Extent.ToString(),
-			CellSize);
+			*CellSize.ToString());
 		return;
 	}
 

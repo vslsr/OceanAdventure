@@ -441,7 +441,8 @@ void UBuildPreviewComponent::UpdatePreview()
 		&& !(CandidateKey == CurrentKey)
 		&& CandidateKey.Slot == CurrentKey.Slot)
 	{
-		const double HoldRadius = Structure->GetGridSettings().CellSize * SlotSwitchHysteresis;
+		const double HoldRadius = BuildGrid::GetMinCellSize(Structure->GetGridSettings())
+			* SlotSwitchHysteresis;
 		if (FVector::DistSquaredXY(CurrentCursorWorld, Structure->SlotToWorld(CurrentKey))
 			< FMath::Square(HoldRadius))
 		{

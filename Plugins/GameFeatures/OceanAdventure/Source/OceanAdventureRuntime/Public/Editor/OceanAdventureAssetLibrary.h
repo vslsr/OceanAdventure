@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "GameplayTagContainer.h"
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "Templates/SubclassOf.h"
 
@@ -11,6 +12,8 @@ class AActor;
 class UActorComponent;
 class UGameFeatureAction;
 class UInputMappingContext;
+class ULyraAbilitySet;
+class ULyraGameplayAbility;
 class ULyraInputConfig;
 
 /**
@@ -53,4 +56,15 @@ public:
 		UObject* Outer,
 		const TArray<ULyraInputConfig*>& InputConfigs,
 		FName ActionName = NAME_None);
+
+	/**
+	 * Replaces an AbilitySet's gameplay-ability entries. Lyra marks the entry fields as
+	 * EditDefaultsOnly, so UE 5.7 Python cannot construct or mutate the reflected structs.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Ocean Adventure|Assets")
+	static bool ConfigureAbilitySetGameplayAbilities(
+		ULyraAbilitySet* AbilitySet,
+		const TArray<TSubclassOf<ULyraGameplayAbility>>& AbilityClasses,
+		const TArray<int32>& AbilityLevels,
+		const TArray<FGameplayTag>& InputTags);
 };

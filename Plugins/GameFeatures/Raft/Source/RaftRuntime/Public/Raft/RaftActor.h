@@ -72,8 +72,8 @@ protected:
 	TObjectPtr<UBuildStructureVisualComponent> BuildStructureVisualComponent;
 
 	/**
-	 * CellSize / LevelHeight are authored; CellOrigin and BaseHeight are derived from the deck
-	 * by RecomputeGridAlignment() so that whole cells always fit inside the deck footprint.
+	 * LevelHeight and the legacy square CellSize are authored. CellSizeXY, CellOrigin, and
+	 * BaseHeight are derived from the RaftDefinition so one cell is one complete raft module.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Build")
 	FBuildGridSettings BuildGridSettings;

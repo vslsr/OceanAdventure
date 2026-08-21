@@ -2,7 +2,8 @@
 
 Enhanced Input actions + mapping context, a Lyra InputConfig that carries the build
 InputTags, and the AbilitySet that grants the three build abilities. Run after compiling
-OceanAdventureRuntime and BuildingCoreRuntime. Safe to re-run.
+OceanAdventureRuntime and BuildingCoreRuntime, and after CreateOceanAdventureExperience.py
+because that base-experience generator rewrites PawnData and GameFeatureData. Safe to re-run.
 """
 
 import unreal
@@ -24,6 +25,13 @@ ACTIONS = (
     ("IA_Build_Remove", "InputTag.Build.Remove", "X",
      "/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_RemovePiece"),
 )
+
+OWNED_ACTION_CLASSES = {
+    "OceanBuild_AddInputMapping": "GameFeatureAction_AddInputContextMapping",
+    "OceanBuild_AddInputBinding": "GameFeatureAction_AddInputBinding",
+    "OceanBuild_AddPreviewComponent": "GameFeatureAction_AddComponents",
+    "OceanBuild_AddProximityComponent": "GameFeatureAction_AddComponents",
+}
 
 
 def gameplay_tag(tag_name):
@@ -82,6 +90,31 @@ def make_key(key_name):
     return key
 
 
+def validate_owned_actions(game_feature_data):
+    actions_by_name = {
+        str(action.get_name()): action
+        for action in game_feature_data.get_editor_property("actions")
+        if action is not None
+    }
+    missing = sorted(set(OWNED_ACTION_CLASSES) - set(actions_by_name))
+    require(
+        not missing,
+        f"GameFeatureData did not retain build actions: {', '.join(missing)}",
+    )
+
+    for action_name, expected_class_name in OWNED_ACTION_CLASSES.items():
+        actual_class_name = str(actions_by_name[action_name].get_class().get_name())
+        require(
+            actual_class_name == expected_class_name,
+            (
+                f"{action_name} has class {actual_class_name}, "
+                f"expected {expected_class_name}"
+            ),
+        )
+
+    log(f"Validated GameFeature actions: {', '.join(sorted(OWNED_ACTION_CLASSES))}")
+
+
 def main():
     input_mapping = require(
         load_or_create(
@@ -103,7 +136,9 @@ def main():
     )
 
     ability_actions = []
-    granted_abilities = []
+    granted_ability_classes = []
+    granted_ability_levels = []
+    granted_ability_tags = []
     for action_name, tag_name, key_name, ability_path in ACTIONS:
         action = require(
             load_or_create(
@@ -119,6 +154,8 @@ def main():
         input_mapping.map_key(action, make_key(key_name))
 
         input_tag = gameplay_tag(tag_name)
+        # Unlike FLyraAbilitySet_GameplayAbility, this reflected struct supports keyword
+        # construction in UE 5.7. Its EditDefaultsOnly fields reject instance mutation.
         ability_actions.append(
             unreal.LyraInputAction(input_action=action, input_tag=input_tag)
         )
@@ -127,13 +164,9 @@ def main():
             unreal.load_class(None, ability_path),
             f"Failed to load {ability_path}; compile OceanAdventureRuntime first",
         )
-        granted_abilities.append(
-            unreal.LyraAbilitySet_GameplayAbility(
-                ability=ability_class,
-                ability_level=1,
-                input_tag=input_tag,
-            )
-        )
+        granted_ability_classes.append(ability_class)
+        granted_ability_levels.append(1)
+        granted_ability_tags.append(input_tag)
 
     save(input_mapping)
 
@@ -142,7 +175,15 @@ def main():
     input_config.set_editor_property("ability_input_actions", ability_actions)
     save(input_config)
 
-    ability_set.set_editor_property("granted_gameplay_abilities", granted_abilities)
+    require(
+        unreal.OceanAdventureAssetLibrary.configure_ability_set_gameplay_abilities(
+            ability_set,
+            granted_ability_classes,
+            granted_ability_levels,
+            granted_ability_tags,
+        ),
+        "Failed to configure DA_AbilitySet_OceanBuild gameplay abilities",
+    )
     save(ability_set)
 
     pawn_data = unreal.EditorAssetLibrary.load_asset(PAWN_DATA_PATH)
@@ -159,16 +200,10 @@ def main():
     )
     # Actions this script owns are named, so a re-run replaces them instead of appending a
     # duplicate, and every action configured by hand in the editor is left untouched.
-    owned_names = {
-        "OceanBuild_AddInputMapping",
-        "OceanBuild_AddInputBinding",
-        "OceanBuild_AddPreviewComponent",
-        "OceanBuild_AddProximityComponent",
-    }
     actions = [
         action
         for action in game_feature_data.get_editor_property("actions")
-        if action is not None and str(action.get_name()) not in owned_names
+        if action is not None and str(action.get_name()) not in OWNED_ACTION_CLASSES
     ]
     actions.append(
         require(
@@ -231,8 +266,9 @@ def main():
     )
     game_feature_data.set_editor_property("actions", actions)
     save(game_feature_data)
+    validate_owned_actions(game_feature_data)
 
-    log("Build input, ability set and GameFeature actions configured")
+    log("Build input, ability set and GameFeature actions configured; restart the editor before PIE")
 
 
 if __name__ == "__main__":

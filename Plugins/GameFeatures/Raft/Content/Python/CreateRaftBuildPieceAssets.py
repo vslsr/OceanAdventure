@@ -1,22 +1,22 @@
-"""Create the Raft-owned P0 build piece and append-only catalog.
+"""Create the Raft-owned whole-module build piece and append-only catalog.
 
 Run after compiling BuildingCoreRuntime and RaftRuntime. The assets stay inside the
-Raft GameFeature and may be regenerated safely.
+Raft GameFeature and may be regenerated safely. The piece copies the mesh and alignment
+from DA_Raft_Default, so building always adds another matching raft module.
 """
 
 import unreal
 
 
 PIECE_PATH = "/Raft/Build/Pieces/DA_BuildPiece_Raft_Foundation_Wood"
+# Older runs created this second selectable entry. Network catalogs are append-only, so the
+# script repairs it to the same whole-raft representation when present but does not create it
+# in a new project.
 DECK_PIECE_PATH = "/Raft/Build/Pieces/DA_BuildPiece_Raft_Deck"
-RAFT_MESH_PATH = "/Raft/Vehicles/Raft/SM_Raft"
-CELL_SIZE = 200.0
 PIECE_TAG = "Raft.Piece.Foundation.Wood"
 DECK_PIECE_TAG = "Raft.Piece.Floor.Deck"
 CATALOG_PATH = "/Raft/Build/DA_BuildPieceCatalog_Raft"
 RAFT_DEFINITION_PATH = "/Raft/Vehicles/Raft/DA_Raft_Default"
-CUBE_PATH = "/Engine/BasicShapes/Cube.Cube"
-WOOD_MATERIAL_PATH = "/Raft/Vehicles/Raft/M_Raft_Wood_Mid"
 INVALID_PREVIEW_MATERIAL_PATH = "/Raft/Build/Materials/M_Raft_BuildPreview_Invalid"
 
 
@@ -196,24 +196,19 @@ def create_invalid_preview_material():
     return material
 
 
-def cell_bottom_offset(mesh, scale):
-    """Z offset that puts the scaled mesh's bottom face on the cell floor.
-
-    Level 0 is the deck's top face now, so a piece only has to lift itself by its own
-    half height instead of encoding the deck thickness in every asset.
-    """
-    bounds = mesh.get_bounds()
-    return -(bounds.origin.z - bounds.box_extent.z) * scale.z
-
-
-def fit_scale_to_cell(mesh, cell_size):
-    """Uniformly maps a mesh's XY footprint onto exactly one build cell."""
-    extent = mesh.get_bounds().box_extent
-    return unreal.Vector(
-        cell_size / max(1.0, extent.x * 2.0),
-        cell_size / max(1.0, extent.y * 2.0),
-        1.0,
-    )
+def configure_raft_module(piece, piece_tag, raft_mesh, mesh_offset, invalid_material):
+    """Make one catalog entry render exactly like the RaftDefinition's base module."""
+    piece.set_editor_property("piece_tag", gameplay_tag(piece_tag))
+    piece.set_editor_property("slot_type", unreal.BuildSlotType.FOUNDATION)
+    piece.set_editor_property("mesh", raft_mesh)
+    piece.set_editor_property("mesh_offset", mesh_offset)
+    piece.set_editor_property("mesh_scale", unreal.Vector(1.0, 1.0, 1.0))
+    piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
+    # Empty overrides preserve every material slot authored on SM_Raft.
+    piece.set_editor_property("override_materials", [])
+    piece.set_editor_property("invalid_preview_material", invalid_material)
+    piece.set_editor_property("costs", [])
+    save(piece)
 
 
 def save(asset):
@@ -235,63 +230,73 @@ def main():
         getattr(unreal, "BuildPieceCatalog", None),
         "BuildPieceCatalog is unavailable; compile BuildingCoreRuntime and restart the editor",
     )
-    cube = require(unreal.EditorAssetLibrary.load_asset(CUBE_PATH), f"Missing {CUBE_PATH}")
-    wood_material = require(
-        unreal.EditorAssetLibrary.load_asset(WOOD_MATERIAL_PATH),
-        f"Missing {WOOD_MATERIAL_PATH}; run CreateRaftTestActor once first",
-    )
     invalid_preview_material = create_invalid_preview_material()
 
-    cube_scale = unreal.Vector(2.0, 2.0, 0.1)
-    piece = get_or_create_data_asset(PIECE_PATH, piece_class)
-    # BuildSelect looks pieces up by tag, so an untagged piece is unreachable from the GM.
-    piece.set_editor_property("piece_tag", gameplay_tag(PIECE_TAG))
-    piece.set_editor_property("mesh", cube)
-    piece.set_editor_property(
-        "mesh_offset", unreal.Vector(0.0, 0.0, cell_bottom_offset(cube, cube_scale))
+    raft_definition = require(
+        unreal.EditorAssetLibrary.load_asset(RAFT_DEFINITION_PATH),
+        f"Missing {RAFT_DEFINITION_PATH}; run CreateRaftTestActor once first",
     )
-    piece.set_editor_property("mesh_scale", cube_scale)
-    piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
-    piece.set_editor_property("override_materials", [wood_material])
-    piece.set_editor_property("invalid_preview_material", invalid_preview_material)
-    piece.set_editor_property("costs", [])
-    save(piece)
-
-    # Snap-built deck: the raft's own mesh mapped onto a single cell, so an extension
-    # reads as more of the same raft rather than a foreign slab.
     raft_mesh = require(
-        unreal.EditorAssetLibrary.load_asset(RAFT_MESH_PATH),
-        f"Missing {RAFT_MESH_PATH}; run CreateRaftTestActor once first",
+        raft_definition.get_editor_property("visual_mesh"),
+        f"{RAFT_DEFINITION_PATH} has no visual_mesh",
     )
-    # Must match ARaftActor::BuildGridSettings.CellSize.
-    deck_scale = fit_scale_to_cell(raft_mesh, CELL_SIZE)
-    deck_piece = get_or_create_data_asset(DECK_PIECE_PATH, piece_class)
-    deck_piece.set_editor_property("piece_tag", gameplay_tag(DECK_PIECE_TAG))
-    deck_piece.set_editor_property("mesh", raft_mesh)
-    deck_piece.set_editor_property(
-        "mesh_offset", unreal.Vector(0.0, 0.0, cell_bottom_offset(raft_mesh, deck_scale))
+    deck_extent = raft_definition.get_editor_property("deck_box_extent")
+    visual_offset = raft_definition.get_editor_property("visual_mesh_offset")
+    require(
+        deck_extent.x > 0.0 and deck_extent.y > 0.0 and deck_extent.z > 0.0,
+        f"{RAFT_DEFINITION_PATH} has an invalid deck_box_extent",
     )
-    deck_piece.set_editor_property("mesh_scale", deck_scale)
-    deck_piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
-    deck_piece.set_editor_property("invalid_preview_material", invalid_preview_material)
-    deck_piece.set_editor_property("costs", [])
-    save(deck_piece)
+
+    # A build slot's Z is the deck top, while the base VisualMesh transform is relative to
+    # the collision centre. Subtract the deck-top height so the built instance receives the
+    # exact same actor-relative transform as the original VisualMesh.
+    module_mesh_offset = unreal.Vector(
+        visual_offset.x,
+        visual_offset.y,
+        visual_offset.z - deck_extent.z,
+    )
+
+    piece = get_or_create_data_asset(PIECE_PATH, piece_class)
+    configure_raft_module(
+        piece,
+        PIECE_TAG,
+        raft_mesh,
+        module_mesh_offset,
+        invalid_preview_material,
+    )
+
+    managed_pieces = [piece]
+    if unreal.EditorAssetLibrary.does_asset_exist(DECK_PIECE_PATH):
+        legacy_deck_piece = require(
+            unreal.EditorAssetLibrary.load_asset(DECK_PIECE_PATH),
+            f"Unable to load {DECK_PIECE_PATH}",
+        )
+        configure_raft_module(
+            legacy_deck_piece,
+            DECK_PIECE_TAG,
+            raft_mesh,
+            module_mesh_offset,
+            invalid_preview_material,
+        )
+        managed_pieces.append(legacy_deck_piece)
 
     catalog = get_or_create_data_asset(CATALOG_PATH, catalog_class)
-    # Network indices are append-only. P0 owns index zero and rewrites no later entry.
+    # Network indices are append-only. Keep every existing entry in place and only append a
+    # managed asset when it has never been registered before.
     pieces = list(catalog.get_editor_property("pieces"))
-    for new_piece in (piece, deck_piece):
+    for new_piece in managed_pieces:
         if new_piece not in pieces:
             pieces.append(new_piece)
     catalog.set_editor_property("pieces", pieces)
     save(catalog)
 
-    raft_definition = unreal.EditorAssetLibrary.load_asset(RAFT_DEFINITION_PATH)
-    if raft_definition is not None:
-        raft_definition.set_editor_property("build_piece_catalog", catalog)
-        save(raft_definition)
+    raft_definition.set_editor_property("build_piece_catalog", catalog)
+    save(raft_definition)
 
-    log(f"Configured {PIECE_PATH} and {CATALOG_PATH}")
+    log(
+        f"Configured {PIECE_PATH} from {raft_mesh.get_path_name()} with offset "
+        f"{module_mesh_offset}; catalog remains append-only"
+    )
 
 
 if __name__ == "__main__":

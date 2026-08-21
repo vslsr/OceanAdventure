@@ -2,7 +2,10 @@
 
 #include "Editor/OceanAdventureAssetLibrary.h"
 
+#include "AbilitySystem/Abilities/LyraGameplayAbility.h"
+#include "AbilitySystem/LyraAbilitySet.h"
 #include "GameFeatureAction_AddComponents.h"
+#include "UObject/UnrealType.h"
 
 namespace
 {
@@ -118,4 +121,72 @@ UGameFeatureAction* UOceanAdventureAssetLibrary::CreateAddInputBindingAction(
 		}
 	}
 	return Action;
+}
+
+bool UOceanAdventureAssetLibrary::ConfigureAbilitySetGameplayAbilities(
+	ULyraAbilitySet* AbilitySet,
+	const TArray<TSubclassOf<ULyraGameplayAbility>>& AbilityClasses,
+	const TArray<int32>& AbilityLevels,
+	const TArray<FGameplayTag>& InputTags)
+{
+	if (!IsValid(AbilitySet)
+		|| AbilityClasses.Num() != AbilityLevels.Num()
+		|| AbilityClasses.Num() != InputTags.Num())
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Error,
+			TEXT("Cannot configure AbilitySet: invalid asset or mismatched arrays (%d classes, %d levels, %d tags)"),
+			AbilityClasses.Num(),
+			AbilityLevels.Num(),
+			InputTags.Num());
+		return false;
+	}
+
+	FArrayProperty* GrantedAbilitiesProperty = FindFProperty<FArrayProperty>(
+		ULyraAbilitySet::StaticClass(),
+		TEXT("GrantedGameplayAbilities"));
+	const FStructProperty* EntryProperty = GrantedAbilitiesProperty
+		? CastField<FStructProperty>(GrantedAbilitiesProperty->Inner)
+		: nullptr;
+	if (!GrantedAbilitiesProperty
+		|| !EntryProperty
+		|| EntryProperty->Struct != FLyraAbilitySet_GameplayAbility::StaticStruct())
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Error,
+			TEXT("Cannot configure AbilitySet: Lyra GrantedGameplayAbilities reflection layout changed"));
+		return false;
+	}
+
+	for (int32 Index = 0; Index < AbilityClasses.Num(); ++Index)
+	{
+		if (!AbilityClasses[Index] || !InputTags[Index].IsValid() || AbilityLevels[Index] < 1)
+		{
+			UE_LOG(
+				LogOceanAdventure,
+				Error,
+				TEXT("Cannot configure AbilitySet: entry %d has an invalid class, level, or InputTag"),
+				Index);
+			return false;
+		}
+	}
+
+	AbilitySet->Modify();
+	void* ArrayValue = GrantedAbilitiesProperty->ContainerPtrToValuePtr<void>(AbilitySet);
+	FScriptArrayHelper ArrayHelper(GrantedAbilitiesProperty, ArrayValue);
+	ArrayHelper.EmptyValues(AbilityClasses.Num());
+	for (int32 Index = 0; Index < AbilityClasses.Num(); ++Index)
+	{
+		const int32 EntryIndex = ArrayHelper.AddValue();
+		FLyraAbilitySet_GameplayAbility* Entry =
+			reinterpret_cast<FLyraAbilitySet_GameplayAbility*>(ArrayHelper.GetRawPtr(EntryIndex));
+		Entry->Ability = AbilityClasses[Index];
+		Entry->AbilityLevel = AbilityLevels[Index];
+		Entry->InputTag = InputTags[Index];
+	}
+
+	AbilitySet->MarkPackageDirty();
+	return true;
 }

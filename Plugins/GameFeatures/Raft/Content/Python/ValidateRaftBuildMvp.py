@@ -1,10 +1,11 @@
-"""Read-only validation for the creative raft-building MVP; never loads a map."""
+"""Read-only validation for whole-module raft building; never loads a map."""
 
 import unreal
 
 
 GAME_FEATURE_DATA_PATH = "/Raft/Raft"
 PIECE_PATH = "/Raft/Build/Pieces/DA_BuildPiece_Raft_Foundation_Wood"
+LEGACY_DECK_PIECE_PATH = "/Raft/Build/Pieces/DA_BuildPiece_Raft_Deck"
 CATALOG_PATH = "/Raft/Build/DA_BuildPieceCatalog_Raft"
 RAFT_DEFINITION_PATH = "/Raft/Vehicles/Raft/DA_Raft_Default"
 RAFT_BLUEPRINT_PATH = "/Raft/Vehicles/Raft/BP_Raft_Default"
@@ -40,6 +41,44 @@ def load(asset_path):
     )
 
 
+def vector_nearly_equal(actual, expected, tolerance=0.01):
+    return (
+        abs(actual.x - expected.x) <= tolerance
+        and abs(actual.y - expected.y) <= tolerance
+        and abs(actual.z - expected.z) <= tolerance
+    )
+
+
+def validate_module_piece(piece, raft_mesh, expected_mesh_offset):
+    require(
+        piece.get_editor_property("slot_type") == unreal.BuildSlotType.FOUNDATION,
+        f"{piece.get_path_name()} is not a Foundation slot",
+    )
+    require(
+        piece.get_editor_property("mesh") == raft_mesh,
+        f"{piece.get_path_name()} does not use the RaftDefinition visual mesh",
+    )
+    require(
+        vector_nearly_equal(
+            piece.get_editor_property("mesh_scale"), unreal.Vector(1.0, 1.0, 1.0)
+        ),
+        f"{piece.get_path_name()} scales the raft instead of using the original model size",
+    )
+    require(
+        vector_nearly_equal(piece.get_editor_property("mesh_offset"), expected_mesh_offset),
+        f"{piece.get_path_name()} is not aligned with the base raft VisualMesh transform",
+    )
+    footprint = piece.get_editor_property("footprint")
+    require(
+        footprint.x == 1 and footprint.y == 1,
+        f"{piece.get_path_name()} must occupy one whole-raft grid cell",
+    )
+    require(
+        len(list(piece.get_editor_property("override_materials"))) == 0,
+        f"{piece.get_path_name()} overrides SM_Raft materials",
+    )
+
+
 def collect_input_graph(material, root):
     visited = set()
     pending = [root]
@@ -67,10 +106,25 @@ def main():
     catalog = load(CATALOG_PATH)
     definition = load(RAFT_DEFINITION_PATH)
     blueprint = load(RAFT_BLUEPRINT_PATH)
-    game_feature_data = load(GAME_FEATURE_DATA_PATH)
+    load(GAME_FEATURE_DATA_PATH)
     invalid_preview_material = load(INVALID_PREVIEW_MATERIAL_PATH)
 
-    require(piece.get_editor_property("mesh"), "MVP piece has no mesh")
+    raft_mesh = require(
+        definition.get_editor_property("visual_mesh"),
+        "DA_Raft_Default has no visual mesh",
+    )
+    deck_extent = definition.get_editor_property("deck_box_extent")
+    visual_offset = definition.get_editor_property("visual_mesh_offset")
+    expected_mesh_offset = unreal.Vector(
+        visual_offset.x,
+        visual_offset.y,
+        visual_offset.z - deck_extent.z,
+    )
+    validate_module_piece(piece, raft_mesh, expected_mesh_offset)
+    if unreal.EditorAssetLibrary.does_asset_exist(LEGACY_DECK_PIECE_PATH):
+        validate_module_piece(
+            load(LEGACY_DECK_PIECE_PATH), raft_mesh, expected_mesh_offset
+        )
     require(
         piece.get_editor_property("invalid_preview_material") == invalid_preview_material,
         "MVP piece does not reference the WPO invalid-preview material",
@@ -151,11 +205,6 @@ def main():
         defaults.get_component_by_class(unreal.BuildStructureVisualComponent),
         "BP_Raft_Default has no BuildStructureVisualComponent",
     )
-    require(
-        len(list(game_feature_data.get_editor_property("actions"))) > 0,
-        "Raft GameFeatureData has no build-preview AddComponents action",
-    )
-
     unreal.log("[RaftBuildMvpValidation] PASS")
 
 

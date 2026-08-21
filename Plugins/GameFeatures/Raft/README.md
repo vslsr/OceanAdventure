@@ -29,22 +29,29 @@ deliberately outside this first implementation.
 ## Creative building MVP
 
 `BuildingCoreRuntime` supplies the replicated grid structure, ISM collision, and the
-console-driven local preview. Raft owns the wooden foundation Definition/Catalog and
-implements `IBuildStructureHost`.
+console-driven local preview. Raft owns the build-piece Definition/Catalog and implements
+`IBuildStructureHost`. One rectangular build cell is derived from `DA_Raft_Default`'s full
+deck collision size. The original raft is cell `(0,0)`; each placed piece is the same unscaled
+`VisualMesh`, snapped one full raft width or length away and attached to the same replicated
+raft actor so the connected sections cannot drift apart.
 
-In PIE, open the console and run:
+Before PIE, generate the gameplay-owned input, GAS, and pawn-component assets after any
+experience-generation script that may rewrite `OceanAdventure.uasset`:
 
 ```text
-BuildMode 1
+py "<project>/Plugins/GameFeatures/OceanAdventure/Content/Python/CreateOceanAdventureBuildAssets.py"
 ```
 
-The mouse moves the preview. A supported empty cell snaps to the raft grid; left-click
-places it through the server-authoritative component. Unsupported, occupied, or distant
+Restart the editor, stand on or near a raft, and press `B`. The mouse then moves a full-raft
+preview. A supported empty cell snaps to one of the four sides; left-click places it through
+the server-authoritative TargetData path. Press `X` to remove and `B` again to leave build mode.
+Unsupported, occupied, or distant
 positions remain unsnapped and use a red invalid material without shaking. Clicking there
 triggers one short shader World Position Offset shake; the component transform stays fixed.
-Right-click or Escape leaves the mode.
-`BuildCreative 1` is an alias. Useful P0 commands also include `BuildDump`, `BuildClear`,
-`BuildFill X Y`, and `BuildDebug 1`.
+
+`BuildMode 1` / `BuildCreative 1` are ghost-only diagnostics. They intentionally do not grant
+`Status.Build.Active`, so left-click placement is not expected in that diagnostic mode. Useful
+server-side diagnostics also include `BuildDump`, `BuildClear`, `BuildFill X Y`, and `BuildDebug 1`.
 
 Asset generation and read-only validation:
 

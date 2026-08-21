@@ -6,7 +6,7 @@
 
 #include "RaftBuildPieceDefinition.generated.h"
 
-/** Raft-owned P0 foundation definition; mesh and materials remain data-asset configured. */
+/** Raft-owned whole-module definition; mesh and alignment remain data-asset configured. */
 UCLASS(BlueprintType, Const)
 class RAFTRUNTIME_API URaftBuildPieceDefinition final : public UBuildPieceDefinition
 {

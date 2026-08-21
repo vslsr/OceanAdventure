@@ -96,6 +96,14 @@ struct BUILDINGCORERUNTIME_API FBuildGridSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (ClampMin = "10.0", Units = "cm"))
 	double CellSize = 200.0;
 
+	/**
+	 * Optional rectangular-cell override. A non-positive axis falls back to CellSize, which
+	 * preserves existing square-grid hosts while allowing rectangular modular hosts such as
+	 * a complete raft section.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (Units = "cm"))
+	FVector2D CellSizeXY = FVector2D::ZeroVector;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (ClampMin = "10.0", Units = "cm"))
 	double LevelHeight = 250.0;
 
@@ -114,32 +122,54 @@ struct BUILDINGCORERUNTIME_API FBuildGridSettings
 
 namespace BuildGrid
 {
+	inline FVector2D GetCellSize(const FBuildGridSettings& Settings)
+	{
+		const double SquareCellSize = FMath::Max(10.0, Settings.CellSize);
+		return FVector2D(
+			Settings.CellSizeXY.X > 0.0 ? FMath::Max(10.0, Settings.CellSizeXY.X) : SquareCellSize,
+			Settings.CellSizeXY.Y > 0.0 ? FMath::Max(10.0, Settings.CellSizeXY.Y) : SquareCellSize);
+	}
+
+	inline double GetMinCellSize(const FBuildGridSettings& Settings)
+	{
+		const FVector2D CellSize = GetCellSize(Settings);
+		return FMath::Min(CellSize.X, CellSize.Y);
+	}
+
+	inline double GetMaxCellSize(const FBuildGridSettings& Settings)
+	{
+		const FVector2D CellSize = GetCellSize(Settings);
+		return FMath::Max(CellSize.X, CellSize.Y);
+	}
+
 	inline FBuildGridCoord LocalToCoord(const FVector& Local, const FBuildGridSettings& Settings)
 	{
-		const double CellSize = FMath::Max(10.0, Settings.CellSize);
+		const FVector2D CellSize = GetCellSize(Settings);
 		const double LevelHeight = FMath::Max(10.0, Settings.LevelHeight);
 		return FBuildGridCoord(
-			FMath::FloorToInt((Local.X - Settings.CellOrigin.X) / CellSize),
-			FMath::FloorToInt((Local.Y - Settings.CellOrigin.Y) / CellSize),
+			FMath::FloorToInt((Local.X - Settings.CellOrigin.X) / CellSize.X),
+			FMath::FloorToInt((Local.Y - Settings.CellOrigin.Y) / CellSize.Y),
 			FMath::FloorToInt((Local.Z - Settings.BaseHeight) / LevelHeight));
 	}
 
 	inline FVector CoordToLocalCenter(const FBuildGridCoord& Coord, const FBuildGridSettings& Settings)
 	{
+		const FVector2D CellSize = GetCellSize(Settings);
 		return FVector(
-			Settings.CellOrigin.X + (Coord.X + 0.5) * Settings.CellSize,
-			Settings.CellOrigin.Y + (Coord.Y + 0.5) * Settings.CellSize,
+			Settings.CellOrigin.X + (Coord.X + 0.5) * CellSize.X,
+			Settings.CellOrigin.Y + (Coord.Y + 0.5) * CellSize.Y,
 			Settings.BaseHeight + Coord.Level * Settings.LevelHeight);
 	}
 
 	inline FVector EdgeOffset(uint8 EdgeIndex, const FBuildGridSettings& Settings)
 	{
+		const FVector2D CellSize = GetCellSize(Settings);
 		switch (EdgeIndex & 3)
 		{
-		case 0: return FVector(Settings.CellSize * 0.5, 0.0, 0.0);
-		case 1: return FVector(0.0, Settings.CellSize * 0.5, 0.0);
-		case 2: return FVector(-Settings.CellSize * 0.5, 0.0, 0.0);
-		default: return FVector(0.0, -Settings.CellSize * 0.5, 0.0);
+		case 0: return FVector(CellSize.X * 0.5, 0.0, 0.0);
+		case 1: return FVector(0.0, CellSize.Y * 0.5, 0.0);
+		case 2: return FVector(-CellSize.X * 0.5, 0.0, 0.0);
+		default: return FVector(0.0, -CellSize.Y * 0.5, 0.0);
 		}
 	}
 

@@ -484,13 +484,14 @@ bool UBuildStructureComponent::IsCellBlockedByPawn(const FBuildGridCoord& Coord)
 	}
 
 	const FTransform StructureSpace = HostInterface->GetStructureSpace();
+	const FVector2D CellSize = BuildGrid::GetCellSize(GridSettings);
 	const FVector Center = StructureSpace.TransformPosition(
 		BuildGrid::CoordToLocalCenter(Coord, GridSettings)
 		+ FVector(0.0, 0.0, GridSettings.LevelHeight * 0.5));
 	const FCollisionShape Shape = FCollisionShape::MakeBox(
 		FVector(
-			GridSettings.CellSize * 0.5,
-			GridSettings.CellSize * 0.5,
+			CellSize.X * 0.5,
+			CellSize.Y * 0.5,
 			GridSettings.LevelHeight * 0.5));
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(BuildPlacementBlocked), false, OwnerActor);
 	return World->OverlapAnyTestByChannel(
@@ -750,7 +751,8 @@ int32 UBuildStructureComponent::ClearAllPieces()
 FBox UBuildStructureComponent::ComputePieceBounds() const
 {
 	FBox Bounds(ForceInit);
-	const FVector CellExtent(GridSettings.CellSize * 0.5, GridSettings.CellSize * 0.5, 1.0);
+	const FVector2D CellSize = BuildGrid::GetCellSize(GridSettings);
+	const FVector CellExtent(CellSize.X * 0.5, CellSize.Y * 0.5, 1.0);
 
 	for (const FBuildPieceEntry& Entry : PieceList.Entries)
 	{
@@ -851,7 +853,8 @@ bool UBuildStructureComponent::FindNearestSnapCandidate(
 	}
 
 	const FVector Local = HostInterface->GetStructureSpace().InverseTransformPosition(WorldLocation);
-	const double MaxDistanceSquared = FMath::Square(GridSettings.CellSize * MaxSnapCells);
+	const double MaxDistanceSquared = FMath::Square(
+		BuildGrid::GetMaxCellSize(GridSettings) * MaxSnapCells);
 
 	double BestDistanceSquared = MaxDistanceSquared;
 	bool bFound = false;
@@ -873,7 +876,8 @@ bool UBuildStructureComponent::FindNearestSnapCandidate(
 FBox UBuildStructureComponent::ComputeLocalStructureBounds() const
 {
 	FBox Bounds(ForceInit);
-	const FVector CellExtent(GridSettings.CellSize * 0.5, GridSettings.CellSize * 0.5, 1.0);
+	const FVector2D CellSize = BuildGrid::GetCellSize(GridSettings);
+	const FVector CellExtent(CellSize.X * 0.5, CellSize.Y * 0.5, 1.0);
 	for (const FBuildGridCoord& Anchor : AnchorCells)
 	{
 		Bounds += FBox::BuildAABB(BuildGrid::CoordToLocalCenter(Anchor, GridSettings), CellExtent);
@@ -994,7 +998,8 @@ void UBuildStructureComponent::DrawDebugStructure() const
 	}
 
 	const FTransform StructureSpace = HostInterface->GetStructureSpace();
-	const FVector CellExtent(GridSettings.CellSize * 0.5, GridSettings.CellSize * 0.5, 5.0);
+	const FVector2D CellSize = BuildGrid::GetCellSize(GridSettings);
+	const FVector CellExtent(CellSize.X * 0.5, CellSize.Y * 0.5, 5.0);
 	for (const FBuildGridCoord& Anchor : AnchorCells)
 	{
 		DrawDebugBox(
