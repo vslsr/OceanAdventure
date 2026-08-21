@@ -1,0 +1,24 @@
+{
+  "skill_name": "skill-grader",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "只评测这个技能是否会错误触发相邻任务，不要修改文件。",
+      "expected_output": "读取目标和相邻技能边界，给出正负触发测试以及 PASS、REVIEW 或 FAIL，不产生修改。",
+      "assertions": [
+        "包含正样例和最近邻负样例",
+        "输出 status 和 gate_failures",
+        "不修改被评技能"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "帮我创建一个全新的技能。",
+      "expected_output": "不应由 skill-grader 处理，应路由到 skill-creator。",
+      "assertions": [
+        "识别为负样例",
+        "改用 skill-creator"
+      ]
+    }
+  ]
+}

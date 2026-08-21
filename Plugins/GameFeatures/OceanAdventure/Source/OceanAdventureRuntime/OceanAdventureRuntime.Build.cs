@@ -48,6 +48,7 @@ public class OceanAdventureRuntime : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"EnhancedInput"
 			}
 		);
 	}

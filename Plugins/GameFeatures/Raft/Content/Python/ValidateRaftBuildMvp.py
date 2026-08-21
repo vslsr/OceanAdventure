@@ -12,6 +12,21 @@ INVALID_PREVIEW_MATERIAL_PATH = "/Raft/Build/Materials/M_Raft_BuildPreview_Inval
 PIECE_TAG = "Raft.Piece.Foundation.Wood"
 
 
+def gameplay_tag(tag_name):
+    request_tag = getattr(unreal.GameplayTagLibrary, "request_gameplay_tag", None)
+    if request_tag is not None:
+        tag = request_tag(unreal.Name(tag_name), False)
+    else:
+        tag = unreal.GameplayTag()
+        tag.import_text(tag_name)
+
+    require(
+        unreal.GameplayTagLibrary.is_gameplay_tag_valid(tag),
+        f"GameplayTag '{tag_name}' is not registered; check Raft/Config/Tags/RaftTags.ini",
+    )
+    return tag
+
+
 def require(value, message):
     if not value:
         raise RuntimeError(message)
@@ -59,10 +74,6 @@ def main():
     require(
         piece.get_editor_property("invalid_preview_material") == invalid_preview_material,
         "MVP piece does not reference the WPO invalid-preview material",
-    )
-    require(
-        invalid_preview_material.get_editor_property("disable_depth_test"),
-        "Invalid-preview material must ignore scene depth to avoid ocean/deck flicker",
     )
     wpo_root = require(
         unreal.MaterialEditingLibrary.get_material_property_input_node(
@@ -112,13 +123,11 @@ def main():
         not invalid_preview_material.get_editor_property("disable_depth_test"),
         "Invalid-preview material must keep depth testing on, or the ghost draws over the whole scene",
     )
-    expected_tag = unreal.GameplayTagLibrary.request_gameplay_tag(unreal.Name(PIECE_TAG), False)
+    expected_tag = gameplay_tag(PIECE_TAG)
     require(
-        expected_tag != unreal.GameplayTag(),
-        f"GameplayTag '{PIECE_TAG}' is not registered; check Raft/Config/Tags/RaftTags.ini",
-    )
-    require(
-        piece.get_editor_property("piece_tag") == expected_tag,
+        unreal.GameplayTagLibrary.equal_equal_gameplay_tag(
+            piece.get_editor_property("piece_tag"), expected_tag
+        ),
         f"MVP piece does not carry {PIECE_TAG}",
     )
     catalog_pieces = list(catalog.get_editor_property("pieces"))

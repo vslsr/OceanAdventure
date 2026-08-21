@@ -21,10 +21,18 @@ INVALID_PREVIEW_MATERIAL_PATH = "/Raft/Build/Materials/M_Raft_BuildPreview_Inval
 
 
 def gameplay_tag(tag_name):
-    """FGameplayTag's TagName is not exposed to Python, so tags must be requested from the
-    registry instead of constructed. An unregistered tag returns the empty tag."""
-    tag = unreal.GameplayTagLibrary.request_gameplay_tag(unreal.Name(tag_name), False)
-    if tag == unreal.GameplayTag():
+    """Resolve a tag through the registry without constructing an unregistered loose tag."""
+    request_tag = getattr(unreal.GameplayTagLibrary, "request_gameplay_tag", None)
+    if request_tag is not None:
+        tag = request_tag(unreal.Name(tag_name), False)
+    else:
+        # UE 5.7 does not expose FGameplayTag::RequestGameplayTag to Python. Importing
+        # the struct text still routes through GameplayTagsManager::ImportSingleGameplayTag,
+        # so an unregistered name remains invalid instead of creating a loose tag.
+        tag = unreal.GameplayTag()
+        tag.import_text(tag_name)
+
+    if not unreal.GameplayTagLibrary.is_gameplay_tag_valid(tag):
         raise RuntimeError(
             f"GameplayTag '{tag_name}' is not registered. Check the feature's Config/Tags ini, "
             "or compile the module that declares it natively."
