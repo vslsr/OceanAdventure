@@ -128,6 +128,7 @@ private:
 	bool bPreviewEnabled = false;
 	bool bCurrentPlacementValid = false;
 	bool bHasCurrentKey = false;
+	bool bHasLoggedPreviewState = false;
 	bool bLastAppliedValid = false;
 	bool bHasAppliedMaterialState = false;
 	bool bUsingInvalidPreviewMaterial = false;

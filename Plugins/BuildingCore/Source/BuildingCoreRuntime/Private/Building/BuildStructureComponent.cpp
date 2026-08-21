@@ -554,20 +554,70 @@ bool UBuildStructureComponent::TryPlacePieceWithReason(
 	FGameplayTag& OutFailReason)
 {
 	AActor* OwnerActor = GetOwner();
+	UE_LOG(
+		LogBuildingCore,
+		Display,
+		TEXT("[BuildPlacement] Server try owner=%s authority=%d instigator=%s pawn=%s key=%s slot=%d edge=%u sub_cell=%u definition=%s rotation=%u entries=%d"),
+		*GetNameSafe(OwnerActor),
+		OwnerActor && OwnerActor->HasAuthority(),
+		*GetNameSafe(Instigator),
+		*GetNameSafe(Instigator ? Instigator->GetPawn() : nullptr),
+		*Key.Coord.ToString(),
+		static_cast<int32>(Key.Slot),
+		Key.EdgeIndex,
+		Key.SubCell,
+		*GetNameSafe(Definition),
+		Rotation,
+		PieceList.Entries.Num());
 	if (!OwnerActor || !OwnerActor->HasAuthority())
 	{
 		OutFailReason = BuildGameplayTags::Fail_Blocked;
+		UE_LOG(
+			LogBuildingCore,
+			Warning,
+			TEXT("[BuildPlacement] Server rejected stage=Authority owner=%s key=%s reason=%s"),
+			*GetNameSafe(OwnerActor),
+			*Key.Coord.ToString(),
+			*OutFailReason.ToString());
 		return false;
 	}
 
 	if (!CanPlacePiece(Key, Definition, OutFailReason))
 	{
+		UE_LOG(
+			LogBuildingCore,
+			Warning,
+			TEXT("[BuildPlacement] Server rejected stage=CanPlace owner=%s key=%s slot=%d edge=%u sub_cell=%u definition=%s reason=%s entries=%d max_entries=%d"),
+			*GetNameSafe(OwnerActor),
+			*Key.Coord.ToString(),
+			static_cast<int32>(Key.Slot),
+			Key.EdgeIndex,
+			Key.SubCell,
+			*GetNameSafe(Definition),
+			*OutFailReason.ToString(),
+			PieceList.Entries.Num(),
+			MaxPieceCount);
 		return false;
 	}
 
 	if (!IsInstigatorWithinRange(Key, Instigator))
 	{
 		OutFailReason = BuildGameplayTags::Fail_TooFar;
+		const APawn* InstigatorPawn = Instigator ? Instigator->GetPawn() : nullptr;
+		const double Distance = InstigatorPawn
+			? FVector::Distance(InstigatorPawn->GetActorLocation(), SlotToWorld(Key))
+			: -1.0;
+		UE_LOG(
+			LogBuildingCore,
+			Warning,
+			TEXT("[BuildPlacement] Server rejected stage=Range owner=%s instigator=%s pawn=%s key=%s distance=%.1f max_distance=%.1f reason=%s"),
+			*GetNameSafe(OwnerActor),
+			*GetNameSafe(Instigator),
+			*GetNameSafe(InstigatorPawn),
+			*Key.Coord.ToString(),
+			Distance,
+			MaxPlacementDistance,
+			*OutFailReason.ToString());
 		return false;
 	}
 
@@ -576,6 +626,15 @@ bool UBuildStructureComponent::TryPlacePieceWithReason(
 		if (!Source->ConsumeResources(Definition->Costs))
 		{
 			OutFailReason = BuildGameplayTags::Fail_NoResource;
+			UE_LOG(
+				LogBuildingCore,
+				Warning,
+				TEXT("[BuildPlacement] Server rejected stage=ConsumeResources owner=%s source=%s key=%s definition=%s reason=%s"),
+				*GetNameSafe(OwnerActor),
+				*GetNameSafe(ResourceSource.GetObject()),
+				*Key.Coord.ToString(),
+				*GetNameSafe(Definition),
+				*OutFailReason.ToString());
 			return false;
 		}
 	}
@@ -584,6 +643,15 @@ bool UBuildStructureComponent::TryPlacePieceWithReason(
 	if (!PieceCatalog->FindIndex(Definition, PieceIndex))
 	{
 		OutFailReason = BuildGameplayTags::Fail_BadDefinition;
+		UE_LOG(
+			LogBuildingCore,
+			Error,
+			TEXT("[BuildPlacement] Server rejected stage=CatalogIndex owner=%s catalog=%s key=%s definition=%s reason=%s"),
+			*GetNameSafe(OwnerActor),
+			*GetNameSafe(PieceCatalog),
+			*Key.Coord.ToString(),
+			*GetNameSafe(Definition),
+			*OutFailReason.ToString());
 		return false;
 	}
 
@@ -610,6 +678,19 @@ bool UBuildStructureComponent::TryPlacePieceWithReason(
 	}
 
 	OutFailReason = FGameplayTag();
+	UE_LOG(
+		LogBuildingCore,
+		Display,
+		TEXT("[BuildPlacement] Server placed owner=%s key=%s slot=%d edge=%u sub_cell=%u piece=%u rotation=%u entries=%d instigator=%s"),
+		*GetNameSafe(OwnerActor),
+		*Key.Coord.ToString(),
+		static_cast<int32>(Key.Slot),
+		Key.EdgeIndex,
+		Key.SubCell,
+		PieceIndex,
+		NewEntry.Rotation,
+		PieceList.Entries.Num(),
+		*GetNameSafe(Instigator));
 	return true;
 }
 

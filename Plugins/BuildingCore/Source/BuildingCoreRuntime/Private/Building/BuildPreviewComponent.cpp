@@ -8,6 +8,7 @@
 #include "Building/BuildStructureComponent.h"
 #include "Building/BuildStructureHost.h"
 #include "Building/BuildStructureSubsystem.h"
+#include "BuildingCoreRuntimeModule.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
@@ -67,6 +68,15 @@ void UBuildPreviewComponent::SetPreviewEnabled(bool bEnabled)
 
 	bPreviewEnabled = bEnabled;
 	NextHostSearchSeconds = 0.0;
+	bHasLoggedPreviewState = false;
+	UE_LOG(
+		LogBuildingCore,
+		Display,
+		TEXT("[BuildPlacement] Preview enabled=%d owner=%s local_controller=%s selected_piece=%d"),
+		bPreviewEnabled,
+		*GetNameSafe(GetOwner()),
+		*GetNameSafe(GetLocalPlayerController()),
+		SelectedPieceIndex);
 	if (bPreviewEnabled && GetLocalPlayerController())
 	{
 		SetComponentTickEnabled(true);
@@ -117,6 +127,18 @@ void UBuildPreviewComponent::CycleSelectedPiece(int32 Delta)
 
 void UBuildPreviewComponent::TriggerFailureFeedback(FGameplayTag FailReason)
 {
+	UE_LOG(
+		LogBuildingCore,
+		Warning,
+		TEXT("[BuildPlacement] Preview failure feedback owner=%s host=%s key=%s slot=%d edge=%u sub_cell=%u valid=%d reason=%s"),
+		*GetNameSafe(GetOwner()),
+		*GetNameSafe(CurrentStructure.Get()),
+		bHasCurrentKey ? *CurrentKey.Coord.ToString() : TEXT("<none>"),
+		static_cast<int32>(CurrentKey.Slot),
+		CurrentKey.EdgeIndex,
+		CurrentKey.SubCell,
+		bCurrentPlacementValid,
+		*FailReason.ToString());
 	if (const UWorld* World = GetWorld())
 	{
 		FailureShakeEndSeconds = World->GetTimeSeconds() + FailureShakeDuration;
@@ -381,6 +403,49 @@ void UBuildPreviewComponent::RestorePieceMaterials(const UBuildPieceDefinition* 
 
 void UBuildPreviewComponent::UpdatePreview()
 {
+	const TWeakObjectPtr<UBuildStructureComponent> PreviousStructure = CurrentStructure;
+	const FBuildSlotKey PreviousKey = CurrentKey;
+	const bool bPreviouslyHadKey = bHasCurrentKey;
+	const bool bPreviouslyValid = bCurrentPlacementValid;
+	const FGameplayTag PreviousFailReason = CurrentFailReason;
+	const auto LogPreviewState = [this, PreviousStructure, PreviousKey, bPreviouslyHadKey,
+		bPreviouslyValid, PreviousFailReason](const TCHAR* Stage, const UBuildPieceDefinition* Definition)
+	{
+		const bool bStateChanged = PreviousStructure.Get() != CurrentStructure.Get()
+			|| bPreviouslyHadKey != bHasCurrentKey
+			|| (bHasCurrentKey && !(PreviousKey == CurrentKey))
+			|| bPreviouslyValid != bCurrentPlacementValid
+			|| PreviousFailReason != CurrentFailReason;
+		if (bHasLoggedPreviewState && !bStateChanged)
+		{
+			return;
+		}
+
+		const APawn* OwnerPawn = Cast<APawn>(GetOwner());
+		const double Distance = OwnerPawn && CurrentStructure.IsValid() && bHasCurrentKey
+			? FVector::Distance(OwnerPawn->GetActorLocation(), CurrentStructure->SlotToWorld(CurrentKey))
+			: -1.0;
+		UE_LOG(
+			LogBuildingCore,
+			Display,
+			TEXT("[BuildPlacement] Preview state stage=%s owner=%s host=%s definition=%s piece=%d cursor=%s key=%s slot=%d edge=%u sub_cell=%u valid=%d reason=%s distance=%.1f local_limit=%.1f"),
+			Stage,
+			*GetNameSafe(GetOwner()),
+			*GetNameSafe(CurrentStructure.Get()),
+			*GetNameSafe(Definition),
+			SelectedPieceIndex,
+			*CurrentCursorWorld.ToCompactString(),
+			bHasCurrentKey ? *CurrentKey.Coord.ToString() : TEXT("<none>"),
+			static_cast<int32>(CurrentKey.Slot),
+			CurrentKey.EdgeIndex,
+			CurrentKey.SubCell,
+			bCurrentPlacementValid,
+			*CurrentFailReason.ToString(),
+			Distance,
+			LocalPlacementDistance);
+		bHasLoggedPreviewState = true;
+	};
+
 	APlayerController* PlayerController = GetLocalPlayerController();
 	UBuildStructureComponent* Structure = FindBuildStructure(PlayerController);
 	CurrentStructure = Structure;
@@ -389,6 +454,7 @@ void UBuildPreviewComponent::UpdatePreview()
 		HidePreview();
 		bCurrentPlacementValid = false;
 		CurrentFailReason = BuildGameplayTags::Fail_BadDefinition;
+		LogPreviewState(TEXT("NoStructure"), nullptr);
 		return;
 	}
 
@@ -396,12 +462,20 @@ void UBuildPreviewComponent::UpdatePreview()
 	const UBuildPieceDefinition* Definition = Catalog
 		? Catalog->GetByIndex(SelectedPieceIndex)
 		: nullptr;
-	if (!Definition || !Definition->Mesh
-		|| !ProjectCursorToStructure(PlayerController, Structure, CurrentCursorWorld))
+	if (!Definition || !Definition->Mesh)
 	{
 		HidePreview();
 		bCurrentPlacementValid = false;
 		CurrentFailReason = BuildGameplayTags::Fail_BadDefinition;
+		LogPreviewState(TEXT("MissingDefinitionOrMesh"), Definition);
+		return;
+	}
+	if (!ProjectCursorToStructure(PlayerController, Structure, CurrentCursorWorld))
+	{
+		HidePreview();
+		bCurrentPlacementValid = false;
+		CurrentFailReason = BuildGameplayTags::Fail_BadDefinition;
+		LogPreviewState(TEXT("CursorProjectionFailed"), Definition);
 		return;
 	}
 
@@ -410,6 +484,15 @@ void UBuildPreviewComponent::UpdatePreview()
 	USceneComponent* AttachRoot = Host ? Host->GetStructureAttachRoot() : nullptr;
 	if (!PreviewMesh || !AttachRoot)
 	{
+		UE_LOG(
+			LogBuildingCore,
+			Warning,
+			TEXT("[BuildPlacement] Preview update aborted stage=MissingMeshOrAttachRoot owner=%s host=%s preview_mesh=%s attach_root=%s definition=%s"),
+			*GetNameSafe(GetOwner()),
+			*GetNameSafe(Structure),
+			*GetNameSafe(PreviewMesh),
+			*GetNameSafe(AttachRoot),
+			*GetNameSafe(Definition));
 		return;
 	}
 
@@ -461,6 +544,7 @@ void UBuildPreviewComponent::UpdatePreview()
 		bCurrentPlacementValid = false;
 		CurrentFailReason = BuildGameplayTags::Fail_TooFar;
 	}
+	LogPreviewState(TEXT("Validated"), Definition);
 
 	const UWorld* World = GetWorld();
 	const double Now = World ? World->GetTimeSeconds() : 0.0;

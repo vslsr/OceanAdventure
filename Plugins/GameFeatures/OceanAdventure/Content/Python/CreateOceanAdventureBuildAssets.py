@@ -16,7 +16,9 @@ GAME_FEATURE_DATA_PATH = f"{FEATURE_ROOT}/OceanAdventure"
 PAWN_DATA_PATH = f"{FEATURE_ROOT}/Character/DA_OceanAdventure_PawnData"
 
 # Key bindings. Confirm intentionally shares the left mouse button with click-to-move:
-# the placement ability only activates while Status.Build.Active is present.
+# the placement ability only activates while Status.Build.Active is present. Every action is
+# configured with InputTriggerPressed because Lyra binds ability input to Triggered; without
+# an edge trigger, an instant ability reactivates once per frame while the key remains held.
 ACTIONS = (
     ("IA_Build_Mode", "InputTag.Build.Mode", "B",
      "/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_BuildMode"),
@@ -90,6 +92,42 @@ def make_key(key_name):
     return key
 
 
+def configure_pressed_trigger(action):
+    """Make a Lyra ability action fire once per physical press, never once per held frame."""
+    pressed_class = require(
+        getattr(unreal, "InputTriggerPressed", None),
+        "InputTriggerPressed is unavailable; verify the Enhanced Input plugin is enabled",
+    )
+    triggers = [
+        trigger
+        for trigger in action.get_editor_property("triggers")
+        if trigger is not None
+    ]
+    pressed_trigger = next(
+        (trigger for trigger in triggers if isinstance(trigger, pressed_class)),
+        None,
+    )
+    if pressed_trigger is None:
+        pressed_trigger = require(
+            unreal.new_object(
+                pressed_class,
+                outer=action,
+                name=unreal.Name("OceanBuild_Pressed"),
+            ),
+            f"Failed to create Pressed trigger for {action.get_path_name()}",
+        )
+
+    # These InputActions are wholly owned by this script. Keeping exactly one Pressed trigger
+    # repairs legacy assets that had no trigger and avoids accumulating duplicate subobjects.
+    action.set_editor_property("triggers", [pressed_trigger])
+    configured_triggers = list(action.get_editor_property("triggers"))
+    require(
+        len(configured_triggers) == 1
+        and isinstance(configured_triggers[0], pressed_class),
+        f"{action.get_path_name()} did not retain its one-shot Pressed trigger",
+    )
+
+
 def validate_owned_actions(game_feature_data):
     actions_by_name = {
         str(action.get_name()): action
@@ -148,6 +186,7 @@ def main():
             f"Failed to create {action_name}",
         )
         action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+        configure_pressed_trigger(action)
         save(action)
 
         input_mapping.unmap_all_keys_from_action(action)
@@ -168,6 +207,10 @@ def main():
         granted_ability_levels.append(1)
         granted_ability_tags.append(input_tag)
 
+    log(
+        "Configured one-shot Pressed triggers: "
+        + ", ".join(action_name for action_name, _, _, _ in ACTIONS)
+    )
     save(input_mapping)
 
     # Ability input actions are dispatched by ULyraHeroComponent through the InputTag,

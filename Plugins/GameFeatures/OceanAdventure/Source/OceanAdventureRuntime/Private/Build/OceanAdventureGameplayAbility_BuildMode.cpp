@@ -10,6 +10,7 @@
 #include "CommonUIExtensions.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
+#include "OceanAdventureRuntimeModule.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureGameplayAbility_BuildMode)
 
@@ -32,13 +33,36 @@ bool UOceanAdventureGameplayAbility_BuildMode::CanActivateAbility(
 {
 	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
 	{
+		UE_LOG(
+			LogOceanAdventure,
+			Warning,
+			TEXT("[BuildPlacement] BuildMode CanActivate rejected stage=Super avatar=%s spec=%s local=%d authority=%d relevant_tags=%s"),
+			*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+			*Handle.ToString(),
+			ActorInfo && ActorInfo->IsLocallyControlled(),
+			ActorInfo && ActorInfo->IsNetAuthority(),
+			OptionalRelevantTags ? *OptionalRelevantTags->ToStringSimple() : TEXT("<none>"));
 		return false;
 	}
 
 	// No host in reach means the key does nothing at all -- no ghost, no HUD, no cursor.
 	const UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
-	return AbilitySystem
+	const bool bHostAvailable = AbilitySystem
 		&& AbilitySystem->HasMatchingGameplayTag(OceanAdventureBuildTags::Status_Build_HostAvailable);
+	if (!bHostAvailable)
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Warning,
+			TEXT("[BuildPlacement] BuildMode CanActivate rejected stage=HostAvailableTag avatar=%s spec=%s asc=%s host_tag=%d local=%d authority=%d"),
+			*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+			*Handle.ToString(),
+			*GetNameSafe(AbilitySystem),
+			AbilitySystem && AbilitySystem->HasMatchingGameplayTag(OceanAdventureBuildTags::Status_Build_HostAvailable),
+			ActorInfo && ActorInfo->IsLocallyControlled(),
+			ActorInfo && ActorInfo->IsNetAuthority());
+	}
+	return bHostAvailable;
 }
 
 void UOceanAdventureGameplayAbility_BuildMode::ActivateAbility(
@@ -48,9 +72,25 @@ void UOceanAdventureGameplayAbility_BuildMode::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[BuildPlacement] BuildMode Activate avatar=%s spec=%s prediction=%s local=%d authority=%d"),
+		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+		*Handle.ToString(),
+		*ActivationInfo.GetActivationPredictionKey().ToString(),
+		ActorInfo && ActorInfo->IsLocallyControlled(),
+		ActorInfo && ActorInfo->IsNetAuthority());
 
 	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
 	{
+		UE_LOG(
+			LogOceanAdventure,
+			Warning,
+			TEXT("[BuildPlacement] BuildMode Activate rejected stage=Commit avatar=%s spec=%s prediction=%s"),
+			*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+			*Handle.ToString(),
+			*ActivationInfo.GetActivationPredictionKey().ToString());
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -60,10 +100,23 @@ void UOceanAdventureGameplayAbility_BuildMode::ActivateAbility(
 	if (UAbilitySystemComponent* AbilitySystem = ActorInfo->AbilitySystemComponent.Get())
 	{
 		AbilitySystem->AddLooseGameplayTag(OceanAdventureBuildTags::Status_Build_Active);
+		UE_LOG(
+			LogOceanAdventure,
+			Display,
+			TEXT("[BuildPlacement] BuildMode active tag added avatar=%s local=%d authority=%d tag_count=%d"),
+			*GetNameSafe(ActorInfo->AvatarActor.Get()),
+			ActorInfo->IsLocallyControlled(),
+			ActorInfo->IsNetAuthority(),
+			AbilitySystem->GetTagCount(OceanAdventureBuildTags::Status_Build_Active));
 	}
 
 	if (!ActorInfo->IsLocallyControlled())
 	{
+		UE_LOG(
+			LogOceanAdventure,
+			Display,
+			TEXT("[BuildPlacement] BuildMode server activation complete avatar=%s"),
+			*GetNameSafe(ActorInfo->AvatarActor.Get()));
 		return;
 	}
 
@@ -71,6 +124,21 @@ void UOceanAdventureGameplayAbility_BuildMode::ActivateAbility(
 	{
 		Preview->SetSelectedPieceIndex(DefaultPieceIndex);
 		Preview->SetPreviewEnabled(true);
+		UE_LOG(
+			LogOceanAdventure,
+			Display,
+			TEXT("[BuildPlacement] BuildMode preview enabled avatar=%s preview=%s piece=%d"),
+			*GetNameSafe(ActorInfo->AvatarActor.Get()),
+			*GetNameSafe(Preview),
+			DefaultPieceIndex);
+	}
+	else
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Error,
+			TEXT("[BuildPlacement] BuildMode missing preview component avatar=%s"),
+			*GetNameSafe(ActorInfo->AvatarActor.Get()));
 	}
 
 	// Cursor and input routing come from the widget's FUIInputConfig, never from
@@ -85,8 +153,26 @@ void UOceanAdventureGameplayAbility_BuildMode::ActivateAbility(
 					LocalPlayer,
 					UILayerTag,
 					BuildInputWidgetClass);
+				UE_LOG(
+					LogOceanAdventure,
+					Display,
+					TEXT("[BuildPlacement] BuildMode input widget push widget=%s success=%d widget_class=%s layer=%s player=%s"),
+					*GetNameSafe(PushedInputWidget),
+					PushedInputWidget != nullptr,
+					*GetNameSafe(BuildInputWidgetClass),
+					*UILayerTag.ToString(),
+					*GetNameSafe(LocalPlayer));
 			}
 		}
+	}
+	else
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Warning,
+			TEXT("[BuildPlacement] BuildMode input widget skipped widget_class=%s layer=%s"),
+			*GetNameSafe(BuildInputWidgetClass),
+			*UILayerTag.ToString());
 	}
 }
 
@@ -97,6 +183,17 @@ void UOceanAdventureGameplayAbility_BuildMode::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[BuildPlacement] BuildMode End avatar=%s spec=%s prediction=%s cancelled=%d local=%d authority=%d"),
+		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+		*Handle.ToString(),
+		*ActivationInfo.GetActivationPredictionKey().ToString(),
+		bWasCancelled,
+		ActorInfo && ActorInfo->IsLocallyControlled(),
+		ActorInfo && ActorInfo->IsNetAuthority());
+
 	if (ActorInfo)
 	{
 		if (UAbilitySystemComponent* AbilitySystem = ActorInfo->AbilitySystemComponent.Get())
@@ -126,6 +223,13 @@ void UOceanAdventureGameplayAbility_BuildMode::InputPressed(
 	const FGameplayAbilityActivationInfo ActivationInfo)
 {
 	Super::InputPressed(Handle, ActorInfo, ActivationInfo);
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[BuildPlacement] BuildMode input pressed again; cancelling avatar=%s spec=%s prediction=%s"),
+		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+		*Handle.ToString(),
+		*ActivationInfo.GetActivationPredictionKey().ToString());
 	CancelAbility(Handle, ActorInfo, ActivationInfo, /*bReplicateCancelAbility=*/true);
 }
 

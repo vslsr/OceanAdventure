@@ -1708,4 +1708,3 @@ BuildSelect Raft.Piece.Prop.Campfire
 3. 木筏随浪起伏时它跟着动（附着在 `DeckCollision` 下）
 4. 拆掉脚下的木筏模块，篝火被连带拆除
 5. 联机：客户端看到的是复制过来的 Actor，不是本地生成的第二个
-
