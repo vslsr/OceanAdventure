@@ -105,6 +105,9 @@
   不得追加重复项，也不得清掉用户在编辑器里手工配置的 Action。
 - 资产的 `GameplayTag`、`InputTag` 等查找键必须在脚本里显式赋值，
   否则按 tag 查找的运行时代码永远匹配不到。
+- `FGameplayTag` 的 `TagName` 没有暴露给 Python，**不能** `unreal.GameplayTag(tag_name=...)`。
+  必须用 `unreal.GameplayTagLibrary.request_gameplay_tag(unreal.Name(...), False)` 从注册表取，
+  并用 `tag == unreal.GameplayTag()` 判断是否未注册；读回时用相等比较，不要读 `tag_name`。
 
 ## 交付与验证
 

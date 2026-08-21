@@ -20,6 +20,18 @@ WOOD_MATERIAL_PATH = "/Raft/Vehicles/Raft/M_Raft_Wood_Mid"
 INVALID_PREVIEW_MATERIAL_PATH = "/Raft/Build/Materials/M_Raft_BuildPreview_Invalid"
 
 
+def gameplay_tag(tag_name):
+    """FGameplayTag's TagName is not exposed to Python, so tags must be requested from the
+    registry instead of constructed. An unregistered tag returns the empty tag."""
+    tag = unreal.GameplayTagLibrary.request_gameplay_tag(unreal.Name(tag_name), False)
+    if tag == unreal.GameplayTag():
+        raise RuntimeError(
+            f"GameplayTag '{tag_name}' is not registered. Check the feature's Config/Tags ini, "
+            "or compile the module that declares it natively."
+        )
+    return tag
+
+
 def require(value, message):
     if not value:
         raise RuntimeError(message)
@@ -225,7 +237,7 @@ def main():
     cube_scale = unreal.Vector(2.0, 2.0, 0.1)
     piece = get_or_create_data_asset(PIECE_PATH, piece_class)
     # BuildSelect looks pieces up by tag, so an untagged piece is unreachable from the GM.
-    piece.set_editor_property("piece_tag", unreal.GameplayTag(tag_name=PIECE_TAG))
+    piece.set_editor_property("piece_tag", gameplay_tag(PIECE_TAG))
     piece.set_editor_property("mesh", cube)
     piece.set_editor_property(
         "mesh_offset", unreal.Vector(0.0, 0.0, cell_bottom_offset(cube, cube_scale))
@@ -246,7 +258,7 @@ def main():
     # Must match ARaftActor::BuildGridSettings.CellSize.
     deck_scale = fit_scale_to_cell(raft_mesh, CELL_SIZE)
     deck_piece = get_or_create_data_asset(DECK_PIECE_PATH, piece_class)
-    deck_piece.set_editor_property("piece_tag", unreal.GameplayTag(tag_name=DECK_PIECE_TAG))
+    deck_piece.set_editor_property("piece_tag", gameplay_tag(DECK_PIECE_TAG))
     deck_piece.set_editor_property("mesh", raft_mesh)
     deck_piece.set_editor_property(
         "mesh_offset", unreal.Vector(0.0, 0.0, cell_bottom_offset(raft_mesh, deck_scale))

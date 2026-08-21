@@ -112,11 +112,14 @@ def main():
         not invalid_preview_material.get_editor_property("disable_depth_test"),
         "Invalid-preview material must keep depth testing on, or the ghost draws over the whole scene",
     )
-    piece_tag = piece.get_editor_property("piece_tag")
-    tag_name = str(piece_tag.get_editor_property("tag_name"))
+    expected_tag = unreal.GameplayTagLibrary.request_gameplay_tag(unreal.Name(PIECE_TAG), False)
     require(
-        tag_name == PIECE_TAG,
-        f"MVP piece has the wrong GameplayTag: {tag_name}",
+        expected_tag != unreal.GameplayTag(),
+        f"GameplayTag '{PIECE_TAG}' is not registered; check Raft/Config/Tags/RaftTags.ini",
+    )
+    require(
+        piece.get_editor_property("piece_tag") == expected_tag,
+        f"MVP piece does not carry {PIECE_TAG}",
     )
     catalog_pieces = list(catalog.get_editor_property("pieces"))
     require(

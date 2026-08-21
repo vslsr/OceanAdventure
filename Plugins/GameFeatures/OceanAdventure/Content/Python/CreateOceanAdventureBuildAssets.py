@@ -26,6 +26,18 @@ ACTIONS = (
 )
 
 
+def gameplay_tag(tag_name):
+    """FGameplayTag's TagName is not exposed to Python, so tags must be requested from the
+    registry instead of constructed. An unregistered tag returns the empty tag."""
+    tag = unreal.GameplayTagLibrary.request_gameplay_tag(unreal.Name(tag_name), False)
+    if tag == unreal.GameplayTag():
+        raise RuntimeError(
+            f"GameplayTag '{tag_name}' is not registered. Check the feature's Config/Tags ini, "
+            "or compile the module that declares it natively."
+        )
+    return tag
+
+
 def require(value, message):
     if not value:
         raise RuntimeError(message)
@@ -98,7 +110,7 @@ def main():
         input_mapping.unmap_all_keys_from_action(action)
         input_mapping.map_key(action, make_key(key_name))
 
-        input_tag = unreal.GameplayTag(tag_name=tag_name)
+        input_tag = gameplay_tag(tag_name)
         ability_actions.append(
             unreal.LyraInputAction(input_action=action, input_tag=input_tag)
         )
