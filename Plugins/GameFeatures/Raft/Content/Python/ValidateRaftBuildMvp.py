@@ -108,15 +108,20 @@ def main():
         == 0.0,
         "Invalid-preview material must remain still until a failed click",
     )
+    require(
+        not invalid_preview_material.get_editor_property("disable_depth_test"),
+        "Invalid-preview material must keep depth testing on, or the ghost draws over the whole scene",
+    )
     piece_tag = piece.get_editor_property("piece_tag")
     tag_name = str(piece_tag.get_editor_property("tag_name"))
     require(
         tag_name == PIECE_TAG,
         f"MVP piece has the wrong GameplayTag: {tag_name}",
     )
+    catalog_pieces = list(catalog.get_editor_property("pieces"))
     require(
-        list(catalog.get_editor_property("pieces")) == [piece],
-        "Raft build catalog index zero must be the wooden foundation",
+        len(catalog_pieces) >= 1 and catalog_pieces[0] == piece,
+        "Raft build catalog index zero must stay the wooden foundation (indices are append-only)",
     )
     require(
         definition.get_editor_property("build_piece_catalog") == catalog,

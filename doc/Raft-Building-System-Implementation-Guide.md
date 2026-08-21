@@ -1510,3 +1510,50 @@ Dedicated Server + 2 客户端：
 
 第 3 步到第 4 步之间务必先用 `BuildDump` 确认数据层正确再调表现层：
 绝大多数“看起来是渲染问题”的 bug，根子都在复制层。
+
+---
+
+## 13. P0 修复记录（对齐 / 闪屏 / 吸附）
+
+实现落地后发现的问题与修法，代码以仓库为准，本节只记结论。
+
+### 13.1 网格对齐
+
+- `FBuildGridSettings` 新增 `CellOrigin`（XY 网格线偏移）与 `BaseHeight`（Level 0 的地面高度）。
+  `LocalToCoord` / `CoordToLocalCenter` 都按这两个值换算。
+- `ARaftActor::RecomputeGridAlignment()`（`PostInitializeComponents` 与 `ApplyDefinition` 中调用）
+  按甲板尺寸算出**能完整放进甲板的整格数**：奇数格自动加半格偏移保持居中，
+  余数留作不可建的视觉边缘。甲板 248×400 + 200 格 → 1×2 格（200×400），
+  不再出现建造件探出甲板 76cm 的情况，**不需要改美术资产**。
+- `BaseHeight = 甲板半高`，所以建造件的 `MeshOffset.Z` 只需补自己的半高
+  （由 `CreateRaftBuildPieceAssets.py` 的 `cell_bottom_offset()` 自动算），
+  不再把甲板厚度硬编码进每个资产。
+- `IsCellAnchored` 改成 O(1) 的索引区间判断，不再每次构造 `TSet`。
+
+### 13.2 甲板碰撞盒
+
+- `NotifyStructureChanged` 传给宿主的是 `ComputePieceBounds()`（**只含建造件**），
+  不再包含锚定格 —— 之前空结构在 `BeginPlay` 就把甲板从 248×400 撑成 400×400。
+- `ARaftActor::OnStructureBoundsChanged` 以 `RaftDefinition` 的甲板尺寸为下限，
+  只在尺寸真正变化时才 `SetBoxExtent`（根组件是角色的 MovementBase，每次改都会重新落地）。
+
+### 13.3 闪屏
+
+| 原因 | 修法 |
+| --- | --- |
+| 非法时预览跳到未吸附位置 | 预览恒定停在吸附格，只换材质 |
+| 失败分支每帧 `DestroyPreviewMesh` 再重建 | 改为 `HidePreview()`（只切可见性） |
+| valid/invalid 每帧翻转导致材质反复重建 | 只在状态真正跳变时换材质；`bLastAppliedValid` 缓存 |
+| 木筏随浪起伏导致格子来回跳 | 射线改打 Level 0 平面（甲板顶面）+ `SlotSwitchHysteresis` 迟滞 |
+| 幽灵材质 `disable_depth_test = True` 盖住全屏 | 关闭；改用 `PreviewLiftZ` 抬高 1cm 防 z-fighting |
+
+### 13.4 甲板吸附（四方向）
+
+- `UBuildStructureComponent::CollectSnapCandidates(Slot, Level, Out)`：
+  返回**与已占格四邻接的空格**。锚定甲板天然是"已占"，所以初始候选就是甲板四周一圈；
+  放下一块后该格进入已占集合、**自动从候选里消失**，同时它的四邻成为新候选。
+- `FindNearestSnapCandidate()`：预览在 `MaxSnapCells`（默认 1.5 格）内吸附到最近候选，
+  Foundation/Floor 类走这条路径，其它槽位仍按光标格。
+- `BuildDebug 1` 用青色框画出当前吸附点。
+- `DA_BuildPiece_Raft_Deck`：用 **`SM_Raft` 本体网格**按 `fit_scale_to_cell()` 映射到一格，
+  扩展出来的甲板与原木筏同款外观。

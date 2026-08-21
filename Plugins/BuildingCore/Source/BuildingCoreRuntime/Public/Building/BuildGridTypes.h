@@ -98,6 +98,18 @@ struct BUILDINGCORERUNTIME_API FBuildGridSettings
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (ClampMin = "10.0", Units = "cm"))
 	double LevelHeight = 250.0;
+
+	/**
+	 * Local-space XY offset of the grid lines. Hosts set this so whole cells line up with
+	 * their buildable area: an odd cell count needs a half-cell shift to stay centred on
+	 * the host origin, an even count does not.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (Units = "cm"))
+	FVector2D CellOrigin = FVector2D::ZeroVector;
+
+	/** Local-space Z of level 0's walking surface, e.g. the raft deck's top face. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building", meta = (Units = "cm"))
+	double BaseHeight = 0.0;
 };
 
 namespace BuildGrid
@@ -107,17 +119,17 @@ namespace BuildGrid
 		const double CellSize = FMath::Max(10.0, Settings.CellSize);
 		const double LevelHeight = FMath::Max(10.0, Settings.LevelHeight);
 		return FBuildGridCoord(
-			FMath::FloorToInt(Local.X / CellSize),
-			FMath::FloorToInt(Local.Y / CellSize),
-			FMath::FloorToInt(Local.Z / LevelHeight));
+			FMath::FloorToInt((Local.X - Settings.CellOrigin.X) / CellSize),
+			FMath::FloorToInt((Local.Y - Settings.CellOrigin.Y) / CellSize),
+			FMath::FloorToInt((Local.Z - Settings.BaseHeight) / LevelHeight));
 	}
 
 	inline FVector CoordToLocalCenter(const FBuildGridCoord& Coord, const FBuildGridSettings& Settings)
 	{
 		return FVector(
-			(Coord.X + 0.5) * Settings.CellSize,
-			(Coord.Y + 0.5) * Settings.CellSize,
-			Coord.Level * Settings.LevelHeight);
+			Settings.CellOrigin.X + (Coord.X + 0.5) * Settings.CellSize,
+			Settings.CellOrigin.Y + (Coord.Y + 0.5) * Settings.CellSize,
+			Settings.BaseHeight + Coord.Level * Settings.LevelHeight);
 	}
 
 	inline FVector EdgeOffset(uint8 EdgeIndex, const FBuildGridSettings& Settings)
@@ -134,6 +146,16 @@ namespace BuildGrid
 	inline float EdgeYaw(uint8 EdgeIndex)
 	{
 		return 90.0f * (EdgeIndex & 3);
+	}
+
+	/** Same-level 4-neighbours only; used for snapping and support checks. */
+	inline void GetPlanarNeighbors(const FBuildGridCoord& Coord, TArray<FBuildGridCoord>& OutNeighbors)
+	{
+		OutNeighbors.Reset(4);
+		OutNeighbors.Add({Coord.X + 1, Coord.Y, Coord.Level});
+		OutNeighbors.Add({Coord.X - 1, Coord.Y, Coord.Level});
+		OutNeighbors.Add({Coord.X, Coord.Y + 1, Coord.Level});
+		OutNeighbors.Add({Coord.X, Coord.Y - 1, Coord.Level});
 	}
 
 	inline void GetNeighbors(const FBuildGridCoord& Coord, TArray<FBuildGridCoord>& OutNeighbors)

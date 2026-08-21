@@ -643,6 +643,113 @@ int32 UBuildStructureComponent::ClearAllPieces()
 	return RemovedCount;
 }
 
+FBox UBuildStructureComponent::ComputePieceBounds() const
+{
+	FBox Bounds(ForceInit);
+	const FVector CellExtent(GridSettings.CellSize * 0.5, GridSettings.CellSize * 0.5, 1.0);
+
+	for (const FBuildPieceEntry& Entry : PieceList.Entries)
+	{
+		const UBuildPieceDefinition* Definition = PieceCatalog
+			? PieceCatalog->GetByIndex(Entry.PieceIndex)
+			: nullptr;
+		const int32 FootprintX = Definition ? FMath::Max(1, Definition->Footprint.X) : 1;
+		const int32 FootprintY = Definition ? FMath::Max(1, Definition->Footprint.Y) : 1;
+		for (int32 DeltaX = 0; DeltaX < FootprintX; ++DeltaX)
+		{
+			for (int32 DeltaY = 0; DeltaY < FootprintY; ++DeltaY)
+			{
+				Bounds += FBox::BuildAABB(
+					BuildGrid::CoordToLocalCenter(
+						FBuildGridCoord(
+							Entry.Key.Coord.X + DeltaX,
+							Entry.Key.Coord.Y + DeltaY,
+							Entry.Key.Coord.Level),
+						GridSettings),
+					CellExtent);
+			}
+		}
+	}
+	return Bounds;
+}
+
+void UBuildStructureComponent::CollectSnapCandidates(
+	EBuildSlotType Slot,
+	int32 Level,
+	TArray<FBuildGridCoord>& OutCandidates) const
+{
+	OutCandidates.Reset();
+
+	TSet<FBuildGridCoord> Occupied;
+	if (Level == 0)
+	{
+		Occupied.Append(AnchorCells);
+	}
+	for (const FBuildPieceEntry& Entry : PieceList.Entries)
+	{
+		if (Entry.Key.Slot == Slot && Entry.Key.Coord.Level == Level)
+		{
+			Occupied.Add(Entry.Key.Coord);
+		}
+	}
+
+	TSet<FBuildGridCoord> Seen;
+	TArray<FBuildGridCoord> Neighbors;
+	for (const FBuildGridCoord& Coord : Occupied)
+	{
+		BuildGrid::GetPlanarNeighbors(Coord, Neighbors);
+		for (const FBuildGridCoord& Neighbor : Neighbors)
+		{
+			// An occupied cell is no longer a snap target: placing a piece disables its own cell.
+			if (Occupied.Contains(Neighbor) || Seen.Contains(Neighbor))
+			{
+				continue;
+			}
+			Seen.Add(Neighbor);
+			OutCandidates.Add(Neighbor);
+		}
+	}
+}
+
+bool UBuildStructureComponent::FindNearestSnapCandidate(
+	const FVector& WorldLocation,
+	EBuildSlotType Slot,
+	int32 Level,
+	FBuildSlotKey& OutKey) const
+{
+	const IBuildStructureHost* HostInterface = Host.GetInterface();
+	if (!HostInterface)
+	{
+		return false;
+	}
+
+	TArray<FBuildGridCoord> Candidates;
+	CollectSnapCandidates(Slot, Level, Candidates);
+	if (Candidates.IsEmpty())
+	{
+		return false;
+	}
+
+	const FVector Local = HostInterface->GetStructureSpace().InverseTransformPosition(WorldLocation);
+	const double MaxDistanceSquared = FMath::Square(GridSettings.CellSize * MaxSnapCells);
+
+	double BestDistanceSquared = MaxDistanceSquared;
+	bool bFound = false;
+	for (const FBuildGridCoord& Candidate : Candidates)
+	{
+		const FVector Center = BuildGrid::CoordToLocalCenter(Candidate, GridSettings);
+		const double DistanceSquared =
+			FMath::Square(Center.X - Local.X) + FMath::Square(Center.Y - Local.Y);
+		if (DistanceSquared < BestDistanceSquared)
+		{
+			BestDistanceSquared = DistanceSquared;
+			OutKey = FBuildSlotKey(Candidate, Slot);
+			bFound = true;
+		}
+	}
+	return bFound;
+}
+
 FBox UBuildStructureComponent::ComputeLocalStructureBounds() const
 {
 	FBox Bounds(ForceInit);
@@ -684,7 +791,8 @@ void UBuildStructureComponent::NotifyStructureChanged()
 	{
 		// Hosts update local collision on every peer. Authority-only side effects such as
 		// buoyancy remain the host implementation's responsibility.
-		HostInterface->OnStructureBoundsChanged(ComputeLocalStructureBounds());
+		// Pieces only: the host owns its base size and must not grow from an empty structure.
+		HostInterface->OnStructureBoundsChanged(ComputePieceBounds());
 	}
 }
 
@@ -762,6 +870,24 @@ void UBuildStructureComponent::DrawDebugStructure() const
 			0.0f,
 			0,
 			2.0f);
+	}
+
+	// Free cells touching the structure: these are the snap targets, and an occupied cell
+	// disappears from here automatically.
+	TArray<FBuildGridCoord> SnapCandidates;
+	CollectSnapCandidates(EBuildSlotType::Floor, 0, SnapCandidates);
+	for (const FBuildGridCoord& Candidate : SnapCandidates)
+	{
+		DrawDebugBox(
+			World,
+			StructureSpace.TransformPosition(BuildGrid::CoordToLocalCenter(Candidate, GridSettings)),
+			CellExtent,
+			StructureSpace.GetRotation(),
+			FColor::Cyan,
+			false,
+			0.0f,
+			0,
+			1.5f);
 	}
 
 	const FBox Bounds = ComputeLocalStructureBounds();

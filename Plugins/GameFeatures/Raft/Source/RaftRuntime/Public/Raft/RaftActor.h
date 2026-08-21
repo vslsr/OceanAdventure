@@ -26,6 +26,7 @@ public:
 	ARaftActor();
 
 	virtual void OnConstruction(const FTransform& Transform) override;
+	virtual void PostInitializeComponents() override;
 
 	UFUNCTION(BlueprintPure, Category = "Raft")
 	UBoxComponent* GetDeckCollision() const { return DeckCollision; }
@@ -70,9 +71,22 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Build")
 	TObjectPtr<UBuildStructureVisualComponent> BuildStructureVisualComponent;
 
+	/**
+	 * CellSize / LevelHeight are authored; CellOrigin and BaseHeight are derived from the deck
+	 * by RecomputeGridAlignment() so that whole cells always fit inside the deck footprint.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Build")
 	FBuildGridSettings BuildGridSettings;
 
+	/** Inclusive level-0 cell index range covered by the base deck. */
+	FIntPoint AnchorMin = FIntPoint(0, 0);
+	FIntPoint AnchorMax = FIntPoint(-1, -1);
+
 private:
 	void ApplyDefinition();
+
+	/** Aligns the grid to the deck and caches the anchored cell range. */
+	void RecomputeGridAlignment();
+
+	FVector GetBaseDeckExtent() const;
 };

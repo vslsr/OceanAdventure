@@ -70,6 +70,8 @@ private:
 		FVector& OutWorldLocation) const;
 	void RefreshLocalMode();
 	void DestroyPreviewMesh();
+	/** Per-frame failure path: keep the component, just stop drawing it. */
+	void HidePreview();
 	void ConfigurePreviewMesh(const UBuildPieceDefinition* Definition);
 	void ApplyPreviewMaterial(
 		const UBuildPieceDefinition* Definition,
@@ -94,6 +96,18 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Building|Creative", meta = (ClampMin = "100.0", Units = "cm"))
 	double LocalPlacementDistance = 1500.0;
 
+	/**
+	 * Fraction of a cell the cursor must travel past the current cell's centre before the
+	 * preview switches cells. Without it the buoyant host's motion flips the snapped cell
+	 * back and forth every frame.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Building|Creative", meta = (ClampMin = "0.5", ClampMax = "1.0"))
+	double SlotSwitchHysteresis = 0.6;
+
+	/** Small lift so the ghost never z-fights the deck or an already placed piece. */
+	UPROPERTY(EditDefaultsOnly, Category = "Building|Creative", meta = (ClampMin = "0.0", Units = "cm"))
+	double PreviewLiftZ = 1.0;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Building|Creative", meta = (ClampMin = "0.0", Units = "cm"))
 	float FailureShakeAmplitude = 14.0f;
 
@@ -112,6 +126,9 @@ private:
 	FVector CurrentCursorWorld = FVector::ZeroVector;
 	FGameplayTag CurrentFailReason;
 	bool bCurrentPlacementValid = false;
+	bool bHasCurrentKey = false;
+	bool bLastAppliedValid = false;
+	bool bHasAppliedMaterialState = false;
 	bool bUsingInvalidPreviewMaterial = false;
 	bool bPreviousShowMouseCursor = false;
 	bool bCapturedCursorState = false;

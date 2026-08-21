@@ -101,7 +101,28 @@ public:
 		const UBuildPieceDefinition* Definition,
 		uint8 Rotation) const;
 
+	/** Anchors plus pieces; debug drawing and diagnostics. */
 	FBox ComputeLocalStructureBounds() const;
+
+	/** Pieces only. Invalid when nothing has been built, which hosts read as "base size". */
+	FBox ComputePieceBounds() const;
+
+	/**
+	 * Empty cells that touch an occupied cell (anchor or placed piece) on one of the four
+	 * planar sides. Occupying a cell removes it from this set automatically and turns its own
+	 * neighbours into new candidates.
+	 */
+	void CollectSnapCandidates(
+		EBuildSlotType Slot,
+		int32 Level,
+		TArray<FBuildGridCoord>& OutCandidates) const;
+
+	/** Nearest snap candidate to a world location, within MaxSnapCells cells. */
+	bool FindNearestSnapCandidate(
+		const FVector& WorldLocation,
+		EBuildSlotType Slot,
+		int32 Level,
+		FBuildSlotKey& OutKey) const;
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Building")
 	bool TryPlacePiece(
@@ -145,6 +166,10 @@ protected:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Building", meta = (ClampMin = "1"))
 	int32 MaxPieceCount = 500;
+
+	/** Snap radius for FindNearestSnapCandidate, in cells. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Building", meta = (ClampMin = "0.5"))
+	double MaxSnapCells = 1.5;
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Building", meta = (ClampMin = "0.0", Units = "cm"))
 	double MaxPlacementDistance = 1500.0;

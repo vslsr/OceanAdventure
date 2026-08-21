@@ -57,6 +57,13 @@ void ARaftActor::OnConstruction(const FTransform& Transform)
 	ApplyDefinition();
 }
 
+void ARaftActor::PostInitializeComponents()
+{
+	// The build component caches grid settings in its BeginPlay, which runs after this.
+	RecomputeGridAlignment();
+	Super::PostInitializeComponents();
+}
+
 void ARaftActor::ApplyDefinition()
 {
 	if (!RaftDefinition)
@@ -69,6 +76,52 @@ void ARaftActor::ApplyDefinition()
 	VisualMesh->SetStaticMesh(RaftDefinition->GetVisualMesh());
 	BuoyancyComponent->ApplyDefinition(RaftDefinition);
 	BuildStructureComponent->SetPieceCatalog(RaftDefinition->GetBuildPieceCatalog());
+	RecomputeGridAlignment();
+}
+
+FVector ARaftActor::GetBaseDeckExtent() const
+{
+	// Always the authored deck, never DeckCollision's current extent: that one grows with
+	// the built structure, and feeding it back in would make the anchor area self-expand.
+	return RaftDefinition
+		? RaftDefinition->GetDeckBoxExtent()
+		: FVector(124.0, 200.0, 21.0);
+}
+
+void ARaftActor::RecomputeGridAlignment()
+{
+	const FVector Extent = GetBaseDeckExtent();
+	const double CellSize = FMath::Max(10.0, BuildGridSettings.CellSize);
+
+	// Only whole cells that fit inside the deck may be anchored; a deck that is not an exact
+	// multiple of CellSize keeps its remainder as an un-buildable visual margin rather than
+	// letting pieces overhang the water.
+	const int32 CountX = FMath::FloorToInt((Extent.X * 2.0) / CellSize);
+	const int32 CountY = FMath::FloorToInt((Extent.Y * 2.0) / CellSize);
+
+	// Odd cell counts need a half-cell shift to stay centred on the raft origin.
+	BuildGridSettings.CellOrigin = FVector2D(
+		(CountX % 2 == 0) ? 0.0 : -CellSize * 0.5,
+		(CountY % 2 == 0) ? 0.0 : -CellSize * 0.5);
+
+	// Level 0 is the deck's top face, so pieces only need their own half-height as offset.
+	BuildGridSettings.BaseHeight = Extent.Z;
+
+	if (CountX <= 0 || CountY <= 0)
+	{
+		AnchorMin = FIntPoint(0, 0);
+		AnchorMax = FIntPoint(-1, -1);
+		UE_LOG(
+			LogTemp,
+			Warning,
+			TEXT("[Raft] Deck %s is smaller than one %.0fcm build cell; building is disabled."),
+			*Extent.ToString(),
+			CellSize);
+		return;
+	}
+
+	AnchorMin = FIntPoint(-(CountX / 2), -(CountY / 2));
+	AnchorMax = FIntPoint(AnchorMin.X + CountX - 1, AnchorMin.Y + CountY - 1);
 }
 
 USceneComponent* ARaftActor::GetStructureAttachRoot() const
@@ -78,27 +131,14 @@ USceneComponent* ARaftActor::GetStructureAttachRoot() const
 
 bool ARaftActor::CollectAnchorCells(TSet<FBuildGridCoord>& OutCells) const
 {
-	if (!DeckCollision)
+	if (AnchorMax.X < AnchorMin.X || AnchorMax.Y < AnchorMin.Y)
 	{
 		return false;
 	}
 
-	const FVector Extent = RaftDefinition
-		? RaftDefinition->GetDeckBoxExtent()
-		: DeckCollision->GetUnscaledBoxExtent();
-	const FBuildGridCoord MinCoord = BuildGrid::LocalToCoord(
-		FVector(-Extent.X, -Extent.Y, 0.0),
-		BuildGridSettings);
-	const FBuildGridCoord MaxCoord = BuildGrid::LocalToCoord(
-		FVector(
-			Extent.X - KINDA_SMALL_NUMBER,
-			Extent.Y - KINDA_SMALL_NUMBER,
-			0.0),
-		BuildGridSettings);
-
-	for (int32 X = MinCoord.X; X <= MaxCoord.X; ++X)
+	for (int32 X = AnchorMin.X; X <= AnchorMax.X; ++X)
 	{
-		for (int32 Y = MinCoord.Y; Y <= MaxCoord.Y; ++Y)
+		for (int32 Y = AnchorMin.Y; Y <= AnchorMax.Y; ++Y)
 		{
 			OutCells.Add(FBuildGridCoord(X, Y, 0));
 		}
@@ -108,31 +148,49 @@ bool ARaftActor::CollectAnchorCells(TSet<FBuildGridCoord>& OutCells) const
 
 bool ARaftActor::IsCellAnchored(const FBuildGridCoord& Coord) const
 {
-	if (Coord.Level != 0)
-	{
-		return false;
-	}
-
-	TSet<FBuildGridCoord> AnchorCells;
-	CollectAnchorCells(AnchorCells);
-	return AnchorCells.Contains(Coord);
+	// O(1): placement validation calls this several times per frame.
+	return Coord.Level == 0
+		&& Coord.X >= AnchorMin.X && Coord.X <= AnchorMax.X
+		&& Coord.Y >= AnchorMin.Y && Coord.Y <= AnchorMax.Y;
 }
 
-void ARaftActor::OnStructureBoundsChanged(const FBox& LocalBounds)
+void ARaftActor::OnStructureBoundsChanged(const FBox& LocalPieceBounds)
 {
-	if (!LocalBounds.IsValid || !DeckCollision)
+	if (!DeckCollision)
 	{
 		return;
 	}
 
-	const FVector ExistingExtent = DeckCollision->GetUnscaledBoxExtent();
-	const FVector StructureExtent = LocalBounds.GetExtent();
-	DeckCollision->SetBoxExtent(
-		FVector(StructureExtent.X, StructureExtent.Y, ExistingExtent.Z),
-		true);
+	// The base deck is the floor: an empty structure must not shrink or grow it.
+	const FVector BaseExtent = GetBaseDeckExtent();
+	FVector DeckExtent = BaseExtent;
+
+	if (LocalPieceBounds.IsValid)
+	{
+		// DeckCollision is the root component and the characters' movement base, so it stays
+		// centred on the actor origin; asymmetric builds are covered by a symmetric envelope
+		// instead of moving the root (which would teleport the whole raft).
+		DeckExtent.X = FMath::Max3(
+			BaseExtent.X,
+			FMath::Abs(LocalPieceBounds.Min.X),
+			FMath::Abs(LocalPieceBounds.Max.X));
+		DeckExtent.Y = FMath::Max3(
+			BaseExtent.Y,
+			FMath::Abs(LocalPieceBounds.Min.Y),
+			FMath::Abs(LocalPieceBounds.Max.Y));
+	}
+
+	const FVector NewExtent(DeckExtent.X, DeckExtent.Y, BaseExtent.Z);
+	if (!NewExtent.Equals(DeckCollision->GetUnscaledBoxExtent(), 0.1))
+	{
+		// Only touch the movement base when the size actually changed: every update re-grounds
+		// the characters standing on the deck.
+		DeckCollision->SetBoxExtent(NewExtent, true);
+	}
 
 	if (HasAuthority() && BuoyancyComponent)
 	{
-		BuoyancyComponent->RebuildFromStructure(LocalBounds);
+		BuoyancyComponent->RebuildFromStructure(
+			FBox::BuildAABB(FVector(0.0, 0.0, 0.0), NewExtent));
 	}
 }

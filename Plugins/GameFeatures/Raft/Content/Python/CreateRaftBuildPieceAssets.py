@@ -8,6 +8,11 @@ import unreal
 
 
 PIECE_PATH = "/Raft/Build/Pieces/DA_BuildPiece_Raft_Foundation_Wood"
+DECK_PIECE_PATH = "/Raft/Build/Pieces/DA_BuildPiece_Raft_Deck"
+RAFT_MESH_PATH = "/Raft/Vehicles/Raft/SM_Raft"
+CELL_SIZE = 200.0
+PIECE_TAG = "Raft.Piece.Foundation.Wood"
+DECK_PIECE_TAG = "Raft.Piece.Floor.Deck"
 CATALOG_PATH = "/Raft/Build/DA_BuildPieceCatalog_Raft"
 RAFT_DEFINITION_PATH = "/Raft/Vehicles/Raft/DA_Raft_Default"
 CUBE_PATH = "/Engine/BasicShapes/Cube.Cube"
@@ -100,10 +105,10 @@ def create_invalid_preview_material():
     material.set_editor_property("blend_mode", unreal.BlendMode.BLEND_TRANSLUCENT)
     material.set_editor_property("shading_model", unreal.MaterialShadingModel.MSM_UNLIT)
     material.set_editor_property("two_sided", True)
-    # Placement ghosts must remain visible over the translucent ocean and when
-    # they overlap the existing deck. Depth testing causes the thin preview slab
-    # to flicker as the buoyant host moves through nearby surfaces.
-    material.set_editor_property("disable_depth_test", True)
+    # Depth testing stays ON. A depth-ignoring translucent slab draws over the whole
+    # scene, so every valid/invalid transition read as a full-screen flash. The ghost
+    # is lifted by UBuildPreviewComponent::PreviewLiftZ instead to avoid z-fighting.
+    material.set_editor_property("disable_depth_test", False)
 
     time = create_expression(material, unreal.MaterialExpressionTime, -900, 120)
     speed_x = create_constant(material, 7.0, -900, 240)
@@ -171,6 +176,26 @@ def create_invalid_preview_material():
     return material
 
 
+def cell_bottom_offset(mesh, scale):
+    """Z offset that puts the scaled mesh's bottom face on the cell floor.
+
+    Level 0 is the deck's top face now, so a piece only has to lift itself by its own
+    half height instead of encoding the deck thickness in every asset.
+    """
+    bounds = mesh.get_bounds()
+    return -(bounds.origin.z - bounds.box_extent.z) * scale.z
+
+
+def fit_scale_to_cell(mesh, cell_size):
+    """Uniformly maps a mesh's XY footprint onto exactly one build cell."""
+    extent = mesh.get_bounds().box_extent
+    return unreal.Vector(
+        cell_size / max(1.0, extent.x * 2.0),
+        cell_size / max(1.0, extent.y * 2.0),
+        1.0,
+    )
+
+
 def save(asset):
     require(
         unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False),
@@ -197,21 +222,47 @@ def main():
     )
     invalid_preview_material = create_invalid_preview_material()
 
+    cube_scale = unreal.Vector(2.0, 2.0, 0.1)
     piece = get_or_create_data_asset(PIECE_PATH, piece_class)
+    # BuildSelect looks pieces up by tag, so an untagged piece is unreachable from the GM.
+    piece.set_editor_property("piece_tag", unreal.GameplayTag(tag_name=PIECE_TAG))
     piece.set_editor_property("mesh", cube)
-    piece.set_editor_property("mesh_offset", unreal.Vector(0.0, 0.0, 22.5))
-    piece.set_editor_property("mesh_scale", unreal.Vector(2.0, 2.0, 0.1))
+    piece.set_editor_property(
+        "mesh_offset", unreal.Vector(0.0, 0.0, cell_bottom_offset(cube, cube_scale))
+    )
+    piece.set_editor_property("mesh_scale", cube_scale)
     piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
     piece.set_editor_property("override_materials", [wood_material])
     piece.set_editor_property("invalid_preview_material", invalid_preview_material)
     piece.set_editor_property("costs", [])
     save(piece)
 
+    # Snap-built deck: the raft's own mesh mapped onto a single cell, so an extension
+    # reads as more of the same raft rather than a foreign slab.
+    raft_mesh = require(
+        unreal.EditorAssetLibrary.load_asset(RAFT_MESH_PATH),
+        f"Missing {RAFT_MESH_PATH}; run CreateRaftTestActor once first",
+    )
+    # Must match ARaftActor::BuildGridSettings.CellSize.
+    deck_scale = fit_scale_to_cell(raft_mesh, CELL_SIZE)
+    deck_piece = get_or_create_data_asset(DECK_PIECE_PATH, piece_class)
+    deck_piece.set_editor_property("piece_tag", unreal.GameplayTag(tag_name=DECK_PIECE_TAG))
+    deck_piece.set_editor_property("mesh", raft_mesh)
+    deck_piece.set_editor_property(
+        "mesh_offset", unreal.Vector(0.0, 0.0, cell_bottom_offset(raft_mesh, deck_scale))
+    )
+    deck_piece.set_editor_property("mesh_scale", deck_scale)
+    deck_piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
+    deck_piece.set_editor_property("invalid_preview_material", invalid_preview_material)
+    deck_piece.set_editor_property("costs", [])
+    save(deck_piece)
+
     catalog = get_or_create_data_asset(CATALOG_PATH, catalog_class)
     # Network indices are append-only. P0 owns index zero and rewrites no later entry.
     pieces = list(catalog.get_editor_property("pieces"))
-    if piece not in pieces:
-        pieces.append(piece)
+    for new_piece in (piece, deck_piece):
+        if new_piece not in pieces:
+            pieces.append(new_piece)
     catalog.set_editor_property("pieces", pieces)
     save(catalog)
 

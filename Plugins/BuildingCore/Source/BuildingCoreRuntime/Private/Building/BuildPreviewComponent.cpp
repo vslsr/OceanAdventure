@@ -136,6 +136,8 @@ void UBuildPreviewComponent::OnRep_SelectedPieceIndex()
 	ConfiguredDefinition.Reset();
 	InvalidPreviewMaterialInstances.Reset();
 	bUsingInvalidPreviewMaterial = false;
+	bHasAppliedMaterialState = false;
+	bHasCurrentKey = false;
 }
 
 void UBuildPreviewComponent::ServerSetBuildModeEnabled_Implementation(bool bEnabled)
@@ -279,7 +281,9 @@ bool UBuildPreviewComponent::ProjectCursorToStructure(
 	}
 
 	const FTransform StructureSpace = Host->GetStructureSpace();
-	const FVector PlaneOrigin = StructureSpace.GetLocation();
+	// Level 0's walking surface, not the actor origin: the deck top is where pieces live.
+	const FVector PlaneOrigin = StructureSpace.TransformPosition(
+		FVector(0.0, 0.0, Host->GetGridSettings().BaseHeight));
 	const FVector PlaneNormal = StructureSpace.GetUnitAxis(EAxis::Z);
 	const double Denominator = FVector::DotProduct(RayDirection, PlaneNormal);
 	if (FMath::IsNearlyZero(Denominator))
@@ -329,6 +333,17 @@ void UBuildPreviewComponent::RefreshLocalMode()
 	}
 }
 
+void UBuildPreviewComponent::HidePreview()
+{
+	// Destroying and re-registering a component every frame rebuilds its render state and
+	// reads as flicker; the failure paths only need to stop drawing.
+	if (PreviewMesh)
+	{
+		PreviewMesh->SetVisibility(false, true);
+	}
+	bHasCurrentKey = false;
+}
+
 void UBuildPreviewComponent::DestroyPreviewMesh()
 {
 	if (PreviewMesh)
@@ -339,6 +354,8 @@ void UBuildPreviewComponent::DestroyPreviewMesh()
 	ConfiguredDefinition.Reset();
 	InvalidPreviewMaterialInstances.Reset();
 	bUsingInvalidPreviewMaterial = false;
+	bHasAppliedMaterialState = false;
+	bHasCurrentKey = false;
 }
 
 void UBuildPreviewComponent::ConfigurePreviewMesh(const UBuildPieceDefinition* Definition)
@@ -376,6 +393,7 @@ void UBuildPreviewComponent::ConfigurePreviewMesh(const UBuildPieceDefinition* D
 		ConfiguredDefinition = Definition;
 		InvalidPreviewMaterialInstances.Reset();
 		bUsingInvalidPreviewMaterial = false;
+		bHasAppliedMaterialState = false;
 		for (int32 MaterialIndex = 0; MaterialIndex < Definition->OverrideMaterials.Num(); ++MaterialIndex)
 		{
 			if (UMaterialInterface* Material = Definition->OverrideMaterials[MaterialIndex])
@@ -396,40 +414,48 @@ void UBuildPreviewComponent::ApplyPreviewMaterial(
 		return;
 	}
 
-	if (bPlacementValid || !Definition->InvalidPreviewMaterial)
+	const bool bWantInvalidMaterial = !bPlacementValid && Definition->InvalidPreviewMaterial != nullptr;
+	const bool bStateChanged = !bHasAppliedMaterialState || bLastAppliedValid != bPlacementValid;
+
+	if (bStateChanged)
 	{
-		if (bUsingInvalidPreviewMaterial)
+		// Swapping materials is only done on an actual state transition. Doing it every frame
+		// while the valid/invalid result oscillates is what made the ghost strobe.
+		if (bWantInvalidMaterial)
+		{
+			const int32 MaterialCount = FMath::Max(1, PreviewMesh->GetNumMaterials());
+			InvalidPreviewMaterialInstances.Reset(MaterialCount);
+			for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
+			{
+				UMaterialInstanceDynamic* MaterialInstance = UMaterialInstanceDynamic::Create(
+					Definition->InvalidPreviewMaterial,
+					PreviewMesh);
+				InvalidPreviewMaterialInstances.Add(MaterialInstance);
+				PreviewMesh->SetMaterial(MaterialIndex, MaterialInstance);
+			}
+			bUsingInvalidPreviewMaterial = true;
+		}
+		else if (bUsingInvalidPreviewMaterial)
 		{
 			RestorePieceMaterials(Definition);
 			InvalidPreviewMaterialInstances.Reset();
 			bUsingInvalidPreviewMaterial = false;
 		}
-		return;
+
+		bLastAppliedValid = bPlacementValid;
+		bHasAppliedMaterialState = true;
 	}
 
-	const int32 MaterialCount = FMath::Max(1, PreviewMesh->GetNumMaterials());
-	if (!bUsingInvalidPreviewMaterial
-		|| InvalidPreviewMaterialInstances.Num() != MaterialCount)
+	if (bUsingInvalidPreviewMaterial)
 	{
-		InvalidPreviewMaterialInstances.Reset(MaterialCount);
-		for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
+		for (UMaterialInstanceDynamic* MaterialInstance : InvalidPreviewMaterialInstances)
 		{
-			UMaterialInstanceDynamic* MaterialInstance = UMaterialInstanceDynamic::Create(
-				Definition->InvalidPreviewMaterial,
-				PreviewMesh);
-			InvalidPreviewMaterialInstances.Add(MaterialInstance);
-			PreviewMesh->SetMaterial(MaterialIndex, MaterialInstance);
-		}
-		bUsingInvalidPreviewMaterial = true;
-	}
-
-	for (UMaterialInstanceDynamic* MaterialInstance : InvalidPreviewMaterialInstances)
-	{
-		if (MaterialInstance)
-		{
-			MaterialInstance->SetScalarParameterValue(
-				ShakeAmplitudeParameter,
-				FMath::Max(0.0f, ShakeAmplitude));
+			if (MaterialInstance)
+			{
+				MaterialInstance->SetScalarParameterValue(
+					ShakeAmplitudeParameter,
+					FMath::Max(0.0f, ShakeAmplitude));
+			}
 		}
 	}
 }
@@ -458,7 +484,7 @@ void UBuildPreviewComponent::UpdatePreview()
 	CurrentStructure = Structure;
 	if (!Structure)
 	{
-		DestroyPreviewMesh();
+		HidePreview();
 		bCurrentPlacementValid = false;
 		CurrentFailReason = BuildGameplayTags::Fail_BadDefinition;
 		return;
@@ -471,7 +497,7 @@ void UBuildPreviewComponent::UpdatePreview()
 	if (!Definition || !Definition->Mesh
 		|| !ProjectCursorToStructure(PlayerController, Structure, CurrentCursorWorld))
 	{
-		DestroyPreviewMesh();
+		HidePreview();
 		bCurrentPlacementValid = false;
 		CurrentFailReason = BuildGameplayTags::Fail_BadDefinition;
 		return;
@@ -492,7 +518,37 @@ void UBuildPreviewComponent::UpdatePreview()
 			FAttachmentTransformRules::KeepRelativeTransform);
 	}
 
-	CurrentKey = Structure->WorldToSlot(CurrentCursorWorld, Definition->SlotType);
+	// Deck-like pieces snap to the ring of free cells around what already exists, so the four
+	// sides of the raft are the only targets until the structure grows. Occupied cells drop out
+	// of that set on their own, which is what disables a cell once it has been built on.
+	const bool bUsesSnapRing = Definition->SlotType == EBuildSlotType::Foundation
+		|| Definition->SlotType == EBuildSlotType::Floor;
+	FBuildSlotKey CandidateKey;
+	if (!bUsesSnapRing
+		|| !Structure->FindNearestSnapCandidate(
+			CurrentCursorWorld,
+			Definition->SlotType,
+			/*Level=*/0,
+			CandidateKey))
+	{
+		CandidateKey = Structure->WorldToSlot(CurrentCursorWorld, Definition->SlotType);
+	}
+
+	// Hysteresis: hold the current cell while the cursor is still near its centre.
+	if (bHasCurrentKey
+		&& !(CandidateKey == CurrentKey)
+		&& CandidateKey.Slot == CurrentKey.Slot)
+	{
+		const double HoldRadius = Structure->GetGridSettings().CellSize * SlotSwitchHysteresis;
+		if (FVector::DistSquaredXY(CurrentCursorWorld, Structure->SlotToWorld(CurrentKey))
+			< FMath::Square(HoldRadius))
+		{
+			CandidateKey = CurrentKey;
+		}
+	}
+	CurrentKey = CandidateKey;
+	bHasCurrentKey = true;
+
 	bCurrentPlacementValid = Structure->CanPlacePiece(
 		CurrentKey,
 		Definition,
@@ -503,40 +559,20 @@ void UBuildPreviewComponent::UpdatePreview()
 		CurrentFailReason = BuildGameplayTags::Fail_TooFar;
 	}
 
-	FTransform PreviewTransform;
-	if (bCurrentPlacementValid)
-	{
-		PreviewTransform = Structure->GetPieceRelativeTransform(CurrentKey, Definition, 0);
-		ApplyPreviewMaterial(Definition, true, 0.0f);
-		PreviewMesh->SetRenderCustomDepth(false);
-		PreviewMesh->SetCustomDepthStencilValue(0);
-	}
-	else
-	{
-		const FTransform StructureSpace = Host->GetStructureSpace();
-		FVector UnsnappedLocation = StructureSpace.InverseTransformPosition(CurrentCursorWorld);
-		UnsnappedLocation.Z = CurrentKey.Coord.Level * Structure->GetGridSettings().LevelHeight;
-		UnsnappedLocation += Definition->MeshOffset;
+	const UWorld* World = GetWorld();
+	const double Now = World ? World->GetTimeSeconds() : 0.0;
+	const float ShakeAlpha = FailureShakeDuration > 0.0f
+		? FMath::Clamp(
+			static_cast<float>((FailureShakeEndSeconds - Now) / FailureShakeDuration),
+			0.0f,
+			1.0f)
+		: 0.0f;
+	ApplyPreviewMaterial(Definition, bCurrentPlacementValid, FailureShakeAmplitude * ShakeAlpha);
 
-		PreviewTransform = FTransform(
-			FRotator::ZeroRotator,
-			UnsnappedLocation,
-			Definition->MeshScale);
-
-		const UWorld* World = GetWorld();
-		const double Now = World ? World->GetTimeSeconds() : 0.0;
-		const float ShakeAlpha = FailureShakeDuration > 0.0f
-			? FMath::Clamp(
-				static_cast<float>((FailureShakeEndSeconds - Now) / FailureShakeDuration),
-				0.0f,
-				1.0f)
-			: 0.0f;
-		const float ShakeAmplitude = FailureShakeAmplitude * ShakeAlpha;
-		ApplyPreviewMaterial(Definition, false, ShakeAmplitude);
-		PreviewMesh->SetRenderCustomDepth(false);
-		PreviewMesh->SetCustomDepthStencilValue(0);
-	}
-
+	// The ghost always stays on the snapped cell. Letting it jump to the raw cursor position
+	// while invalid made every validity flip look like a teleport.
+	FTransform PreviewTransform = Structure->GetPieceRelativeTransform(CurrentKey, Definition, 0);
+	PreviewTransform.AddToTranslation(FVector(0.0, 0.0, PreviewLiftZ));
 	PreviewMesh->SetRelativeTransform(PreviewTransform);
 	PreviewMesh->SetVisibility(true, true);
 }
