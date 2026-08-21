@@ -75,8 +75,14 @@ UInstancedStaticMeshComponent* UBuildStructureVisualComponent::FindOrCreateISM(
 		return nullptr;
 	}
 
-	UInstancedStaticMeshComponent* ISM =
-		NewObject<UInstancedStaticMeshComponent>(OwnerActor, NAME_None, RF_Transient);
+	// The host picks the component class: ISM for something that moves, HISM for a big static
+	// footprint that wants per-instance culling.
+	const TSubclassOf<UInstancedStaticMeshComponent> ComponentClass = Host->GetInstancedMeshComponentClass();
+	UInstancedStaticMeshComponent* ISM = NewObject<UInstancedStaticMeshComponent>(
+		OwnerActor,
+		ComponentClass ? ComponentClass.Get() : UInstancedStaticMeshComponent::StaticClass(),
+		NAME_None,
+		RF_Transient);
 	ISM->SetStaticMesh(Mesh);
 	ISM->SetMobility(EComponentMobility::Movable);
 	ISM->SetGenerateOverlapEvents(false);

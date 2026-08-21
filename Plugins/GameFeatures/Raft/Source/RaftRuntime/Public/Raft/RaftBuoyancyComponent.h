@@ -51,6 +51,30 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy", meta = (Units = "cm"))
 	float WaterlineOffset = 0.0f;
 
+	/**
+	 * Simulation rate falls off with distance to the nearest viewer. Every raft samples the
+	 * ocean four times per tick on the server, so a busy world pays for rafts nobody is
+	 * looking at. Interpolation stays frame-rate independent because a throttled tick is
+	 * handed the accumulated DeltaTime.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy|LOD", meta = (ClampMin = "0.0", Units = "cm"))
+	double FullRateDistance = 8000.0;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy|LOD", meta = (ClampMin = "0.0", Units = "cm"))
+	double ReducedRateDistance = 25000.0;
+
+	/** Tick interval used between FullRateDistance and ReducedRateDistance. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy|LOD", meta = (ClampMin = "0.0", Units = "s"))
+	float ReducedTickInterval = 0.1f;
+
+	/** Tick interval used beyond ReducedRateDistance. Rafts keep drifting, just coarsely. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy|LOD", meta = (ClampMin = "0.0", Units = "s"))
+	float DistantTickInterval = 0.5f;
+
+	/** How often the distance itself is re-evaluated. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy|LOD", meta = (ClampMin = "0.1", Units = "s"))
+	double DistanceEvaluationInterval = 1.0;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy",
 		meta = (ClampMin = "0.0", ClampMax = "20.0", Units = "deg"))
 	float MaxTiltDegrees = 5.0f;
@@ -70,8 +94,10 @@ protected:
 private:
 	bool SampleWaterSurface(const FVector& WorldLocation, float TimeSeconds, float& OutHeight, FVector& OutNormal);
 	const UOceanGenerationSettings* ResolveGenerationSettings() const;
+	void UpdateSimulationRate(double NowSeconds);
 
 	TWeakObjectPtr<UOceanWorldManagerComponent> CachedWorldManager;
 	float LastSampledSurfaceHeight = 0.0f;
 	bool bAppliedInitialSurface = false;
+	double NextDistanceEvaluationSeconds = 0.0;
 };

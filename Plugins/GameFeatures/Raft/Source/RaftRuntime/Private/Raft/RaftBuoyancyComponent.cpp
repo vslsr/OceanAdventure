@@ -2,7 +2,10 @@
 
 #include "Raft/RaftBuoyancyComponent.h"
 
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "Math/RotationMatrix.h"
 #include "Raft/RaftDefinition.h"
 #include "RaftRuntimeModule.h"
@@ -55,6 +58,8 @@ void URaftBuoyancyComponent::TickComponent(
 	{
 		return;
 	}
+
+	UpdateSimulationRate(World->GetTimeSeconds());
 
 	const FRotator CurrentRotation = OwnerActor->GetActorRotation();
 	const FQuat YawRotation(FVector::UpVector, FMath::DegreesToRadians(CurrentRotation.Yaw));
@@ -215,4 +220,54 @@ const UOceanGenerationSettings* URaftBuoyancyComponent::ResolveGenerationSetting
 	}
 
 	return GetDefault<UOceanGenerationSettings>();
+}
+
+void URaftBuoyancyComponent::UpdateSimulationRate(double NowSeconds)
+{
+	if (NowSeconds < NextDistanceEvaluationSeconds)
+	{
+		return;
+	}
+	NextDistanceEvaluationSeconds = NowSeconds + FMath::Max(0.1, DistanceEvaluationInterval);
+
+	const AActor* OwnerActor = GetOwner();
+	const UWorld* World = GetWorld();
+	if (!OwnerActor || !World)
+	{
+		return;
+	}
+
+	// Distance to the nearest viewer, evaluated once per DistanceEvaluationInterval rather
+	// than per frame. On a dedicated server this walks the player list, which is short.
+	const FVector RaftLocation = OwnerActor->GetActorLocation();
+	double NearestDistanceSquared = TNumericLimits<double>::Max();
+	for (FConstPlayerControllerIterator It = World->GetPlayerControllerIterator(); It; ++It)
+	{
+		const APlayerController* PlayerController = It->Get();
+		const APawn* Pawn = PlayerController ? PlayerController->GetPawn() : nullptr;
+		if (!Pawn)
+		{
+			continue;
+		}
+		NearestDistanceSquared = FMath::Min(
+			NearestDistanceSquared,
+			FVector::DistSquared(RaftLocation, Pawn->GetActorLocation()));
+	}
+
+	// No viewers at all: keep the coarse rate rather than stopping, so a raft that drifts
+	// while unobserved is still where it should be when someone arrives.
+	float DesiredInterval = DistantTickInterval;
+	if (NearestDistanceSquared <= FMath::Square(FullRateDistance))
+	{
+		DesiredInterval = 0.0f;
+	}
+	else if (NearestDistanceSquared <= FMath::Square(ReducedRateDistance))
+	{
+		DesiredInterval = ReducedTickInterval;
+	}
+
+	if (!FMath::IsNearlyEqual(PrimaryComponentTick.TickInterval, DesiredInterval))
+	{
+		SetComponentTickInterval(DesiredInterval);
+	}
 }
