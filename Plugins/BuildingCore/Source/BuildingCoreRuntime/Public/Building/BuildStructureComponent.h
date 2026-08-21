@@ -118,6 +118,19 @@ public:
 		int32 Level,
 		TArray<FBuildGridCoord>& OutCandidates) const;
 
+	/**
+	 * Cached candidate list for one (slot, level) pair, rebuilt only when the structure changes.
+	 * The returned reference stays valid until the next structure change.
+	 */
+	const TArray<FBuildGridCoord>& GetSnapCandidates(EBuildSlotType Slot, int32 Level) const;
+
+	/**
+	 * Defers per-write notification and net updates until the matching EndBatchEdit.
+	 * Restoring a save game without this pays a full ISM rebuild per piece.
+	 */
+	void BeginBatchEdit();
+	void EndBatchEdit();
+
 	/** Nearest snap candidate to a world location, within MaxSnapCells cells. */
 	bool FindNearestSnapCandidate(
 		const FVector& WorldLocation,
@@ -182,6 +195,10 @@ private:
 	bool ResolveHost();
 	bool IsAnchored(const FBuildGridCoord& Coord) const;
 	void RebuildAnchorCells();
+	/** Incremental index maintenance; a full RebuildIndex is only needed after replication. */
+	void AddEntryToIndex(int32 EntryIndex);
+	void RemoveEntryKeysFromIndex(int32 EntryIndex);
+	void ForEachOccupiedKey(int32 EntryIndex, TFunctionRef<void(const FBuildSlotKey&)> Visitor) const;
 	void RebuildIndex();
 	bool CheckSupport(const FBuildSlotKey& Key, const UBuildPieceDefinition* Definition) const;
 	bool HasPieceAt(const FBuildGridCoord& Coord, EBuildSlotType Slot) const;
@@ -205,6 +222,11 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UBuildCreativeResourceSource> CreativeResourceSource;
 
+	/** Keyed by slot type and level; invalidated wholesale on any structure change. */
+	mutable TMap<uint32, TArray<FBuildGridCoord>> SnapCandidateCache;
+
+	int32 BatchEditDepth = 0;
+	bool bBatchDirty = false;
 	bool bRebuildQueued = false;
 	bool bDrawDebug = false;
 };

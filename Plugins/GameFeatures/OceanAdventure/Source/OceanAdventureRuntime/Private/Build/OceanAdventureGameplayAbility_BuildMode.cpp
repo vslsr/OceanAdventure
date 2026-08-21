@@ -23,6 +23,24 @@ UOceanAdventureGameplayAbility_BuildMode::UOceanAdventureGameplayAbility_BuildMo
 	UILayerTag = FGameplayTag::RequestGameplayTag(FName("UI.Layer.Game"), /*ErrorIfNotFound=*/false);
 }
 
+bool UOceanAdventureGameplayAbility_BuildMode::CanActivateAbility(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayTagContainer* SourceTags,
+	const FGameplayTagContainer* TargetTags,
+	FGameplayTagContainer* OptionalRelevantTags) const
+{
+	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
+	{
+		return false;
+	}
+
+	// No host in reach means the key does nothing at all -- no ghost, no HUD, no cursor.
+	const UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
+	return AbilitySystem
+		&& AbilitySystem->HasMatchingGameplayTag(OceanAdventureBuildTags::Status_Build_HostAvailable);
+}
+
 void UOceanAdventureGameplayAbility_BuildMode::ActivateAbility(
 	const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo,

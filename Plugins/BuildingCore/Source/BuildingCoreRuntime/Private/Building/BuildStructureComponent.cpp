@@ -149,6 +149,7 @@ void UBuildStructureComponent::HandleEntriesReplicated()
 
 void UBuildStructureComponent::RebuildAnchorCells()
 {
+	SnapCandidateCache.Reset();
 	AnchorCells.Reset();
 	if (IBuildStructureHost* HostInterface = Host.GetInterface())
 	{
@@ -163,6 +164,54 @@ bool UBuildStructureComponent::IsAnchored(const FBuildGridCoord& Coord) const
 		return HostInterface->IsCellAnchored(Coord);
 	}
 	return AnchorCells.Contains(Coord);
+}
+
+void UBuildStructureComponent::ForEachOccupiedKey(
+	int32 EntryIndex,
+	TFunctionRef<void(const FBuildSlotKey&)> Visitor) const
+{
+	if (!PieceList.Entries.IsValidIndex(EntryIndex))
+	{
+		return;
+	}
+
+	const FBuildPieceEntry& Entry = PieceList.Entries[EntryIndex];
+	const UBuildPieceDefinition* Definition = PieceCatalog
+		? PieceCatalog->GetByIndex(Entry.PieceIndex)
+		: nullptr;
+	const FIntPoint Footprint = Definition
+		? FIntPoint(FMath::Max(1, Definition->Footprint.X), FMath::Max(1, Definition->Footprint.Y))
+		: FIntPoint(1, 1);
+
+	for (int32 DeltaX = 0; DeltaX < Footprint.X; ++DeltaX)
+	{
+		for (int32 DeltaY = 0; DeltaY < Footprint.Y; ++DeltaY)
+		{
+			Visitor(FBuildSlotKey(
+				FBuildGridCoord(
+					Entry.Key.Coord.X + DeltaX,
+					Entry.Key.Coord.Y + DeltaY,
+					Entry.Key.Coord.Level),
+				Entry.Key.Slot,
+				Entry.Key.EdgeIndex));
+		}
+	}
+}
+
+void UBuildStructureComponent::AddEntryToIndex(int32 EntryIndex)
+{
+	ForEachOccupiedKey(EntryIndex, [this, EntryIndex](const FBuildSlotKey& Key)
+	{
+		SlotToEntryIndex.Add(Key, EntryIndex);
+	});
+}
+
+void UBuildStructureComponent::RemoveEntryKeysFromIndex(int32 EntryIndex)
+{
+	ForEachOccupiedKey(EntryIndex, [this](const FBuildSlotKey& Key)
+	{
+		SlotToEntryIndex.Remove(Key);
+	});
 }
 
 void UBuildStructureComponent::RebuildIndex()
@@ -524,10 +573,22 @@ bool UBuildStructureComponent::TryPlacePieceWithReason(
 	NewEntry.Rotation = Rotation & 3;
 	PieceList.MarkItemDirty(NewEntry);
 
-	RebuildIndex();
-	OwnerActor->FlushNetDormancy();
-	OwnerActor->ForceNetUpdate();
-	NotifyStructureChanged();
+	// Only the new entry's cells enter the index; a full rebuild here is what made restoring
+	// a save game quadratic.
+	AddEntryToIndex(PieceList.Entries.Num() - 1);
+	SnapCandidateCache.Reset();
+
+	if (BatchEditDepth > 0)
+	{
+		bBatchDirty = true;
+	}
+	else
+	{
+		OwnerActor->FlushNetDormancy();
+		OwnerActor->ForceNetUpdate();
+		NotifyStructureChanged();
+	}
+
 	OutFailReason = FGameplayTag();
 	return true;
 }
@@ -568,12 +629,34 @@ bool UBuildStructureComponent::TryRemovePiece(
 		return false;
 	}
 
-	PieceList.Entries.RemoveAtSwap(*EntryIndex);
+	// RemoveAtSwap moves the last entry into the hole, so only those two entries' keys change.
+	const int32 RemovedIndex = *EntryIndex;
+	const int32 LastIndex = PieceList.Entries.Num() - 1;
+	RemoveEntryKeysFromIndex(RemovedIndex);
+	if (RemovedIndex != LastIndex)
+	{
+		RemoveEntryKeysFromIndex(LastIndex);
+	}
+
+	PieceList.Entries.RemoveAtSwap(RemovedIndex);
 	PieceList.MarkArrayDirty();
-	RebuildIndex();
-	OwnerActor->FlushNetDormancy();
-	OwnerActor->ForceNetUpdate();
-	NotifyStructureChanged();
+
+	if (PieceList.Entries.IsValidIndex(RemovedIndex))
+	{
+		AddEntryToIndex(RemovedIndex);
+	}
+	SnapCandidateCache.Reset();
+
+	if (BatchEditDepth > 0)
+	{
+		bBatchDirty = true;
+	}
+	else
+	{
+		OwnerActor->FlushNetDormancy();
+		OwnerActor->ForceNetUpdate();
+		NotifyStructureChanged();
+	}
 	return true;
 }
 
@@ -694,6 +777,23 @@ FBox UBuildStructureComponent::ComputePieceBounds() const
 	return Bounds;
 }
 
+const TArray<FBuildGridCoord>& UBuildStructureComponent::GetSnapCandidates(
+	EBuildSlotType Slot,
+	int32 Level) const
+{
+	// The candidate ring only changes when the structure does, but the preview asks for it
+	// every frame; recomputing it per frame is O(pieces) of hashing and allocation.
+	const uint32 CacheKey = (static_cast<uint32>(Slot) << 24) ^ static_cast<uint32>(Level);
+	if (const TArray<FBuildGridCoord>* Cached = SnapCandidateCache.Find(CacheKey))
+	{
+		return *Cached;
+	}
+
+	TArray<FBuildGridCoord>& Candidates = SnapCandidateCache.Add(CacheKey);
+	CollectSnapCandidates(Slot, Level, Candidates);
+	return Candidates;
+}
+
 void UBuildStructureComponent::CollectSnapCandidates(
 	EBuildSlotType Slot,
 	int32 Level,
@@ -744,8 +844,7 @@ bool UBuildStructureComponent::FindNearestSnapCandidate(
 		return false;
 	}
 
-	TArray<FBuildGridCoord> Candidates;
-	CollectSnapCandidates(Slot, Level, Candidates);
+	const TArray<FBuildGridCoord>& Candidates = GetSnapCandidates(Slot, Level);
 	if (Candidates.IsEmpty())
 	{
 		return false;
@@ -805,8 +904,38 @@ FBox UBuildStructureComponent::ComputeLocalStructureBounds() const
 	return Bounds;
 }
 
+void UBuildStructureComponent::BeginBatchEdit()
+{
+	++BatchEditDepth;
+}
+
+void UBuildStructureComponent::EndBatchEdit()
+{
+	if (--BatchEditDepth > 0)
+	{
+		return;
+	}
+
+	BatchEditDepth = 0;
+	if (!bBatchDirty)
+	{
+		return;
+	}
+
+	bBatchDirty = false;
+	if (AActor* OwnerActor = GetOwner())
+	{
+		OwnerActor->FlushNetDormancy();
+		OwnerActor->ForceNetUpdate();
+	}
+	NotifyStructureChanged();
+}
+
 void UBuildStructureComponent::NotifyStructureChanged()
 {
+	// Any structure change invalidates every cached candidate ring.
+	SnapCandidateCache.Reset();
+
 	OnStructureChanged.Broadcast();
 	if (IBuildStructureHost* HostInterface = Host.GetInterface())
 	{
@@ -895,9 +1024,7 @@ void UBuildStructureComponent::DrawDebugStructure() const
 
 	// Free cells touching the structure: these are the snap targets, and an occupied cell
 	// disappears from here automatically.
-	TArray<FBuildGridCoord> SnapCandidates;
-	CollectSnapCandidates(EBuildSlotType::Floor, 0, SnapCandidates);
-	for (const FBuildGridCoord& Candidate : SnapCandidates)
+	for (const FBuildGridCoord& Candidate : GetSnapCandidates(EBuildSlotType::Floor, 0))
 	{
 		DrawDebugBox(
 			World,

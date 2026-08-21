@@ -66,6 +66,7 @@ void UBuildPreviewComponent::SetPreviewEnabled(bool bEnabled)
 	}
 
 	bPreviewEnabled = bEnabled;
+	NextHostSearchSeconds = 0.0;
 	if (bPreviewEnabled && GetLocalPlayerController())
 	{
 		SetComponentTickEnabled(true);
@@ -157,6 +158,19 @@ UBuildStructureComponent* UBuildPreviewComponent::FindBuildStructure(
 		}
 	}
 
+	// Everything below costs a scene query or a registry walk, so it runs on an interval and
+	// the last answer is reused in between.
+	const UWorld* World = GetWorld();
+	const double Now = World ? World->GetTimeSeconds() : 0.0;
+	if (Now < NextHostSearchSeconds)
+	{
+		if (UBuildStructureComponent* Cached = CurrentStructure.Get())
+		{
+			return Cached;
+		}
+	}
+	NextHostSearchSeconds = Now + FMath::Max(0.0, HostSearchInterval);
+
 	// 2) Otherwise whatever is under the cursor.
 	FHitResult CursorHit;
 	if (PlayerController->GetHitResultUnderCursorByChannel(
@@ -175,7 +189,6 @@ UBuildStructureComponent* UBuildPreviewComponent::FindBuildStructure(
 	}
 
 	// 3) Fall back to the registry, which holds only the live hosts.
-	const UWorld* World = GetWorld();
 	UBuildStructureSubsystem* Registry = World ? World->GetSubsystem<UBuildStructureSubsystem>() : nullptr;
 	return Registry
 		? Registry->FindNearestStructure(

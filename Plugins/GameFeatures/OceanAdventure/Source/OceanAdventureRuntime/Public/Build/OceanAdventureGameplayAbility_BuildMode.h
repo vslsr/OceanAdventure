@@ -25,6 +25,13 @@ class OCEANADVENTURERUNTIME_API UOceanAdventureGameplayAbility_BuildMode : publi
 public:
 	UOceanAdventureGameplayAbility_BuildMode(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
+	virtual bool CanActivateAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayTagContainer* SourceTags,
+		const FGameplayTagContainer* TargetTags,
+		FGameplayTagContainer* OptionalRelevantTags) const override;
+
 	virtual void ActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,

@@ -85,6 +85,13 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Building|Preview", meta = (ClampMin = "100.0", Units = "cm"))
 	double HostSearchRadius = 2500.0;
 
+	/**
+	 * How often the expensive host search (cursor trace + registry query) may run. The cheap
+	 * movement-base check still runs every frame, so stepping onto a raft is picked up at once.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Building|Preview", meta = (ClampMin = "0.0", Units = "s"))
+	double HostSearchInterval = 0.25;
+
 	UPROPERTY(EditDefaultsOnly, Category = "Building|Preview", meta = (ClampMin = "100.0", Units = "cm"))
 	double LocalPlacementDistance = 1500.0;
 
@@ -125,4 +132,5 @@ private:
 	bool bHasAppliedMaterialState = false;
 	bool bUsingInvalidPreviewMaterial = false;
 	double FailureShakeEndSeconds = 0.0;
+	double NextHostSearchSeconds = 0.0;
 };

@@ -155,6 +155,7 @@ def main():
         "OceanBuild_AddInputMapping",
         "OceanBuild_AddInputBinding",
         "OceanBuild_AddPreviewComponent",
+        "OceanBuild_AddProximityComponent",
     }
     actions = [
         action
@@ -199,6 +200,25 @@ def main():
                 unreal.Name("OceanBuild_AddPreviewComponent"),
             ),
             "Failed to create the build preview AddComponents action",
+        )
+    )
+
+    # Keeps Status.Build.HostAvailable up to date so the build key is inert away from a raft.
+    proximity_class = require(
+        getattr(unreal, "OceanAdventureBuildProximityComponent", None),
+        "OceanAdventureBuildProximityComponent is unavailable; compile OceanAdventureRuntime first",
+    )
+    actions.append(
+        require(
+            unreal.OceanAdventureAssetLibrary.create_add_components_action(
+                game_feature_data,
+                [pawn_class],
+                [proximity_class],
+                True,
+                True,
+                unreal.Name("OceanBuild_AddProximityComponent"),
+            ),
+            "Failed to create the build proximity AddComponents action",
         )
     )
     game_feature_data.set_editor_property("actions", actions)

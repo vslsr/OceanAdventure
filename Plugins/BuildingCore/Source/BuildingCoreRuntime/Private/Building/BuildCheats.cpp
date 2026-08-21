@@ -194,6 +194,8 @@ void UBuildCheats::BuildFill(int32 SizeX, int32 SizeY)
 		AnchorMinY = FMath::Min(AnchorMinY, Anchor.Y);
 	}
 
+	// One index, ISM and net update for the whole fill instead of one per piece.
+	Structure->BeginBatchEdit();
 	int32 PlacedCount = 0;
 	for (int32 DeltaY = 0; DeltaY < SizeY; ++DeltaY)
 	{
@@ -208,6 +210,7 @@ void UBuildCheats::BuildFill(int32 SizeX, int32 SizeY)
 			}
 		}
 	}
+	Structure->EndBatchEdit();
 	UE_LOG(LogBuildingCore, Display, TEXT("BuildFill placed %d pieces"), PlacedCount);
 #endif
 }

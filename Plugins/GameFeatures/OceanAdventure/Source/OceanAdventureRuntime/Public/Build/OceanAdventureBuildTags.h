@@ -14,6 +14,9 @@ namespace OceanAdventureBuildTags
 	/** Present on the ASC while the build-mode ability is running. */
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Status_Build_Active);
 
+	/** Present while a buildable host is within reach; gates build mode without granting/revoking abilities. */
+	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Status_Build_HostAvailable);
+
 	/** Channel for FOceanAdventureBuildFailedMessage. */
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Message_Build_Failed);
 }
