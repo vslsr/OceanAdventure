@@ -19,6 +19,10 @@
 	],
 	"Plugins": [
 		{
+			"Name": "BuildingCore",
+			"Enabled": true
+		},
+		{
 			"Name": "GameFeatures",
 			"Enabled": true
 		},

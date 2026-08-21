@@ -2,27 +2,27 @@
 
 using UnrealBuildTool;
 
-public class RaftRuntime : ModuleRules
+public class BuildingCoreRuntime : ModuleRules
 {
-	public RaftRuntime(ReadOnlyTargetRules Target) : base(Target)
+	public BuildingCoreRuntime(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"BuildingCoreRuntime",
 				"Core",
 				"CoreUObject",
-				"Engine"
+				"Engine",
+				"GameplayTags",
+				"NetCore"
 			}
 		);
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"GameplayTags",
-				"OceanCoreRuntime"
+				"InputCore"
 			}
 		);
 	}

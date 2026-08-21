@@ -134,6 +134,25 @@ void URaftBuoyancyComponent::ApplyDefinition(const URaftDefinition* Definition)
 	RotationInterpSpeed = Definition->GetRotationInterpSpeed();
 }
 
+void URaftBuoyancyComponent::RebuildFromStructure(const FBox& LocalStructureBounds)
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || !OwnerActor->HasAuthority() || !LocalStructureBounds.IsValid)
+	{
+		return;
+	}
+
+	const FVector Center = LocalStructureBounds.GetCenter();
+	const FVector Extent = LocalStructureBounds.GetExtent();
+	constexpr double Inset = 0.85;
+
+	PontoonOffsets.Reset(4);
+	PontoonOffsets.Add(Center + FVector(Extent.X * Inset, Extent.Y * Inset, 0.0));
+	PontoonOffsets.Add(Center + FVector(Extent.X * Inset, -Extent.Y * Inset, 0.0));
+	PontoonOffsets.Add(Center + FVector(-Extent.X * Inset, Extent.Y * Inset, 0.0));
+	PontoonOffsets.Add(Center + FVector(-Extent.X * Inset, -Extent.Y * Inset, 0.0));
+}
+
 void URaftBuoyancyComponent::SetBuoyancyEnabled(bool bEnabled)
 {
 	AActor* OwnerActor = GetOwner();
