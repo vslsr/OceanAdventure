@@ -1,0 +1,34 @@
+{
+  "skill_name": "skill-consolidate",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "一个模块已经实现并在真实运行环境验证通过，也发现了新的失败判据。请把经验沉淀成项目 skill。",
+      "expected_output": "先检查现有项目技能归属，增量更新最匹配技能或明确新技能边界，再进行结构、触发、权限和证据评测。",
+      "assertions": [
+        "优先更新边界匹配的现有技能",
+        "只保留可复用且有验证证据的知识",
+        "调用 skill-grader 并处理 gate_failures",
+        "不擅自提交、推送或覆盖现有改动"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "这次完全照着已有 skill 做完，没有新坑、新判据或边界变化，也帮我沉淀一下。",
+      "expected_output": "明确无需沉淀并停止，不为留痕扩充或新建技能。",
+      "assertions": [
+        "识别没有新增可复用知识",
+        "不修改或新建技能"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "功能还没有实现，只是想先创建一份未来可能使用的工作流 skill。",
+      "expected_output": "路由到 skill-creator，不把未验证推断当作实现经验沉淀。",
+      "assertions": [
+        "改用 skill-creator",
+        "不触发已验证经验的沉淀流程"
+      ]
+    }
+  ]
+}
