@@ -9,11 +9,20 @@
 UENUM(BlueprintType)
 enum class EBuildSlotType : uint8
 {
+	/** Load-bearing base cell. */
 	Foundation,
+	/** Walkable surface. */
 	Floor,
+	/** Occupies one edge of a cell. Low walls only: a TopDown camera cannot see past a tall one. */
 	Wall,
-	Roof,
+	/**
+	 * Something hung on a wall edge. Deliberately a separate slot from Wall so a wall and its
+	 * decoration can coexist on the same edge instead of competing for one key.
+	 */
+	WallProp,
+	/** Something standing on a floor, positioned by SubCell. */
 	Prop
+	// No Roof: the camera is a fixed TopDown angle, so a ceiling would hide the player.
 };
 
 USTRUCT(BlueprintType)
@@ -60,9 +69,31 @@ struct BUILDINGCORERUNTIME_API FBuildSlotKey
 	GENERATED_BODY()
 
 	FBuildSlotKey() = default;
-	FBuildSlotKey(const FBuildGridCoord& InCoord, EBuildSlotType InSlot, uint8 InEdgeIndex = 0)
-		: Coord(InCoord), Slot(InSlot), EdgeIndex(InSlot == EBuildSlotType::Wall ? (InEdgeIndex & 3) : 0)
+	FBuildSlotKey(
+		const FBuildGridCoord& InCoord,
+		EBuildSlotType InSlot,
+		uint8 InEdgeIndex = 0,
+		uint8 InSubCell = FBuildSlotKey::CenterSubCell)
+		: Coord(InCoord)
+		, Slot(InSlot)
+		// Each field is normalised to zero where it carries no meaning, so two keys that
+		// describe the same slot always hash and compare equal.
+		, EdgeIndex(UsesEdgeIndex(InSlot) ? (InEdgeIndex & 3) : 0)
+		, SubCell(UsesSubCell(InSlot) ? FMath::Min<uint8>(InSubCell, 8) : CenterSubCell)
 	{
+	}
+
+	/** 3x3 layout inside a cell; 4 is the centre. */
+	static constexpr uint8 CenterSubCell = 4;
+
+	static bool UsesEdgeIndex(EBuildSlotType Slot)
+	{
+		return Slot == EBuildSlotType::Wall || Slot == EBuildSlotType::WallProp;
+	}
+
+	static bool UsesSubCell(EBuildSlotType Slot)
+	{
+		return Slot == EBuildSlotType::Prop;
 	}
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building")
@@ -71,20 +102,29 @@ struct BUILDINGCORERUNTIME_API FBuildSlotKey
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building")
 	EBuildSlotType Slot = EBuildSlotType::Floor;
 
-	/** Wall only: 0=+X, 1=+Y, 2=-X, 3=-Y. */
+	/** Wall and WallProp only: 0=+X, 1=+Y, 2=-X, 3=-Y. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building")
 	uint8 EdgeIndex = 0;
 
+	/** Prop only: position inside the cell, 0..8 in row-major order with 4 at the centre. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building")
+	uint8 SubCell = FBuildSlotKey::CenterSubCell;
+
 	bool operator==(const FBuildSlotKey& Other) const
 	{
-		return Coord == Other.Coord && Slot == Other.Slot && EdgeIndex == Other.EdgeIndex;
+		return Coord == Other.Coord
+			&& Slot == Other.Slot
+			&& EdgeIndex == Other.EdgeIndex
+			&& SubCell == Other.SubCell;
 	}
 
 	friend uint32 GetTypeHash(const FBuildSlotKey& Key)
 	{
 		return HashCombine(
-			HashCombine(GetTypeHash(Key.Coord), ::GetTypeHash(static_cast<uint8>(Key.Slot))),
-			::GetTypeHash(Key.EdgeIndex));
+			HashCombine(
+				HashCombine(GetTypeHash(Key.Coord), ::GetTypeHash(static_cast<uint8>(Key.Slot))),
+				::GetTypeHash(Key.EdgeIndex)),
+			::GetTypeHash(Key.SubCell));
 	}
 };
 
@@ -176,6 +216,27 @@ namespace BuildGrid
 	inline float EdgeYaw(uint8 EdgeIndex)
 	{
 		return 90.0f * (EdgeIndex & 3);
+	}
+
+	/** Offset from the cell centre for one of the nine in-cell prop positions. */
+	inline FVector SubCellOffset(uint8 SubCell, const FBuildGridSettings& Settings)
+	{
+		const FVector2D CellSize = GetCellSize(Settings);
+		const int32 Clamped = FMath::Clamp<int32>(SubCell, 0, 8);
+		// Thirds rather than halves: the outer positions keep a margin to the cell edge, so
+		// furniture on adjacent cells does not touch.
+		const double OffsetX = (Clamped % 3 - 1) * CellSize.X / 3.0;
+		const double OffsetY = (Clamped / 3 - 1) * CellSize.Y / 3.0;
+		return FVector(OffsetX, OffsetY, 0.0);
+	}
+
+	/** Nearest in-cell prop position to an offset measured from the cell centre. */
+	inline uint8 FindNearestSubCell(const FVector& OffsetFromCenter, const FBuildGridSettings& Settings)
+	{
+		const FVector2D CellSize = GetCellSize(Settings);
+		const int32 Column = FMath::Clamp(FMath::RoundToInt(OffsetFromCenter.X / (CellSize.X / 3.0)), -1, 1);
+		const int32 Row = FMath::Clamp(FMath::RoundToInt(OffsetFromCenter.Y / (CellSize.Y / 3.0)), -1, 1);
+		return static_cast<uint8>((Row + 1) * 3 + (Column + 1));
 	}
 
 	/** Same-level 4-neighbours only; used for snapping and support checks. */

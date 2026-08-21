@@ -6,9 +6,11 @@
 #include "Building/BuildResourceSource.h"
 #include "Engine/DataAsset.h"
 #include "GameplayTagContainer.h"
+#include "Templates/SubclassOf.h"
 
 #include "BuildPieceDefinition.generated.h"
 
+class AActor;
 class UMaterialInterface;
 class UStaticMesh;
 
@@ -45,6 +47,26 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Building|Collision")
 	bool bCanCharacterStepUpOn = true;
+};
+
+/**
+ * Makes the piece spawn a real Actor instead of being drawn as an instance.
+ *
+ * Only for pieces that carry state or need interaction -- a campfire's fuel, a cannon's
+ * loading, a chest's contents. Decorations without state stay instanced, which costs nothing.
+ */
+UCLASS(DisplayName = "Spawn Actor")
+class BUILDINGCORERUNTIME_API UBuildPieceFragment_SpawnActor final : public UBuildPieceFragment
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Building|Spawn")
+	TSubclassOf<AActor> ActorClass;
+
+	/** Applied on top of the slot transform, in host space. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Building|Spawn", meta = (Units = "cm"))
+	FVector SpawnOffset = FVector::ZeroVector;
 };
 
 UCLASS(BlueprintType, Const)

@@ -131,6 +131,12 @@ public:
 	void BeginBatchEdit();
 	void EndBatchEdit();
 
+	/**
+	 * Everything that would be left floating if Key were removed: props standing on a floor,
+	 * walls around it, decorations hanging on those walls.
+	 */
+	void CollectDependentKeys(const FBuildSlotKey& Key, TArray<FBuildSlotKey>& OutKeys) const;
+
 	/** Nearest snap candidate to a world location, within MaxSnapCells cells. */
 	bool FindNearestSnapCandidate(
 		const FVector& WorldLocation,

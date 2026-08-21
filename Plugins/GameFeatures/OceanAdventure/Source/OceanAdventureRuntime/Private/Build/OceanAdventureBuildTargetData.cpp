@@ -20,6 +20,7 @@ bool FOceanAdventureBuildTargetData::NetSerialize(FArchive& Ar, UPackageMap* Map
 	Ar << SlotKey.Coord.Y;
 	Ar << SlotKey.Coord.Level;
 	Ar << SlotKey.EdgeIndex;
+	Ar << SlotKey.SubCell;
 
 	uint8 SlotByte = static_cast<uint8>(SlotKey.Slot);
 	Ar << SlotByte;

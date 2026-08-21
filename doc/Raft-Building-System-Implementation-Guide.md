@@ -1617,3 +1617,69 @@ Ability 激活时 push 到 `UI.Layer.Game`，结束时 pop —— 输入配置�
 3. 运行 `CreateRaftGameFeatureData.py`（清掉 Raft 的 Action）。
 4. 运行 `CreateOceanAdventureBuildAssets.py`（输入 / AbilitySet / GameFeature Action）。
 5. PIE：按 `B` 进建造模式（光标出现），左键放置，`X` 拆除，再按 `B` 退出。
+
+---
+
+## 15. 放置物与结构键定型
+
+三层玩法（木筏扩展 / 地面建筑 / 放置物）里，**放置物不是新系统，也不引入新宿主**。
+地面上的一栋房子是 Chunk 宿主里一堆件的集合，"建筑"不是实体；放在它地板上的篝火
+归同一个宿主。宿主始终只有两种：会动的（木筏）和不动的（Chunk）。
+
+### 15.1 槽位定型
+
+```cpp
+enum class EBuildSlotType : uint8
+{
+    Foundation,  // 承重基础格
+    Floor,       // 可行走面
+    Wall,        // 占格子的一条边（矮墙，TopDown 下不挡视野）
+    WallProp,    // 挂在边上的装饰
+    Prop         // 站在地板上的物件，位置由 SubCell 决定
+};
+// 无 Roof：固定俯角相机下天花板会遮住玩家
+```
+
+`WallProp` 与 `Wall` 分开是刻意的：同一条边可以既有墙又有挂画，不必抢同一个键。
+
+`FBuildSlotKey` 定型为 `{Coord, Slot, EdgeIndex, SubCell}`：
+
+- `EdgeIndex` 仅 `Wall` / `WallProp` 有意义（`UsesEdgeIndex()`）
+- `SubCell` 仅 `Prop` 有意义（`UsesSubCell()`），0..8 行主序，**4 是格心**
+- 构造函数把无意义的字段归零，**保证描述同一槽位的两个键必然相等且同哈希**
+
+格内位取 `CellSize/3` 的三分点而非二分点，外圈到格边留出余量，相邻格的家具不会贴脸。
+
+### 15.2 支撑规则
+
+| 槽位 | 要求 |
+| --- | --- |
+| `Prop` | 本格有 Floor / Foundation / 锚定 |
+| `WallProp` | **该边**有 Wall（精确到 EdgeIndex） |
+
+### 15.3 有状态的件生成 Actor
+
+`UBuildPieceFragment_SpawnActor { ActorClass, SpawnOffset }`。有这个 Fragment 的件由
+Actor 表现，**不进 ISM**（否则模型重复）；没有的件继续走 ISM，零成本。
+
+判据是**有没有实例状态**：篝火的燃料、大炮的装填、储物箱的内容物装不进 FastArray 条目
+（它只有坐标+索引+旋转），也没法被交互系统当目标。花瓶、地毯、挂画没有状态，走 ISM。
+
+生命周期在 `UBuildStructureVisualComponent`：
+
+- **只在权威端 Spawn/Destroy**，Actor 自己复制到客户端
+- **diff 而不是重建**——结构一变就重建会把篝火的火重置掉
+- 附着到 `GetStructureAttachRoot()`，所以木筏上的家具随船起伏是免费的
+- 用 `TWeakObjectPtr` 持有：Actor 归世界所有，被别处销毁时留空位而不是悬空指针
+
+### 15.4 拆除依赖
+
+拆地板会**连带拆除**其上的家具、四周的墙、以及墙上的挂饰，并各自返还材料。
+选"拒绝拆除"会让玩家在摆满家具的房间里无法改建，是更糟的失败。
+
+`CollectDependentKeys()` 负责收集，`TryRemovePiece` 先批量拆依赖再拆自身。
+两个实现细节：
+
+- 依赖拆完后条目数组被 `RemoveAtSwap` 重排，**原索引已失效**，必须按键重新查一次
+- `WouldStayConnectedWithout` 对非承重槽位直接返回 true —— 否则拆一块带 13 个依赖的地板
+  会跑 13 次全图 BFS

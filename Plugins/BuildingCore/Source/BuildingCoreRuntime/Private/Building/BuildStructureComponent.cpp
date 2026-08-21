@@ -344,13 +344,18 @@ FBuildSlotKey UBuildStructureComponent::WorldToSlot(
 	const FVector LocalLocation =
 		HostInterface->GetStructureSpace().InverseTransformPosition(WorldLocation);
 	FBuildSlotKey Key(BuildGrid::LocalToCoord(LocalLocation, GridSettings), Slot);
-	if (Slot == EBuildSlotType::Wall)
+	const FVector Center = BuildGrid::CoordToLocalCenter(Key.Coord, GridSettings);
+	const FVector Delta = LocalLocation - Center;
+
+	if (FBuildSlotKey::UsesEdgeIndex(Slot))
 	{
-		const FVector Center = BuildGrid::CoordToLocalCenter(Key.Coord, GridSettings);
-		const FVector Delta = LocalLocation - Center;
 		Key.EdgeIndex = FMath::Abs(Delta.X) > FMath::Abs(Delta.Y)
 			? (Delta.X > 0.0 ? 0 : 2)
 			: (Delta.Y > 0.0 ? 1 : 3);
+	}
+	else if (FBuildSlotKey::UsesSubCell(Slot))
+	{
+		Key.SubCell = BuildGrid::FindNearestSubCell(Delta, GridSettings);
 	}
 	return Key;
 }
@@ -358,9 +363,13 @@ FBuildSlotKey UBuildStructureComponent::WorldToSlot(
 FVector UBuildStructureComponent::SlotToWorld(const FBuildSlotKey& Key) const
 {
 	FVector LocalLocation = BuildGrid::CoordToLocalCenter(Key.Coord, GridSettings);
-	if (Key.Slot == EBuildSlotType::Wall)
+	if (FBuildSlotKey::UsesEdgeIndex(Key.Slot))
 	{
 		LocalLocation += BuildGrid::EdgeOffset(Key.EdgeIndex, GridSettings);
+	}
+	else if (FBuildSlotKey::UsesSubCell(Key.Slot))
+	{
+		LocalLocation += BuildGrid::SubCellOffset(Key.SubCell, GridSettings);
 	}
 
 	const IBuildStructureHost* HostInterface = Host.GetInterface();
@@ -376,10 +385,16 @@ FTransform UBuildStructureComponent::GetPieceRelativeTransform(
 {
 	FVector LocalLocation = BuildGrid::CoordToLocalCenter(Key.Coord, GridSettings);
 	float Yaw = 90.0f * (Rotation & 3);
-	if (Key.Slot == EBuildSlotType::Wall)
+	if (FBuildSlotKey::UsesEdgeIndex(Key.Slot))
 	{
+		// Walls and their decorations face out along their edge; the authored rotation is
+		// ignored because the edge already determines the orientation.
 		LocalLocation += BuildGrid::EdgeOffset(Key.EdgeIndex, GridSettings);
 		Yaw = BuildGrid::EdgeYaw(Key.EdgeIndex);
+	}
+	else if (FBuildSlotKey::UsesSubCell(Key.Slot))
+	{
+		LocalLocation += BuildGrid::SubCellOffset(Key.SubCell, GridSettings);
 	}
 
 	if (Definition)
@@ -456,8 +471,12 @@ bool UBuildStructureComponent::CheckSupport(
 		}
 		return false;
 
+	case EBuildSlotType::WallProp:
+		// A decoration hangs on a wall, so that exact edge has to carry one.
+		return SlotToEntryIndex.Contains(
+			FBuildSlotKey(Coord, EBuildSlotType::Wall, Key.EdgeIndex));
+
 	case EBuildSlotType::Wall:
-	case EBuildSlotType::Roof:
 	case EBuildSlotType::Prop:
 	default:
 		return HasPieceAt(Coord, EBuildSlotType::Floor)
@@ -630,6 +649,27 @@ bool UBuildStructureComponent::TryRemovePiece(
 		return false;
 	}
 
+	// Removing a floor takes its furniture and walls with it. Refusing instead would leave a
+	// player unable to remodel a furnished room, which is the worse failure.
+	TArray<FBuildSlotKey> DependentKeys;
+	CollectDependentKeys(Key, DependentKeys);
+	if (!DependentKeys.IsEmpty())
+	{
+		BeginBatchEdit();
+		for (const FBuildSlotKey& DependentKey : DependentKeys)
+		{
+			TryRemovePiece(DependentKey, Instigator);
+		}
+		EndBatchEdit();
+
+		// The dependents' removal reshuffled the entry array, so the original index is stale.
+		EntryIndex = SlotToEntryIndex.Find(Key);
+		if (!EntryIndex || !PieceList.Entries.IsValidIndex(*EntryIndex))
+		{
+			return false;
+		}
+	}
+
 	// RemoveAtSwap moves the last entry into the hole, so only those two entries' keys change.
 	const int32 RemovedIndex = *EntryIndex;
 	const int32 LastIndex = PieceList.Entries.Num() - 1;
@@ -663,6 +703,17 @@ bool UBuildStructureComponent::TryRemovePiece(
 
 bool UBuildStructureComponent::WouldStayConnectedWithout(int32 SkipEntryIndex) const
 {
+	// Only load-bearing slots can disconnect anything; a wall or a chair never does, and this
+	// path runs once per dependent when a furnished floor is removed.
+	if (PieceList.Entries.IsValidIndex(SkipEntryIndex))
+	{
+		const EBuildSlotType SkipSlot = PieceList.Entries[SkipEntryIndex].Key.Slot;
+		if (SkipSlot != EBuildSlotType::Foundation && SkipSlot != EBuildSlotType::Floor)
+		{
+			return true;
+		}
+	}
+
 	if (const IBuildStructureHost* HostInterface = Host.GetInterface())
 	{
 		if (!HostInterface->RequiresConnectivity())
@@ -777,6 +828,51 @@ FBox UBuildStructureComponent::ComputePieceBounds() const
 		}
 	}
 	return Bounds;
+}
+
+void UBuildStructureComponent::CollectDependentKeys(
+	const FBuildSlotKey& Key,
+	TArray<FBuildSlotKey>& OutKeys) const
+{
+	OutKeys.Reset();
+
+	auto AddIfPresent = [this, &OutKeys](const FBuildSlotKey& Candidate)
+	{
+		if (SlotToEntryIndex.Contains(Candidate))
+		{
+			OutKeys.AddUnique(Candidate);
+		}
+	};
+
+	// A wall's decorations go with it, whether the wall is removed directly or as a dependent.
+	auto AddWallDecoration = [&AddIfPresent](const FBuildGridCoord& Coord, uint8 EdgeIndex)
+	{
+		AddIfPresent(FBuildSlotKey(Coord, EBuildSlotType::WallProp, EdgeIndex));
+	};
+
+	switch (Key.Slot)
+	{
+	case EBuildSlotType::Foundation:
+	case EBuildSlotType::Floor:
+		// Everything standing on this cell, plus its walls and their decorations.
+		for (uint8 SubCell = 0; SubCell < 9; ++SubCell)
+		{
+			AddIfPresent(FBuildSlotKey(Key.Coord, EBuildSlotType::Prop, 0, SubCell));
+		}
+		for (uint8 EdgeIndex = 0; EdgeIndex < 4; ++EdgeIndex)
+		{
+			AddWallDecoration(Key.Coord, EdgeIndex);
+			AddIfPresent(FBuildSlotKey(Key.Coord, EBuildSlotType::Wall, EdgeIndex));
+		}
+		break;
+
+	case EBuildSlotType::Wall:
+		AddWallDecoration(Key.Coord, Key.EdgeIndex);
+		break;
+
+	default:
+		break;
+	}
 }
 
 const TArray<FBuildGridCoord>& UBuildStructureComponent::GetSnapCandidates(

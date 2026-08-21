@@ -7,6 +7,7 @@
 #include "Building/BuildStructureComponent.h"
 #include "Building/BuildStructureHost.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Engine/World.h"
 #include "Engine/CollisionProfile.h"
 #include "GameFramework/Actor.h"
 
@@ -49,6 +50,7 @@ void UBuildStructureVisualComponent::EndPlay(const EEndPlayReason::Type EndPlayR
 		}
 	}
 	MeshToISM.Reset();
+	DestroySpawnedActors();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -130,6 +132,8 @@ void UBuildStructureVisualComponent::RebuildInstances()
 		return;
 	}
 
+	RefreshSpawnedActors();
+
 	for (TPair<TObjectPtr<UStaticMesh>, TObjectPtr<UInstancedStaticMeshComponent>>& Pair : MeshToISM)
 	{
 		if (Pair.Value)
@@ -152,6 +156,12 @@ void UBuildStructureVisualComponent::RebuildInstances()
 			continue;
 		}
 
+		// A piece that spawns an Actor is drawn by that Actor, not as an instance.
+		if (Definition->FindFragment<UBuildPieceFragment_SpawnActor>())
+		{
+			continue;
+		}
+
 		if (UInstancedStaticMeshComponent* ISM = FindOrCreateISM(Definition->Mesh, Definition))
 		{
 			ISM->AddInstance(
@@ -159,4 +169,106 @@ void UBuildStructureVisualComponent::RebuildInstances()
 				false);
 		}
 	}
+}
+
+void UBuildStructureVisualComponent::RefreshSpawnedActors()
+{
+	AActor* OwnerActor = GetOwner();
+	UBuildStructureComponent* Structure = BuildComponent.Get();
+	UWorld* World = GetWorld();
+	if (!OwnerActor || !Structure || !World)
+	{
+		return;
+	}
+
+	// The Actors replicate on their own; spawning them per peer would duplicate them.
+	if (!OwnerActor->HasAuthority())
+	{
+		return;
+	}
+
+	IBuildStructureHost* Host = Cast<IBuildStructureHost>(OwnerActor);
+	USceneComponent* AttachRoot = Host ? Host->GetStructureAttachRoot() : nullptr;
+	const UBuildPieceCatalog* Catalog = Structure->GetCatalog();
+	if (!AttachRoot || !Catalog)
+	{
+		return;
+	}
+
+	TSet<FBuildSlotKey> DesiredKeys;
+	for (const FBuildPieceEntry& Entry : Structure->GetEntries())
+	{
+		const UBuildPieceDefinition* Definition = Catalog->GetByIndex(Entry.PieceIndex);
+		const UBuildPieceFragment_SpawnActor* SpawnFragment = Definition
+			? Definition->FindFragment<UBuildPieceFragment_SpawnActor>()
+			: nullptr;
+		if (!SpawnFragment || !SpawnFragment->ActorClass)
+		{
+			continue;
+		}
+
+		DesiredKeys.Add(Entry.Key);
+		if (const TWeakObjectPtr<AActor>* Existing = SpawnedActors.Find(Entry.Key);
+			Existing && Existing->IsValid())
+		{
+			// Already standing. Leaving it alone is the whole point of diffing: respawning
+			// would reset whatever state the Actor is holding.
+			continue;
+		}
+
+		FTransform SpawnTransform = Structure->GetPieceRelativeTransform(
+			Entry.Key,
+			Definition,
+			Entry.Rotation);
+		SpawnTransform.AddToTranslation(SpawnFragment->SpawnOffset);
+		SpawnTransform = SpawnTransform * AttachRoot->GetComponentTransform();
+
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.Owner = OwnerActor;
+		SpawnParameters.SpawnCollisionHandlingOverride =
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AActor* SpawnedActor = World->SpawnActor<AActor>(
+			SpawnFragment->ActorClass,
+			SpawnTransform,
+			SpawnParameters);
+		if (!SpawnedActor)
+		{
+			continue;
+		}
+
+		// Attaching to the host's root is what makes props ride a moving raft for free.
+		SpawnedActor->AttachToComponent(
+			AttachRoot,
+			FAttachmentTransformRules::KeepWorldTransform);
+		SpawnedActors.Add(Entry.Key, SpawnedActor);
+	}
+
+	for (auto It = SpawnedActors.CreateIterator(); It; ++It)
+	{
+		if (DesiredKeys.Contains(It.Key()))
+		{
+			continue;
+		}
+		if (AActor* SpawnedActor = It.Value().Get())
+		{
+			SpawnedActor->Destroy();
+		}
+		It.RemoveCurrent();
+	}
+}
+
+void UBuildStructureVisualComponent::DestroySpawnedActors()
+{
+	const AActor* OwnerActor = GetOwner();
+	if (OwnerActor && OwnerActor->HasAuthority())
+	{
+		for (TPair<FBuildSlotKey, TWeakObjectPtr<AActor>>& Pair : SpawnedActors)
+		{
+			if (AActor* SpawnedActor = Pair.Value.Get())
+			{
+				SpawnedActor->Destroy();
+			}
+		}
+	}
+	SpawnedActors.Reset();
 }
