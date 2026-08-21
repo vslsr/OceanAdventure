@@ -15,6 +15,10 @@ PIECE_PATH = "/Raft/Build/Pieces/DA_BuildPiece_Raft_Foundation_Wood"
 DECK_PIECE_PATH = "/Raft/Build/Pieces/DA_BuildPiece_Raft_Deck"
 PIECE_TAG = "Raft.Piece.Foundation.Wood"
 DECK_PIECE_TAG = "Raft.Piece.Floor.Deck"
+CAMPFIRE_PIECE_PATH = "/Raft/Build/Pieces/DA_BuildPiece_Raft_Campfire"
+CAMPFIRE_PIECE_TAG = "Raft.Piece.Prop.Campfire"
+CUBE_MESH_PATH = "/Engine/BasicShapes/Cube.Cube"
+PLACED_ACTOR_CLASS_PATH = "/Script/BuildingCoreRuntime.BuildPlacedActor"
 CATALOG_PATH = "/Raft/Build/DA_BuildPieceCatalog_Raft"
 RAFT_DEFINITION_PATH = "/Raft/Vehicles/Raft/DA_Raft_Default"
 INVALID_PREVIEW_MATERIAL_PATH = "/Raft/Build/Materials/M_Raft_BuildPreview_Invalid"
@@ -211,6 +215,48 @@ def configure_raft_module(piece, piece_tag, raft_mesh, mesh_offset, invalid_mate
     save(piece)
 
 
+def configure_campfire(piece, invalid_material):
+    """Placeholder Prop that exercises the whole spawn-an-Actor path.
+
+    A cube standing in a sub-cell, backed by the framework's ABuildPlacedActor. Replace the
+    mesh and derive a Blueprint from that Actor when the real campfire exists; nothing in the
+    framework has to change for that.
+    """
+    cube = require(
+        unreal.EditorAssetLibrary.load_asset(CUBE_MESH_PATH),
+        f"Missing {CUBE_MESH_PATH}",
+    )
+    actor_class = require(
+        unreal.load_class(None, PLACED_ACTOR_CLASS_PATH),
+        f"Failed to load {PLACED_ACTOR_CLASS_PATH}; compile BuildingCoreRuntime first",
+    )
+    fragment_class = require(
+        getattr(unreal, "BuildPieceFragment_SpawnActor", None),
+        "BuildPieceFragment_SpawnActor is unavailable; compile BuildingCoreRuntime first",
+    )
+
+    # Instanced fragments are outered to the piece that owns them.
+    fragment = require(
+        unreal.new_object(fragment_class, piece),
+        "Unable to create the SpawnActor fragment",
+    )
+    fragment.set_editor_property("actor_class", actor_class)
+    fragment.set_editor_property("spawn_offset", unreal.Vector(0.0, 0.0, 0.0))
+
+    piece.set_editor_property("piece_tag", gameplay_tag(CAMPFIRE_PIECE_TAG))
+    piece.set_editor_property("slot_type", unreal.BuildSlotType.PROP)
+    piece.set_editor_property("mesh", cube)
+    # The engine cube is 100cm; a 60cm block sitting on the deck reads as a placeholder.
+    piece.set_editor_property("mesh_scale", unreal.Vector(0.6, 0.6, 0.6))
+    piece.set_editor_property("mesh_offset", unreal.Vector(0.0, 0.0, 30.0))
+    piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
+    piece.set_editor_property("override_materials", [])
+    piece.set_editor_property("invalid_preview_material", invalid_material)
+    piece.set_editor_property("costs", [])
+    piece.set_editor_property("fragments", [fragment])
+    save(piece)
+
+
 def save(asset):
     require(
         unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False),
@@ -279,6 +325,10 @@ def main():
             invalid_preview_material,
         )
         managed_pieces.append(legacy_deck_piece)
+
+    campfire_piece = get_or_create_data_asset(CAMPFIRE_PIECE_PATH, piece_class)
+    configure_campfire(campfire_piece, invalid_preview_material)
+    managed_pieces.append(campfire_piece)
 
     catalog = get_or_create_data_asset(CATALOG_PATH, catalog_class)
     # Network indices are append-only. Keep every existing entry in place and only append a

@@ -3,6 +3,7 @@
 #include "Building/BuildStructureVisualComponent.h"
 
 #include "Building/BuildPieceCatalog.h"
+#include "Building/BuildPlacedActor.h"
 #include "Building/BuildPieceDefinition.h"
 #include "Building/BuildStructureComponent.h"
 #include "Building/BuildStructureHost.h"
@@ -240,6 +241,14 @@ void UBuildStructureVisualComponent::RefreshSpawnedActors()
 		SpawnedActor->AttachToComponent(
 			AttachRoot,
 			FAttachmentTransformRules::KeepWorldTransform);
+
+		// Framework-provided Actors take their visuals from the same definition the ghost used,
+		// so the preview and the placed thing cannot drift apart.
+		if (ABuildPlacedActor* PlacedActor = Cast<ABuildPlacedActor>(SpawnedActor))
+		{
+			PlacedActor->SetSourceDefinition(Definition);
+		}
+
 		SpawnedActors.Add(Entry.Key, SpawnedActor);
 	}
 

@@ -1683,3 +1683,29 @@ Actor 表现，**不进 ISM**（否则模型重复）；没有的件继续走 IS
 - 依赖拆完后条目数组被 `RemoveAtSwap` 重排，**原索引已失效**，必须按键重新查一次
 - `WouldStayConnectedWithout` 对非承重槽位直接返回 true —— 否则拆一块带 13 个依赖的地板
   会跑 13 次全图 BFS
+
+### 15.5 占位件：验证链路
+
+`CreateRaftBuildPieceAssets.py` 会生成 `DA_BuildPiece_Raft_Campfire`：
+`SlotType = Prop`、引擎 Cube 缩到 60cm、挂一个 `UBuildPieceFragment_SpawnActor`
+指向框架的 `ABuildPlacedActor`。
+
+`ABuildPlacedActor` 是**框架件**不是游戏内容——它只解决"建造件生成的 Actor 该怎么装配复制
+与附着"这件事，没有任何玩法。它的视觉来自**复制过去的 `SourceDefinition`**（`OnRep` 里应用），
+所以幽灵预览和放下去的实物用的是同一份数据，不会走样。真正的篝火从它派生一个蓝图即可，
+框架不用改。
+
+**验证步骤**：
+
+```
+BuildMode 1
+BuildSelect Raft.Piece.Prop.Campfire
+```
+
+要点：
+1. 幽灵吸附到格内九宫格的位置，不是格心一个点
+2. 放下后世界里出现一个 `ABuildPlacedActor`，**且它没有进 ISM**（不该看到两个方块）
+3. 木筏随浪起伏时它跟着动（附着在 `DeckCollision` 下）
+4. 拆掉脚下的木筏模块，篝火被连带拆除
+5. 联机：客户端看到的是复制过来的 Actor，不是本地生成的第二个
+
