@@ -1,0 +1,842 @@
+<title>木筏建造系统架构</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+
+<style>
+:root {
+  --ground: #F1F4F3;
+  --surface: #FFFFFF;
+  --surface-sunk: #E7ECEB;
+  --ink: #16242A;
+  --ink-soft: #4A5F65;
+  --ink-faint: #7B9096;
+  --rule: #CFD9D8;
+  --rule-soft: #E2E9E8;
+
+  --framework: #12776D;
+  --framework-wash: #DCEDEA;
+  --host: #A96C15;
+  --host-wash: #F5E7D2;
+  --gameplay: #3C5FAE;
+  --gameplay-wash: #DFE6F5;
+
+  --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans: "Noto Sans SC", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0C1519;
+    --surface: #131F24;
+    --surface-sunk: #0A1216;
+    --ink: #DCE6E6;
+    --ink-soft: #9CB0B4;
+    --ink-faint: #6E858A;
+    --rule: #263840;
+    --rule-soft: #1B2A31;
+
+    --framework: #48C4B4;
+    --framework-wash: #10312F;
+    --host: #E0A253;
+    --host-wash: #33240F;
+    --gameplay: #7EA0E8;
+    --gameplay-wash: #1A2440;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #0C1519;
+  --surface: #131F24;
+  --surface-sunk: #0A1216;
+  --ink: #DCE6E6;
+  --ink-soft: #9CB0B4;
+  --ink-faint: #6E858A;
+  --rule: #263840;
+  --rule-soft: #1B2A31;
+
+  --framework: #48C4B4;
+  --framework-wash: #10312F;
+  --host: #E0A253;
+  --host-wash: #33240F;
+  --gameplay: #7EA0E8;
+  --gameplay-wash: #1A2440;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1000px;
+  margin: 0 auto;
+  padding: 72px 28px 120px;
+}
+
+/* ---------- masthead ---------- */
+.masthead { border-bottom: 2px solid var(--ink); padding-bottom: 28px; }
+
+.kicker {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin: 0 0 18px;
+}
+
+h1 {
+  font-size: clamp(30px, 5vw, 46px);
+  font-weight: 700;
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+  margin: 0 0 14px;
+}
+
+.standfirst {
+  font-size: 17px;
+  color: var(--ink-soft);
+  max-width: 62ch;
+  margin: 0;
+}
+
+/* ---------- layer key ---------- */
+.layers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+  margin: 32px 0 0;
+}
+
+.layer {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--layer);
+  border-radius: 2px;
+  padding: 16px 18px;
+}
+
+.layer.framework { --layer: var(--framework); }
+.layer.host { --layer: var(--host); }
+.layer.gameplay { --layer: var(--gameplay); }
+
+.layer h3 {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--layer);
+  margin: 0 0 6px;
+}
+
+.layer p { margin: 0; font-size: 14px; color: var(--ink-soft); line-height: 1.6; }
+
+/* ---------- sections ---------- */
+section { margin-top: 72px; }
+
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 10px;
+}
+
+.eyebrow::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--rule);
+}
+
+h2 {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  margin: 0 0 12px;
+  text-wrap: balance;
+}
+
+section > p { max-width: 66ch; color: var(--ink-soft); margin: 0 0 22px; }
+
+figure {
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 26px 22px 18px;
+  overflow-x: auto;
+}
+
+figure svg { display: block; width: 100%; height: auto; min-width: 620px; }
+
+figcaption {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--rule-soft);
+  font-size: 13.5px;
+  color: var(--ink-soft);
+  line-height: 1.65;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  background: var(--surface-sunk);
+  border: 1px solid var(--rule-soft);
+  border-radius: 2px;
+  padding: 1px 5px;
+  color: var(--ink);
+}
+
+/* ---------- table ---------- */
+.table-scroll { overflow-x: auto; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14.5px;
+  min-width: 560px;
+}
+
+th, td {
+  text-align: left;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--rule-soft);
+  vertical-align: top;
+}
+
+thead th {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  border-bottom: 1px solid var(--rule);
+}
+
+tbody tr:last-child td { border-bottom: none; }
+
+td code { background: none; border: none; padding: 0; }
+
+.tag {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.tag.framework { color: var(--framework); background: var(--framework-wash); }
+.tag.host { color: var(--host); background: var(--host-wash); }
+.tag.gameplay { color: var(--gameplay); background: var(--gameplay-wash); }
+
+/* ---------- rules list ---------- */
+.rules { display: grid; gap: 2px; margin-top: 8px; }
+
+.rule-row {
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--rule-soft);
+  align-items: start;
+}
+
+.rule-row:last-child { border-bottom: none; }
+
+.rule-num {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-faint);
+  padding-top: 3px;
+}
+
+.rule-row h4 { margin: 0 0 4px; font-size: 15.5px; font-weight: 700; }
+.rule-row p { margin: 0; font-size: 14.5px; color: var(--ink-soft); max-width: 68ch; }
+
+footer {
+  margin-top: 84px;
+  padding-top: 22px;
+  border-top: 1px solid var(--rule);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  letter-spacing: 0.04em;
+  color: var(--ink-faint);
+}
+
+/* ---------- svg shared ---------- */
+.svg-label { font-family: var(--mono); font-size: 12px; fill: currentColor; }
+.svg-title { font-family: var(--mono); font-size: 13px; font-weight: 700; }
+.svg-sub { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-faint); }
+.svg-edge { font-family: var(--mono); font-size: 10.5px; fill: var(--ink-soft); }
+.box { fill: var(--surface); stroke: var(--rule); stroke-width: 1.5; }
+.flow { stroke: currentColor; stroke-width: 1.6; fill: none; }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="kicker">OceanAdventure · UE 5.7 · Lyra</p>
+    <h1>木筏建造系统架构</h1>
+    <p class="standfirst">
+      一套宿主无关的网格建造框架，木筏是它的第一个宿主，岛屿静态建筑会是第二个。
+      下面五张图分别回答：代码怎么分层、运行时挂在哪、一次放置怎么走完客户端到服务端、格子怎么吸附、
+      以及离开木筏后建造键为什么会失效。
+    </p>
+  </header>
+
+  <div class="layers">
+    <div class="layer framework">
+      <h3>BuildingCore</h3>
+      <p>通用插件。结构真值、网格、ISM 表现、宿主注册表。不认识木筏，也不依赖 GAS。</p>
+    </div>
+    <div class="layer host">
+      <h3>Raft GameFeature</h3>
+      <p>宿主。木筏 Actor、浮力、建造件资产。实现 <code>IBuildStructureHost</code> 告诉框架"木筏是什么"。</p>
+    </div>
+    <div class="layer gameplay">
+      <h3>OceanAdventure GameFeature</h3>
+      <p>玩法。三个 GameplayAbility、Enhanced Input、CommonUI 输入配置、失败消息。</p>
+    </div>
+  </div>
+
+  <!-- ============ 1 ============ -->
+  <section>
+    <p class="eyebrow">Figure 1 — Module Layering</p>
+    <h2>依赖只能往下走，GameFeature 之间互不认识</h2>
+    <p>
+      建造框架下沉为通用插件，而不是做成一个 GameFeature。原因很实际：作弊命令、存档恢复、编辑器工具都不经过 GAS，
+      它们必须能直接调框架 API；而两个 GameFeature 一旦互相依赖，Experience 就无法独立开关它们。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 900 340" role="img" aria-label="模块分层图：Raft 与 OceanAdventure 两个 GameFeature 各自单向依赖 BuildingCore 通用插件，两者之间没有依赖">
+        <defs>
+          <marker id="ar-ink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <!-- host GF -->
+        <g color="var(--host)">
+          <rect class="box" x="40" y="24" width="360" height="120" rx="3" stroke="currentColor"></rect>
+          <text class="svg-title" x="60" y="52" fill="currentColor">Raft GameFeature</text>
+          <text class="svg-sub" x="60" y="74">ARaftActor — 实现 IBuildStructureHost</text>
+          <text class="svg-sub" x="60" y="93">URaftBuoyancyComponent — 服务端浮力</text>
+          <text class="svg-sub" x="60" y="112">DA_BuildPiece_* / DA_BuildPieceCatalog_Raft</text>
+          <text class="svg-sub" x="60" y="131">GameFeatureData 无任何 Action</text>
+        </g>
+
+        <!-- gameplay GF -->
+        <g color="var(--gameplay)">
+          <rect class="box" x="500" y="24" width="360" height="120" rx="3" stroke="currentColor"></rect>
+          <text class="svg-title" x="520" y="52" fill="currentColor">OceanAdventure GameFeature</text>
+          <text class="svg-sub" x="520" y="74">GA_BuildMode / PlacePiece / RemovePiece</text>
+          <text class="svg-sub" x="520" y="93">IMC + ULyraInputConfig + ULyraAbilitySet</text>
+          <text class="svg-sub" x="520" y="112">BuildInputWidget — FUIInputConfig</text>
+          <text class="svg-sub" x="520" y="131">AddComponents / AddInputBinding</text>
+        </g>
+
+        <!-- no-dependency bar between the two GFs -->
+        <g color="var(--ink-faint)">
+          <line x1="404" y1="84" x2="496" y2="84" stroke="currentColor" stroke-width="1.4" stroke-dasharray="5 5"></line>
+          <line x1="437" y1="70" x2="463" y2="98" stroke="currentColor" stroke-width="2"></line>
+          <line x1="463" y1="70" x2="437" y2="98" stroke="currentColor" stroke-width="2"></line>
+          <text class="svg-edge" x="450" y="120" text-anchor="middle">互不依赖</text>
+        </g>
+
+        <!-- arrows down -->
+        <g color="var(--host)">
+          <line class="flow" x1="220" y1="148" x2="220" y2="212" marker-end="url(#ar-ink)" stroke="currentColor"></line>
+          <text class="svg-edge" x="232" y="184">依赖</text>
+        </g>
+        <g color="var(--gameplay)">
+          <line class="flow" x1="680" y1="148" x2="680" y2="212" marker-end="url(#ar-ink)" stroke="currentColor"></line>
+          <text class="svg-edge" x="692" y="184">依赖</text>
+        </g>
+
+        <!-- framework -->
+        <g color="var(--framework)">
+          <rect class="box" x="40" y="216" width="820" height="104" rx="3" stroke="currentColor" stroke-width="2"></rect>
+          <text class="svg-title" x="60" y="244" fill="currentColor">BuildingCore（通用插件，与 OceanCore 平级）</text>
+          <text class="svg-sub" x="60" y="268">UBuildStructureComponent — FastArray 结构真值，服务端权威</text>
+          <text class="svg-sub" x="60" y="287">UBuildStructureVisualComponent — 按 Mesh 分组的 ISM</text>
+          <text class="svg-sub" x="60" y="306">UBuildPreviewComponent — 纯本地幽灵</text>
+          <text class="svg-sub" x="470" y="268">IBuildStructureHost — 宿主抽象</text>
+          <text class="svg-sub" x="470" y="287">UBuildStructureSubsystem — 宿主注册表</text>
+          <text class="svg-sub" x="470" y="306">不依赖 LyraGame / GAS / CommonUI</text>
+        </g>
+      </svg>
+      <figcaption>
+        框架只被依赖，从不依赖任何 GameFeature。岛屿建造接入时新增的只有一个宿主实现，框架代码一行不改。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 2 ============ -->
+  <section>
+    <p class="eyebrow">Figure 2 — Runtime Composition</p>
+    <h2>组件挂在哪，谁问谁</h2>
+    <p>
+      结构组件挂在宿主 Actor 上（跟着木筏一起复制），预览组件挂在玩家 Pawn 上（纯本地，由 GameFeature 注入）。
+      两边通过 <code>IBuildStructureHost</code> 和注册表交谈，谁也不硬编码对方的类型。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 900 400" role="img" aria-label="运行时组件图：ARaftActor 持有结构与表现组件，玩家 Pawn 持有本地预览组件，预览通过宿主注册表查询结构">
+        <defs>
+          <marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <!-- raft actor -->
+        <g color="var(--host)">
+          <rect class="box" x="30" y="20" width="380" height="230" rx="3" stroke="currentColor"></rect>
+          <text class="svg-title" x="50" y="48" fill="currentColor">ARaftActor  ·  宿主</text>
+          <text class="svg-sub" x="50" y="66">implements IBuildStructureHost</text>
+        </g>
+        <g color="var(--ink-soft)">
+          <rect class="box" x="50" y="82" width="340" height="30" rx="2"></rect>
+          <text class="svg-label" x="64" y="102">DeckCollision — 根组件 · 角色 MovementBase</text>
+          <rect class="box" x="50" y="118" width="340" height="30" rx="2"></rect>
+          <text class="svg-label" x="64" y="138">VisualMesh — 基础木筏外观</text>
+          <rect class="box" x="50" y="154" width="340" height="30" rx="2"></rect>
+          <text class="svg-label" x="64" y="174">URaftBuoyancyComponent — 服务端浮力</text>
+        </g>
+        <g color="var(--framework)">
+          <rect class="box" x="50" y="190" width="340" height="30" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="64" y="210" fill="currentColor">UBuildStructureComponent — Replicated</text>
+          <rect class="box" x="50" y="226" width="340" height="14" rx="2" stroke="currentColor"></rect>
+          <text class="svg-sub" x="64" y="237" fill="currentColor">UBuildStructureVisualComponent — ISM</text>
+        </g>
+
+        <!-- pawn -->
+        <g color="var(--gameplay)">
+          <rect class="box" x="500" y="20" width="370" height="150" rx="3" stroke="currentColor"></rect>
+          <text class="svg-title" x="520" y="48" fill="currentColor">AOceanAdventurePawn  ·  玩家</text>
+          <text class="svg-sub" x="520" y="66">组件由 GameFeatureAction_AddComponents 注入</text>
+        </g>
+        <g color="var(--ink-soft)">
+          <rect class="box" x="520" y="82" width="330" height="30" rx="2"></rect>
+          <text class="svg-label" x="534" y="102">ULyraHeroComponent — InputTag 分发</text>
+        </g>
+        <g color="var(--framework)">
+          <rect class="box" x="520" y="118" width="330" height="30" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="534" y="138" fill="currentColor">UBuildPreviewComponent — 本地，不复制</text>
+        </g>
+        <g color="var(--gameplay)">
+          <rect class="box" x="520" y="186" width="330" height="46" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="534" y="206" fill="currentColor">BuildProximityComponent</text>
+          <text class="svg-sub" x="534" y="223" fill="currentColor">0.25s 扫描 → Status.Build.HostAvailable</text>
+        </g>
+
+        <!-- subsystem -->
+        <g color="var(--framework)">
+          <rect class="box" x="500" y="272" width="370" height="66" rx="3" stroke="currentColor"></rect>
+          <text class="svg-title" x="520" y="299" fill="currentColor">UBuildStructureSubsystem</text>
+          <text class="svg-sub" x="520" y="320">WorldSubsystem · 宿主注册表</text>
+        </g>
+
+        <!-- edges -->
+        <g color="var(--ink-soft)">
+          <path class="flow" d="M 390 205 H 450 V 305 H 496" marker-end="url(#ar2)" stroke="currentColor"></path>
+          <text class="svg-edge" x="404" y="196">BeginPlay 注册</text>
+
+          <path class="flow" d="M 640 148 V 182" marker-end="url(#ar2)" stroke="currentColor" stroke-dasharray="4 4"></path>
+          <text class="svg-edge" x="650" y="172">缓存宿主</text>
+
+          <path class="flow" d="M 730 232 V 268" marker-end="url(#ar2)" stroke="currentColor"></path>
+          <text class="svg-edge" x="740" y="256">查询最近宿主</text>
+
+          <path class="flow" d="M 520 133 H 470 V 205 H 394" marker-end="url(#ar2)" stroke="currentColor" stroke-dasharray="4 4"></path>
+          <text class="svg-edge" x="404" y="252">只读：CanPlacePiece</text>
+        </g>
+      </svg>
+      <figcaption>
+        预览组件只读地问结构"这里能不能放"，从不写入。宿主查询顺序是脚下的 MovementBase → 光标命中 → 注册表最近宿主：
+        第一级每帧跑（踩上船即时响应），后两级按 0.25 秒间隔跑。没有任何一帧遍历全世界。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 3 ============ -->
+  <section>
+    <p class="eyebrow">Figure 3 — Placement Round Trip</p>
+    <h2>一次放置：客户端出请求，服务端出结论</h2>
+    <p>
+      这条链路和 Lyra 开枪是同一形状：本地瞄准 → TargetData 上传 → 服务端复检 → 应用。
+      客户端送上来的槽位是<strong>请求</strong>，不是授权 —— 服务端用同一个 <code>CanPlacePiece</code> 重新算一遍。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 900 470" role="img" aria-label="放置时序图：输入触发能力，客户端从预览取槽位打包 TargetData，经 GAS 通道到服务端复检并写入 FastArray，增量复制回各端后重建 ISM">
+        <defs>
+          <marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <!-- lanes -->
+        <g color="var(--ink-faint)">
+          <line x1="30" y1="56" x2="870" y2="56" stroke="var(--rule)" stroke-width="1"></line>
+          <line x1="30" y1="212" x2="870" y2="212" stroke="var(--rule)" stroke-width="1"></line>
+          <line x1="30" y1="268" x2="870" y2="268" stroke="var(--rule)" stroke-width="1"></line>
+          <text class="svg-sub" x="30" y="46" fill="var(--gameplay)">客户端 · 拥有者</text>
+          <text class="svg-sub" x="30" y="240" fill="currentColor">网络 · GAS 预测键通道</text>
+          <text class="svg-sub" x="30" y="290" fill="var(--host)">服务端 · 权威</text>
+        </g>
+
+        <!-- client row -->
+        <g color="var(--gameplay)">
+          <rect class="box" x="30" y="76" width="150" height="52" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="46" y="99" fill="currentColor">InputTag.Build</text>
+          <text class="svg-sub" x="46" y="116">.Confirm（左键）</text>
+
+          <rect class="box" x="212" y="76" width="176" height="52" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="228" y="99" fill="currentColor">GA_Build_PlacePiece</text>
+          <text class="svg-sub" x="228" y="116">要求 Status.Build.Active</text>
+
+          <rect class="box" x="420" y="76" width="176" height="52" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="436" y="99" fill="currentColor">读预览的吸附格</text>
+          <text class="svg-sub" x="436" y="116">非法则本地拒绝，不上传</text>
+
+          <rect class="box" x="628" y="76" width="176" height="52" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="644" y="99" fill="currentColor">TargetData</text>
+          <text class="svg-sub" x="644" y="116">Host + SlotKey + PieceIndex</text>
+
+          <line class="flow" x1="180" y1="102" x2="208" y2="102" marker-end="url(#ar3)" stroke="currentColor"></line>
+          <line class="flow" x1="388" y1="102" x2="416" y2="102" marker-end="url(#ar3)" stroke="currentColor"></line>
+          <line class="flow" x1="596" y1="102" x2="624" y2="102" marker-end="url(#ar3)" stroke="currentColor"></line>
+        </g>
+
+        <!-- client local cosmetic -->
+        <g color="var(--ink-faint)">
+          <rect class="box" x="420" y="148" width="384" height="44" rx="2" stroke-dasharray="4 4"></rect>
+          <text class="svg-sub" x="436" y="168" fill="currentColor">本地只预测表现：蒙太奇、音效、幽灵</text>
+          <text class="svg-sub" x="436" y="184" fill="currentColor">结构数据从不预测</text>
+        </g>
+
+        <!-- down to server -->
+        <g color="var(--gameplay)">
+          <path class="flow" d="M 716 130 V 300" marker-end="url(#ar3)" stroke="currentColor"></path>
+          <text class="svg-edge" x="726" y="232">CallServerSetReplicatedTargetData</text>
+        </g>
+
+        <!-- server row -->
+        <g color="var(--host)">
+          <rect class="box" x="628" y="304" width="176" height="52" rx="2" stroke="currentColor" stroke-width="2"></rect>
+          <text class="svg-label" x="644" y="327" fill="currentColor">CanPlacePiece 复检</text>
+          <text class="svg-sub" x="644" y="344">占用 · 支撑 · 距离 · 材料</text>
+
+          <rect class="box" x="420" y="304" width="176" height="52" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="436" y="327" fill="currentColor">TryPlacePiece</text>
+          <text class="svg-sub" x="436" y="344">唯一写入口，带 HasAuthority</text>
+
+          <rect class="box" x="212" y="304" width="176" height="52" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="228" y="327" fill="currentColor">FBuildPieceList</text>
+          <text class="svg-sub" x="228" y="344">MarkItemDirty + ForceNetUpdate</text>
+
+          <line class="flow" x1="624" y1="330" x2="600" y2="330" marker-end="url(#ar3)" stroke="currentColor"></line>
+          <line class="flow" x1="416" y1="330" x2="392" y2="330" marker-end="url(#ar3)" stroke="currentColor"></line>
+        </g>
+
+        <!-- reject path -->
+        <g color="var(--ink-faint)">
+          <path class="flow" d="M 716 356 V 392 H 860" stroke="currentColor" stroke-dasharray="4 4" marker-end="url(#ar3)"></path>
+          <text class="svg-edge" x="726" y="384">拒绝 → Build.Message.Failed（消息总线）</text>
+        </g>
+
+        <!-- replicate back -->
+        <g color="var(--framework)">
+          <path class="flow" d="M 212 330 H 120 V 420 H 640" marker-end="url(#ar3)" stroke="currentColor"></path>
+          <text class="svg-edge" x="130" y="412" fill="currentColor">增量复制 · 只发变化的条目</text>
+
+          <rect class="box" x="644" y="398" width="216" height="46" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="660" y="418" fill="currentColor">PostReplicatedAdd</text>
+          <text class="svg-sub" x="660" y="435" fill="currentColor">下一帧合并 → 重建 ISM</text>
+        </g>
+      </svg>
+      <figcaption>
+        服务端拒绝时只广播消息，不回滚客户端 —— 因为客户端从没预测过结构。加粗的那一步是整条链路的安全边界。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ 4 ============ -->
+  <section>
+    <p class="eyebrow">Figure 4 — Snap Ring</p>
+    <h2>吸附点是算出来的，不是存出来的</h2>
+    <p>
+      吸附候选 = 与已占格四邻接的空格。甲板锚定格天然算"已占"，所以初始候选正好是甲板四周一圈。
+      放下一块后它进入已占集合、自动退出候选，它的四邻成为新候选 —— 没有额外状态需要维护。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 900 300" role="img" aria-label="吸附环示意：甲板两格周围是六个吸附候选格，放置一块后该格转为已占并向外生出新的候选">
+        <defs>
+          <marker id="ar4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <!-- before -->
+        <text class="svg-sub" x="60" y="34" fill="var(--ink-faint)">放置前</text>
+        <g color="var(--host)">
+          <rect x="130" y="90" width="60" height="60" fill="var(--host-wash)" stroke="currentColor" stroke-width="1.6"></rect>
+          <rect x="130" y="150" width="60" height="60" fill="var(--host-wash)" stroke="currentColor" stroke-width="1.6"></rect>
+          <text class="svg-sub" x="160" y="234" text-anchor="middle" fill="currentColor">甲板锚定格</text>
+        </g>
+        <g color="var(--framework)">
+          <rect x="70" y="90" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <rect x="70" y="150" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <rect x="190" y="90" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <rect x="190" y="150" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <rect x="130" y="30" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <rect x="130" y="210" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <text class="svg-sub" x="70" y="286" fill="currentColor">虚线 = 吸附候选（四方向）</text>
+        </g>
+
+        <!-- arrow -->
+        <g color="var(--ink-soft)">
+          <line class="flow" x1="330" y1="150" x2="430" y2="150" marker-end="url(#ar4)" stroke="currentColor"></line>
+          <text class="svg-edge" x="380" y="138" text-anchor="middle">放下一块</text>
+        </g>
+
+        <!-- after -->
+        <text class="svg-sub" x="500" y="34" fill="var(--ink-faint)">放置后</text>
+        <g color="var(--host)">
+          <rect x="570" y="90" width="60" height="60" fill="var(--host-wash)" stroke="currentColor" stroke-width="1.6"></rect>
+          <rect x="570" y="150" width="60" height="60" fill="var(--host-wash)" stroke="currentColor" stroke-width="1.6"></rect>
+        </g>
+        <g color="var(--gameplay)">
+          <rect x="630" y="150" width="60" height="60" fill="var(--gameplay-wash)" stroke="currentColor" stroke-width="1.6"></rect>
+          <text class="svg-sub" x="660" y="186" text-anchor="middle" fill="currentColor">新甲板</text>
+          <text class="svg-sub" x="660" y="234" text-anchor="middle" fill="currentColor">该格退出候选集</text>
+        </g>
+        <g color="var(--framework)">
+          <rect x="510" y="90" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <rect x="510" y="150" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <rect x="630" y="90" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <rect x="690" y="150" width="60" height="60" fill="none" stroke="currentColor" stroke-width="1.8" stroke-dasharray="4 4"></rect>
+          <rect x="630" y="210" width="60" height="60" fill="none" stroke="currentColor" stroke-width="1.8" stroke-dasharray="4 4"></rect>
+          <rect x="570" y="30" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <rect x="570" y="210" width="60" height="60" fill="none" stroke="currentColor" stroke-dasharray="4 4"></rect>
+          <text class="svg-sub" x="700" y="118" fill="currentColor">粗虚线 = 新增候选</text>
+        </g>
+      </svg>
+      <figcaption>
+        网格对齐由宿主推导：只有能完整放进甲板的整格才是锚定格，余数留作不可建的视觉边缘 —— 宁可少一格，也不让建造件悬在水面上。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ gating ============ -->
+  <section>
+    <p class="eyebrow">Figure 5 — Ability Gating</p>
+    <h2>两道门都是 Tag，不是能力的授予与回收</h2>
+    <p>
+      离开木筏后建造键应该完全无响应。做法不是把能力收回去——移除 ability spec 会打断正在激活的能力，
+      而木筏起伏加上玩家走到船边缘，会让距离在阈值附近来回抖。Lyra 自己的
+      <code>UAbilityTask_GrantNearbyInteraction</code> 也只授予、从不回收，正是在回避这个代价。
+    </p>
+
+    <figure>
+      <svg viewBox="0 0 900 240" role="img" aria-label="能力门控图：邻近扫描产生 HostAvailable 标签，它放行建造模式能力，建造模式再产生 Active 标签放行放置与拆除能力">
+        <defs>
+          <marker id="ar5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor"></path>
+          </marker>
+        </defs>
+
+        <g color="var(--framework)">
+          <rect class="box" x="24" y="70" width="164" height="58" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="40" y="94" fill="currentColor">注册表扫描</text>
+          <text class="svg-sub" x="40" y="112" fill="currentColor">0.25s · 带滞后</text>
+        </g>
+
+        <g color="var(--gameplay)">
+          <rect x="228" y="76" width="196" height="46" rx="23" fill="var(--gameplay-wash)" stroke="currentColor" stroke-width="1.5"></rect>
+          <text class="svg-label" x="326" y="104" text-anchor="middle" fill="currentColor">Status.Build.HostAvailable</text>
+
+          <rect class="box" x="464" y="70" width="164" height="58" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="480" y="94" fill="currentColor">GA_Build_Mode</text>
+          <text class="svg-sub" x="480" y="112" fill="currentColor">CanActivateAbility 检查</text>
+
+          <rect x="668" y="76" width="176" height="46" rx="23" fill="var(--gameplay-wash)" stroke="currentColor" stroke-width="1.5"></rect>
+          <text class="svg-label" x="756" y="104" text-anchor="middle" fill="currentColor">Status.Build.Active</text>
+
+          <rect class="box" x="464" y="164" width="380" height="52" rx="2" stroke="currentColor"></rect>
+          <text class="svg-label" x="480" y="188" fill="currentColor">GA_Build_PlacePiece / RemovePiece</text>
+          <text class="svg-sub" x="480" y="206" fill="currentColor">同样只检查 Tag，能力始终常驻</text>
+        </g>
+
+        <g color="var(--ink-soft)">
+          <line class="flow" x1="190" y1="99" x2="222" y2="99" marker-end="url(#ar5)" stroke="currentColor"></line>
+          <line class="flow" x1="426" y1="99" x2="458" y2="99" marker-end="url(#ar5)" stroke="currentColor"></line>
+          <line class="flow" x1="630" y1="99" x2="662" y2="99" marker-end="url(#ar5)" stroke="currentColor"></line>
+          <path class="flow" d="M 756 122 V 160" marker-end="url(#ar5)" stroke="currentColor"></path>
+          <text class="svg-edge" x="766" y="148">放行</text>
+        </g>
+      </svg>
+      <figcaption>
+        两级门都是 Loose Tag：增删廉价，不会打断已激活的能力，UI 也能直接订阅同一个 Tag 显示"按 B 建造"。
+        扫描问的是注册表而不是球形 overlap，没有物理查询开销。
+      </figcaption>
+    </figure>
+  </section>
+
+  <!-- ============ hot paths ============ -->
+  <section>
+    <p class="eyebrow">Hot Paths</p>
+    <h2>三处热路径已经改成增量</h2>
+    <p>原本"每次变化重算全部"在几十件规模下是对的取舍，到几千件就不成立。已完成的三项：</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>位置</th><th>原来</th><th>现在</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GetSnapCandidates</code></td>
+            <td>每帧遍历全部件重建两个哈希集</td>
+            <td>按 (槽位, 层) 缓存，结构变化才失效</td>
+          </tr>
+          <tr>
+            <td><code>SlotToEntryIndex</code></td>
+            <td>每次写入整表重建，读档累计 O(N²)</td>
+            <td>只增删受影响的键，O(Footprint)</td>
+          </tr>
+          <tr>
+            <td>宿主查找</td>
+            <td>每帧光标射线 + 注册表遍历</td>
+            <td>0.25s 一次；MovementBase 仍每帧</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p style="margin-top:22px">
+      批量写入另有 <code>BeginBatchEdit()</code> / <code>EndBatchEdit()</code>：批内只维护索引，
+      通知、ISM 重建与网络更新各推迟到结束时做一次。存档恢复和 <code>BuildFill</code> 都走这条路。
+    </p>
+  </section>
+
+  <!-- ============ assets ============ -->
+  <section>
+    <p class="eyebrow">Data Chain</p>
+    <h2>模型配置从蓝图一路指到 DataAsset</h2>
+    <p>蓝图只指定"用哪个木筏定义"，模型、缩放、槽位类型都在 DataAsset 上。目录的下标是网络索引，只能追加。</p>
+
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th>层级</th><th>资产</th><th>它决定什么</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="tag host">蓝图</span></td>
+            <td><code>BP_Raft_Default</code></td>
+            <td>选哪个木筏定义；<code>BuildGridSettings</code> 的格边长与层高</td>
+          </tr>
+          <tr>
+            <td><span class="tag host">定义</span></td>
+            <td><code>DA_Raft_Default</code></td>
+            <td>甲板尺寸、视觉网格、浮力参数、指向哪个建造件目录</td>
+          </tr>
+          <tr>
+            <td><span class="tag framework">目录</span></td>
+            <td><code>DA_BuildPieceCatalog_Raft</code></td>
+            <td>建造件的网络索引表，<strong>只能追加</strong></td>
+          </tr>
+          <tr>
+            <td><span class="tag framework">建造件</span></td>
+            <td><code>DA_BuildPiece_Raft_*</code></td>
+            <td>Mesh、MeshScale、MeshOffset、SlotType、Footprint、PieceTag、Fragments</td>
+          </tr>
+          <tr>
+            <td><span class="tag gameplay">授予</span></td>
+            <td><code>DA_AbilitySet_OceanBuild</code></td>
+            <td>三个建造 Ability 与各自的 InputTag，挂在 PawnData 上</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ invariants ============ -->
+  <section>
+    <p class="eyebrow">Invariants</p>
+    <h2>这套架构靠五条不变量成立</h2>
+
+    <div class="rules">
+      <div class="rule-row">
+        <div class="rule-num">01</div>
+        <div>
+          <h4>结构只有一个写入口</h4>
+          <p>作弊命令、Ability、存档恢复全部走 <code>TryPlacePiece</code> / <code>TryRemovePiece</code>，且都带权限断言。测试路径和正式路径不分叉。</p>
+        </div>
+      </div>
+      <div class="rule-row">
+        <div class="rule-num">02</div>
+        <div>
+          <h4>框架不认识宿主</h4>
+          <p>木筏与岛屿的全部差异收敛在 <code>IBuildStructureHost</code> 的六个函数里：坐标空间、挂载点、格设置、锚定判定、连通性要求、包围盒回调。</p>
+        </div>
+      </div>
+      <div class="rule-row">
+        <div class="rule-num">03</div>
+        <div>
+          <h4>客户端不预测结构</h4>
+          <p>预测只体现在蒙太奇、音效和幽灵上。复制型数据一律等服务端 —— 回滚的代价远高于那 100 毫秒。</p>
+        </div>
+      </div>
+      <div class="rule-row">
+        <div class="rule-num">04</div>
+        <div>
+          <h4>输入与光标不归代码管</h4>
+          <p>按键经 InputTag 分发，鼠标可见性由激活中的 CommonUI widget 的 <code>FUIInputConfig</code> 声明。代码里没有 <code>EKeys::</code>，也没有 <code>bShowMouseCursor</code>。</p>
+        </div>
+      </div>
+      <div class="rule-row">
+        <div class="rule-num">05</div>
+        <div>
+          <h4>网格由宿主推导</h4>
+          <p>格数、半格偏移、Level 0 的高度基准都从甲板算出来，不硬编码进建造件资产。改甲板尺寸不需要重调每一个件。</p>
+        </div>
+      </div>
+      <div class="rule-row">
+        <div class="rule-num">06</div>
+        <div>
+          <h4>能力常驻，用 Tag 开关</h4>
+          <p>建造能力由 PawnData 授予一次就不再增删。距离、模式这类会抖动的条件一律用 Loose Tag 表达，避免回收 spec 打断正在跑的能力。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    OceanAdventure · BuildingCore + Raft + OceanAdventure · 图中类名与仓库当前实现一致
+  </footer>
+
+</div>
