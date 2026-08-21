@@ -25,3 +25,30 @@ ValidateRaftFeature.py        -> read-only asset, replication, Experience, and m
 
 The scripts are idempotent. Driving, helm interaction, input, and GAS abilities are
 deliberately outside this first implementation.
+
+## Creative building MVP
+
+`BuildingCoreRuntime` supplies the replicated grid structure, ISM collision, and the
+console-driven local preview. Raft owns the wooden foundation Definition/Catalog and
+implements `IBuildStructureHost`.
+
+In PIE, open the console and run:
+
+```text
+BuildMode 1
+```
+
+The mouse moves the preview. A supported empty cell snaps to the raft grid; left-click
+places it through the server-authoritative component. Unsupported, occupied, or distant
+positions remain unsnapped and use a red invalid material without shaking. Clicking there
+triggers one short shader World Position Offset shake; the component transform stays fixed.
+Right-click or Escape leaves the mode.
+`BuildCreative 1` is an alias. Useful P0 commands also include `BuildDump`, `BuildClear`,
+`BuildFill X Y`, and `BuildDebug 1`.
+
+Asset generation and read-only validation:
+
+```text
+py "<project>/Plugins/GameFeatures/Raft/Content/Python/CreateRaftBuildPieceAssets.py"
+py "<project>/Plugins/GameFeatures/Raft/Content/Python/ValidateRaftBuildMvp.py"
+```

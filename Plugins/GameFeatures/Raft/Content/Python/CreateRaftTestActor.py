@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(unreal.Paths.project_dir()).resolve()
 SOURCE_FBX = PROJECT_ROOT / "Plugins" / "GameFeatures" / "Raft" / "ArtSource" / "Raft" / "SM_Raft.fbx"
 STATIC_MESH_PATH = "/Raft/Vehicles/Raft/SM_Raft"
 DEFINITION_PATH = "/Raft/Vehicles/Raft/DA_Raft_Default"
+BUILD_CATALOG_PATH = "/Raft/Build/DA_BuildPieceCatalog_Raft"
 BLUEPRINT_PATH = "/Raft/Vehicles/Raft/BP_Raft_Default"
 TEST_MAP_PATH = "/OceanAdventure/Maps/L_OceanChunkTest"
 TEST_ACTOR_LABEL = "Raft Test Actor"
@@ -112,6 +113,9 @@ def configure_definition(mesh):
     )
     definition = get_or_create_data_asset(DEFINITION_PATH, definition_class)
     definition.set_editor_property("visual_mesh", mesh)
+    build_catalog = unreal.EditorAssetLibrary.load_asset(BUILD_CATALOG_PATH)
+    if build_catalog is not None:
+        definition.set_editor_property("build_piece_catalog", build_catalog)
     definition.set_editor_property("deck_box_extent", DECK_BOX_EXTENT)
     definition.set_editor_property("visual_mesh_offset", VISUAL_MESH_OFFSET)
     definition.set_editor_property("pontoon_offsets", list(PONTOON_OFFSETS))

@@ -34,6 +34,7 @@ def main():
     run_script(RAFT_PYTHON / "CreateRaftGameFeatureData.py")
     run_script(OCEAN_PYTHON / "CreateOceanAdventureExperience.py")
     run_script(RAFT_PYTHON / "CreateRaftTestActor.py")
+    run_script(RAFT_PYTHON / "CreateRaftBuildPieceAssets.py")
     unreal.log("[RaftFeatureBuilder] Raft GameFeature build completed")
 
 

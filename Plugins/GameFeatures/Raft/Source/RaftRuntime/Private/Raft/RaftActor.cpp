@@ -2,6 +2,8 @@
 
 #include "Raft/RaftActor.h"
 
+#include "Building/BuildStructureComponent.h"
+#include "Building/BuildStructureVisualComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -36,6 +38,9 @@ ARaftActor::ARaftActor()
 	VisualMesh->SetCanEverAffectNavigation(false);
 
 	BuoyancyComponent = CreateDefaultSubobject<URaftBuoyancyComponent>(TEXT("BuoyancyComponent"));
+	BuildStructureComponent = CreateDefaultSubobject<UBuildStructureComponent>(TEXT("BuildStructureComponent"));
+	BuildStructureVisualComponent =
+		CreateDefaultSubobject<UBuildStructureVisualComponent>(TEXT("BuildStructureVisualComponent"));
 
 	bReplicates = true;
 	bNetLoadOnClient = true;
@@ -63,4 +68,71 @@ void ARaftActor::ApplyDefinition()
 	VisualPivot->SetRelativeLocation(RaftDefinition->GetVisualMeshOffset());
 	VisualMesh->SetStaticMesh(RaftDefinition->GetVisualMesh());
 	BuoyancyComponent->ApplyDefinition(RaftDefinition);
+	BuildStructureComponent->SetPieceCatalog(RaftDefinition->GetBuildPieceCatalog());
+}
+
+USceneComponent* ARaftActor::GetStructureAttachRoot() const
+{
+	return DeckCollision.Get();
+}
+
+bool ARaftActor::CollectAnchorCells(TSet<FBuildGridCoord>& OutCells) const
+{
+	if (!DeckCollision)
+	{
+		return false;
+	}
+
+	const FVector Extent = RaftDefinition
+		? RaftDefinition->GetDeckBoxExtent()
+		: DeckCollision->GetUnscaledBoxExtent();
+	const FBuildGridCoord MinCoord = BuildGrid::LocalToCoord(
+		FVector(-Extent.X, -Extent.Y, 0.0),
+		BuildGridSettings);
+	const FBuildGridCoord MaxCoord = BuildGrid::LocalToCoord(
+		FVector(
+			Extent.X - KINDA_SMALL_NUMBER,
+			Extent.Y - KINDA_SMALL_NUMBER,
+			0.0),
+		BuildGridSettings);
+
+	for (int32 X = MinCoord.X; X <= MaxCoord.X; ++X)
+	{
+		for (int32 Y = MinCoord.Y; Y <= MaxCoord.Y; ++Y)
+		{
+			OutCells.Add(FBuildGridCoord(X, Y, 0));
+		}
+	}
+	return true;
+}
+
+bool ARaftActor::IsCellAnchored(const FBuildGridCoord& Coord) const
+{
+	if (Coord.Level != 0)
+	{
+		return false;
+	}
+
+	TSet<FBuildGridCoord> AnchorCells;
+	CollectAnchorCells(AnchorCells);
+	return AnchorCells.Contains(Coord);
+}
+
+void ARaftActor::OnStructureBoundsChanged(const FBox& LocalBounds)
+{
+	if (!LocalBounds.IsValid || !DeckCollision)
+	{
+		return;
+	}
+
+	const FVector ExistingExtent = DeckCollision->GetUnscaledBoxExtent();
+	const FVector StructureExtent = LocalBounds.GetExtent();
+	DeckCollision->SetBoxExtent(
+		FVector(StructureExtent.X, StructureExtent.Y, ExistingExtent.Z),
+		true);
+
+	if (HasAuthority() && BuoyancyComponent)
+	{
+		BuoyancyComponent->RebuildFromStructure(LocalBounds);
+	}
 }

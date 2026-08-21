@@ -8,6 +8,7 @@
 #include "RaftDefinition.generated.h"
 
 class UStaticMesh;
+class UBuildPieceCatalog;
 
 /** Data-driven shape and buoyancy tuning for one raft family. */
 UCLASS(BlueprintType, Const)
@@ -19,6 +20,7 @@ public:
 	URaftDefinition();
 
 	UStaticMesh* GetVisualMesh() const { return VisualMesh; }
+	UBuildPieceCatalog* GetBuildPieceCatalog() const { return BuildPieceCatalog; }
 	FVector GetDeckBoxExtent() const { return DeckBoxExtent.ComponentMax(FVector(1.0)); }
 	FVector GetVisualMeshOffset() const { return VisualMeshOffset; }
 	const TArray<FVector>& GetPontoonOffsets() const { return PontoonOffsets; }
@@ -28,6 +30,10 @@ public:
 	float GetRotationInterpSpeed() const { return FMath::Max(0.0f, RotationInterpSpeed); }
 
 protected:
+	/** Raft-owned append-only network catalog for all pieces this family can build. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Build")
+	TObjectPtr<UBuildPieceCatalog> BuildPieceCatalog;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Presentation")
 	TObjectPtr<UStaticMesh> VisualMesh;
 

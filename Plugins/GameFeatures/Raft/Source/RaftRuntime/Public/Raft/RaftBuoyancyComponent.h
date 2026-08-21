@@ -29,6 +29,9 @@ public:
 	void ApplyDefinition(const URaftDefinition* Definition);
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Raft|Buoyancy")
+	void RebuildFromStructure(const FBox& LocalStructureBounds);
+
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Raft|Buoyancy")
 	void SetBuoyancyEnabled(bool bEnabled);
 
 	UFUNCTION(BlueprintPure, Category = "Raft|Buoyancy")
