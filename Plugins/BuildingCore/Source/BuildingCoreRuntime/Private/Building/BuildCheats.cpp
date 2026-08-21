@@ -47,7 +47,7 @@ void UBuildCheats::BuildMode(int32 bEnabled)
 		return;
 	}
 
-	Preview->SetBuildModeEnabled(bEnabled != 0);
+	Preview->SetPreviewEnabled(bEnabled != 0);
 	if (const UBuildStructureComponent* Structure = GetBuildComponent())
 	{
 		if (const UBuildPieceCatalog* Catalog = Structure->GetCatalog())
@@ -66,8 +66,9 @@ void UBuildCheats::BuildMode(int32 bEnabled)
 	UE_LOG(
 		LogBuildingCore,
 		Display,
-		TEXT("Creative mouse building %s"),
-		bEnabled != 0 ? TEXT("enabled (LMB place, RMB/Esc exit)") : TEXT("disabled"));
+		TEXT("Build ghost %s. The playable entry point is the build-mode ability (InputTag.Build.Mode); "
+			"this cheat only toggles the local preview."),
+		bEnabled != 0 ? TEXT("enabled") : TEXT("disabled"));
 #endif
 }
 
@@ -336,17 +337,17 @@ UBuildPreviewComponent* UBuildCheats::FindOrAddPreviewComponent(bool bCreateIfMi
 	{
 		return Existing;
 	}
-	if (!bCreateIfMissing || !Pawn->HasAuthority())
+	if (!bCreateIfMissing)
 	{
 		return nullptr;
 	}
 
+	// The preview is local-only now, so the cheat can create one on a client as well.
 	UBuildPreviewComponent* Created = NewObject<UBuildPreviewComponent>(
 		Pawn,
 		UBuildPreviewComponent::StaticClass(),
 		TEXT("BuildPreviewComponent"),
 		RF_Transient);
-	Created->SetIsReplicated(true);
 	Pawn->AddInstanceComponent(Created);
 	Created->RegisterComponent();
 	Pawn->ForceNetUpdate();

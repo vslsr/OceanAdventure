@@ -1557,3 +1557,63 @@ Dedicated Server + 2 客户端：
 - `BuildDebug 1` 用青色框画出当前吸附点。
 - `DA_BuildPiece_Raft_Deck`：用 **`SM_Raft` 本体网格**按 `fit_scale_to_cell()` 映射到一格，
   扩展出来的甲板与原木筏同款外观。
+
+---
+
+## 14. P1 落地记录（玩法层迁移到 GAS / Enhanced Input / CommonUI）
+
+P0 的 `UBuildPreviewComponent` 曾经同时承担输入、RPC、光标与预览，违反 Lyra 分层。
+P1 把玩法层整体搬到 `OceanAdventure` GameFeature，框架层只留下"结构真值 + 表现"。
+
+### 14.1 分层结果
+
+| 层 | 位置 | 内容 |
+| --- | --- | --- |
+| 框架 | `BuildingCore` | `UBuildStructureComponent`（真值）、`UBuildStructureVisualComponent`（ISM）、`UBuildPreviewComponent`（**纯本地幽灵**）、`UBuildStructureSubsystem`（宿主注册表）、`UBuildCheats` |
+| 宿主 | `Raft` GF | `ARaftActor`（`IBuildStructureHost`）、浮力、建造件资产。GameFeatureData **不再有任何 Action** |
+| 玩法 | `OceanAdventure` GF | 三个 Ability、InputTag/InputConfig/IMC、CommonUI 输入配置 widget、失败消息、预览组件注入 |
+
+### 14.2 输入：Enhanced Input + InputTag
+
+`CreateOceanAdventureBuildAssets.py` 生成 `IA_Build_Mode/Confirm/Remove`、`IMC_OceanBuild`、
+`DA_InputConfig_OceanBuild`（`AbilityInputActions`）与 `DA_AbilitySet_OceanBuild`，
+并把 AbilitySet 挂到 `DA_OceanAdventure_PawnData`，把
+`AddInputMapping` / `AddInputBinding` / `AddComponents`(预览) 三个 Action 写进 OceanAdventure
+的 GameFeatureData。按键由 `ULyraHeroComponent` 经 InputTag 分发，**代码里不再有任何
+`EKeys::` 判断**，也因此能进 Lyra 的按键重绑定设置。
+
+### 14.3 三个 Ability
+
+- `UOceanAdventureGameplayAbility_BuildMode`：`LocalPredicted`，激活时加
+  `Status.Build.Active`（服务端与客户端都加）、开预览、push CommonUI widget；
+  再次按同一键触发 `InputPressed` → `CancelAbility`，即 toggle。
+- `UOceanAdventureGameplayAbility_PlacePiece`：`CanActivateAbility` 要求
+  `Status.Build.Active`；本地从预览取槽位 → `FOceanAdventureBuildTargetData` →
+  `CallServerSetReplicatedTargetData` → 服务端 `AbilityTargetDataSetDelegate` 回调里
+  `TryPlacePieceWithReason`。**与 `ULyraGameplayAbility_RangedWeapon` 同构。**
+- `UOceanAdventureGameplayAbility_RemovePiece`：继承前者，只覆写
+  `BuildLocalTargetData` / `ApplyToStructure`。
+
+失败反馈走 `UGameplayMessageSubsystem`（`Build.Message.Failed` +
+`FOceanAdventureBuildFailedMessage`），不再用自造的 Client RPC。
+
+### 14.4 鼠标：CommonUI 的 FUIInputConfig
+
+`UOceanAdventureBuildInputWidget : UCommonActivatableWidget` 覆写 `GetDesiredInputConfig()`
+返回 `FUIInputConfig(ECommonInputMode::All, EMouseCaptureMode::NoCapture)`。
+Ability 激活时 push 到 `UI.Layer.Game`，结束时 pop —— 输入配置由 widget 栈自动回退，
+**代码里不再写 `bShowMouseCursor`**。
+
+### 14.5 宿主查找
+
+新增 `UBuildStructureSubsystem`（WorldSubsystem）。`UBuildStructureComponent` 在
+`BeginPlay`/`EndPlay` 注册与注销，查询顺序为：脚下 MovementBase → 光标命中 →
+注册表最近宿主。**不再每帧 `TObjectIterator` 遍历全世界。**
+
+### 14.6 需要在编辑器里做的事
+
+1. 编译 `BuildingCoreRuntime` 与 `OceanAdventureRuntime`。
+2. 运行 `CreateRaftBuildPieceAssets.py`（材质/偏移/tag/新甲板件）。
+3. 运行 `CreateRaftGameFeatureData.py`（清掉 Raft 的 Action）。
+4. 运行 `CreateOceanAdventureBuildAssets.py`（输入 / AbilitySet / GameFeature Action）。
+5. PIE：按 `B` 进建造模式（光标出现），左键放置，`X` 拆除，再按 `B` 退出。

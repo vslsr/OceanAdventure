@@ -61,25 +61,10 @@ def main():
 
     game_feature_data.set_editor_property("primary_asset_types_to_scan", [type_info])
 
-    # The P0 creative preview is generic BuildingCore code. Raft owns the opt-in action
-    # that injects it while this GameFeature is active; BuildMode only toggles its state.
-    asset_library = getattr(unreal, "OceanAdventureAssetLibrary", None)
-    preview_class = getattr(unreal, "BuildPreviewComponent", None)
-    lyra_character = getattr(unreal, "LyraCharacter", None)
-    require(asset_library, "OceanAdventureAssetLibrary is unavailable")
-    require(preview_class, "BuildPreviewComponent is unavailable; compile BuildingCoreRuntime")
-    require(lyra_character, "LyraCharacter is unavailable")
-    add_preview_action = require(
-        asset_library.create_add_components_action(
-            game_feature_data,
-            [lyra_character],
-            [preview_class],
-            True,
-            True,
-        ),
-        "Unable to create the Raft build-preview AddComponents action",
-    )
-    game_feature_data.set_editor_property("actions", [add_preview_action])
+    # The build preview component is injected by the OceanAdventure GameFeature, which owns
+    # the player pawn. Raft only supplies the host actor and its build piece assets, so this
+    # feature deliberately has no actions of its own.
+    game_feature_data.set_editor_property("actions", [])
     require(
         unreal.EditorAssetLibrary.save_asset(ASSET_PATH, only_if_is_dirty=False),
         f"Unable to save {ASSET_PATH}",

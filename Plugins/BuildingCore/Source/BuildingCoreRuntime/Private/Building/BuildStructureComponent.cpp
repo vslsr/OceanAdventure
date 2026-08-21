@@ -5,6 +5,7 @@
 #include "Building/BuildGameplayTags.h"
 #include "Building/BuildPieceCatalog.h"
 #include "Building/BuildPieceDefinition.h"
+#include "Building/BuildStructureSubsystem.h"
 #include "BuildingCoreRuntimeModule.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
@@ -63,6 +64,26 @@ void UBuildStructureComponent::BeginPlay()
 	}
 
 	NotifyStructureChanged();
+
+	if (UWorld* World = GetWorld())
+	{
+		if (UBuildStructureSubsystem* Registry = World->GetSubsystem<UBuildStructureSubsystem>())
+		{
+			Registry->RegisterStructure(this);
+		}
+	}
+}
+
+void UBuildStructureComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UWorld* World = GetWorld())
+	{
+		if (UBuildStructureSubsystem* Registry = World->GetSubsystem<UBuildStructureSubsystem>())
+		{
+			Registry->UnregisterStructure(this);
+		}
+	}
+	Super::EndPlay(EndPlayReason);
 }
 
 void UBuildStructureComponent::TickComponent(

@@ -34,7 +34,14 @@ public class OceanAdventureRuntime : ModuleRules
 				"ModularGameplay",
 				"ModularGameplayActors",
 				"OceanCoreRuntime",
-				"ProceduralMeshComponent"
+				"ProceduralMeshComponent",
+				// Build gameplay layer: the framework, the message bus the failure feedback
+				// travels on, and the CommonUI stack that owns cursor/input policy.
+				"BuildingCoreRuntime",
+				"GameplayMessageRuntime",
+				"CommonUI",
+				"CommonGame",
+				"UMG"
 			}
 		);
 

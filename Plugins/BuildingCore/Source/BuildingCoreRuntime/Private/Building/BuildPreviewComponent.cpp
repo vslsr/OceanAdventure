@@ -7,16 +7,15 @@
 #include "Building/BuildPieceDefinition.h"
 #include "Building/BuildStructureComponent.h"
 #include "Building/BuildStructureHost.h"
+#include "Building/BuildStructureSubsystem.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Engine/CollisionProfile.h"
 #include "Engine/EngineTypes.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
-#include "InputCoreTypes.h"
 #include "Materials/MaterialInstanceDynamic.h"
-#include "Net/UnrealNetwork.h"
-#include "UObject/UObjectIterator.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(BuildPreviewComponent)
 
@@ -30,25 +29,18 @@ UBuildPreviewComponent::UBuildPreviewComponent()
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
 	PrimaryComponentTick.TickGroup = TG_PostUpdateWork;
-	SetIsReplicatedByDefault(true);
+	// Purely local presentation: nothing here is replicated.
+	SetIsReplicatedByDefault(false);
 }
 
 void UBuildPreviewComponent::BeginPlay()
 {
 	Super::BeginPlay();
-	RefreshLocalMode();
+	SetComponentTickEnabled(false);
 }
 
 void UBuildPreviewComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	if (APlayerController* PlayerController = GetLocalPlayerController())
-	{
-		if (bCapturedCursorState)
-		{
-			PlayerController->bShowMouseCursor = bPreviousShowMouseCursor;
-		}
-	}
-	bCapturedCursorState = false;
 	DestroyPreviewMesh();
 	Super::EndPlay(EndPlayReason);
 }
@@ -60,75 +52,43 @@ void UBuildPreviewComponent::TickComponent(
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	APlayerController* PlayerController = GetLocalPlayerController();
-	if (!bBuildModeEnabled || !PlayerController)
+	if (bPreviewEnabled && GetLocalPlayerController())
 	{
-		return;
-	}
-
-	UpdatePreview();
-
-	if (PlayerController->WasInputKeyJustPressed(EKeys::Escape)
-		|| PlayerController->WasInputKeyJustPressed(EKeys::RightMouseButton))
-	{
-		ServerSetBuildModeEnabled(false);
-		return;
-	}
-
-	if (PlayerController->WasInputKeyJustPressed(EKeys::LeftMouseButton))
-	{
-		if (bCurrentPlacementValid && CurrentStructure.IsValid())
-		{
-			ServerTryPlace(CurrentStructure->GetOwner(), CurrentKey, 0);
-		}
-		else
-		{
-			TriggerFailureFeedback(CurrentFailReason);
-		}
+		UpdatePreview();
 	}
 }
 
-void UBuildPreviewComponent::GetLifetimeReplicatedProps(
-	TArray<FLifetimeProperty>& OutLifetimeProps) const
+void UBuildPreviewComponent::SetPreviewEnabled(bool bEnabled)
 {
-	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
-	DOREPLIFETIME_CONDITION(UBuildPreviewComponent, bBuildModeEnabled, COND_OwnerOnly);
-	DOREPLIFETIME_CONDITION(UBuildPreviewComponent, SelectedPieceIndex, COND_OwnerOnly);
-}
-
-void UBuildPreviewComponent::SetBuildModeEnabled(bool bEnabled)
-{
-	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor || !OwnerActor->HasAuthority() || bBuildModeEnabled == bEnabled)
+	if (bPreviewEnabled == bEnabled)
 	{
 		return;
 	}
 
-	bBuildModeEnabled = bEnabled;
-	RefreshLocalMode();
-	OwnerActor->ForceNetUpdate();
+	bPreviewEnabled = bEnabled;
+	if (bPreviewEnabled && GetLocalPlayerController())
+	{
+		SetComponentTickEnabled(true);
+		UpdatePreview();
+	}
+	else
+	{
+		SetComponentTickEnabled(false);
+		DestroyPreviewMesh();
+		CurrentStructure.Reset();
+		bCurrentPlacementValid = false;
+	}
 }
 
 void UBuildPreviewComponent::SetSelectedPieceIndex(int32 NewPieceIndex)
 {
-	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor || !OwnerActor->HasAuthority())
+	const int32 ClampedIndex = FMath::Max(0, NewPieceIndex);
+	if (SelectedPieceIndex == ClampedIndex)
 	{
 		return;
 	}
 
-	SelectedPieceIndex = static_cast<uint16>(FMath::Clamp(NewPieceIndex, 0, MAX_uint16));
-	OnRep_SelectedPieceIndex();
-	OwnerActor->ForceNetUpdate();
-}
-
-void UBuildPreviewComponent::OnRep_BuildModeEnabled()
-{
-	RefreshLocalMode();
-}
-
-void UBuildPreviewComponent::OnRep_SelectedPieceIndex()
-{
+	SelectedPieceIndex = ClampedIndex;
 	if (PreviewMesh)
 	{
 		PreviewMesh->SetStaticMesh(nullptr);
@@ -140,51 +100,27 @@ void UBuildPreviewComponent::OnRep_SelectedPieceIndex()
 	bHasCurrentKey = false;
 }
 
-void UBuildPreviewComponent::ServerSetBuildModeEnabled_Implementation(bool bEnabled)
+void UBuildPreviewComponent::CycleSelectedPiece(int32 Delta)
 {
-	SetBuildModeEnabled(bEnabled);
-}
-
-void UBuildPreviewComponent::ServerTryPlace_Implementation(
-	AActor* HostActor,
-	FBuildSlotKey Key,
-	uint8 Rotation)
-{
-	UBuildStructureComponent* Structure = HostActor
-		? HostActor->FindComponentByClass<UBuildStructureComponent>()
-		: nullptr;
+	const UBuildStructureComponent* Structure = CurrentStructure.Get();
 	const UBuildPieceCatalog* Catalog = Structure ? Structure->GetCatalog() : nullptr;
-	const UBuildPieceDefinition* Definition = Catalog
-		? Catalog->GetByIndex(SelectedPieceIndex)
-		: nullptr;
-	AController* InstigatingController = nullptr;
-	if (const APawn* OwnerPawn = Cast<APawn>(GetOwner()))
+	const int32 PieceCount = Catalog ? Catalog->Pieces.Num() : 0;
+	if (PieceCount <= 0)
 	{
-		InstigatingController = OwnerPawn->GetController();
+		return;
 	}
 
-	FGameplayTag FailReason;
-	if (!bBuildModeEnabled
-		|| !Structure
-		|| !Definition
-		|| !Structure->TryPlacePieceWithReason(
-			Key,
-			Definition,
-			Rotation,
-			InstigatingController,
-			FailReason))
-	{
-		if (!FailReason.IsValid())
-		{
-			FailReason = BuildGameplayTags::Fail_BadDefinition;
-		}
-		ClientPlacementRejected(FailReason);
-	}
+	const int32 NextIndex = ((SelectedPieceIndex + Delta) % PieceCount + PieceCount) % PieceCount;
+	SetSelectedPieceIndex(NextIndex);
 }
 
-void UBuildPreviewComponent::ClientPlacementRejected_Implementation(FGameplayTag FailReason)
+void UBuildPreviewComponent::TriggerFailureFeedback(FGameplayTag FailReason)
 {
-	TriggerFailureFeedback(FailReason);
+	if (const UWorld* World = GetWorld())
+	{
+		FailureShakeEndSeconds = World->GetTimeSeconds() + FailureShakeDuration;
+	}
+	CurrentFailReason = FailReason;
 }
 
 APlayerController* UBuildPreviewComponent::GetLocalPlayerController() const
@@ -204,6 +140,7 @@ UBuildStructureComponent* UBuildPreviewComponent::FindBuildStructure(
 		return nullptr;
 	}
 
+	// 1) The host the pawn is standing on wins: that is the raft the player is working from.
 	const APawn* Pawn = PlayerController->GetPawn();
 	if (const ACharacter* Character = Cast<ACharacter>(Pawn))
 	{
@@ -220,6 +157,7 @@ UBuildStructureComponent* UBuildPreviewComponent::FindBuildStructure(
 		}
 	}
 
+	// 2) Otherwise whatever is under the cursor.
 	FHitResult CursorHit;
 	if (PlayerController->GetHitResultUnderCursorByChannel(
 		UEngineTypes::ConvertToTraceType(ECC_Visibility),
@@ -236,30 +174,14 @@ UBuildStructureComponent* UBuildPreviewComponent::FindBuildStructure(
 		}
 	}
 
-	UBuildStructureComponent* BestStructure = nullptr;
-	double BestDistanceSquared = FMath::Square(HostSearchRadius);
-	const FVector SearchOrigin = Pawn ? Pawn->GetActorLocation() : FVector::ZeroVector;
-	for (TObjectIterator<UBuildStructureComponent> It; It; ++It)
-	{
-		UBuildStructureComponent* Candidate = *It;
-		if (!IsValid(Candidate)
-			|| Candidate->HasAnyFlags(RF_ClassDefaultObject)
-			|| Candidate->GetWorld() != GetWorld()
-			|| !Candidate->GetOwner())
-		{
-			continue;
-		}
-
-		const double DistanceSquared = FVector::DistSquared(
-			SearchOrigin,
-			Candidate->GetOwner()->GetActorLocation());
-		if (DistanceSquared < BestDistanceSquared)
-		{
-			BestDistanceSquared = DistanceSquared;
-			BestStructure = Candidate;
-		}
-	}
-	return BestStructure;
+	// 3) Fall back to the registry, which holds only the live hosts.
+	const UWorld* World = GetWorld();
+	UBuildStructureSubsystem* Registry = World ? World->GetSubsystem<UBuildStructureSubsystem>() : nullptr;
+	return Registry
+		? Registry->FindNearestStructure(
+			Pawn ? Pawn->GetActorLocation() : FVector::ZeroVector,
+			HostSearchRadius)
+		: nullptr;
 }
 
 bool UBuildPreviewComponent::ProjectCursorToStructure(
@@ -301,49 +223,6 @@ bool UBuildPreviewComponent::ProjectCursorToStructure(
 	return true;
 }
 
-void UBuildPreviewComponent::RefreshLocalMode()
-{
-	APlayerController* PlayerController = GetLocalPlayerController();
-	if (!PlayerController)
-	{
-		SetComponentTickEnabled(false);
-		return;
-	}
-
-	if (bBuildModeEnabled)
-	{
-		if (!bCapturedCursorState)
-		{
-			bPreviousShowMouseCursor = PlayerController->bShowMouseCursor;
-			bCapturedCursorState = true;
-		}
-		PlayerController->bShowMouseCursor = true;
-		SetComponentTickEnabled(true);
-	}
-	else
-	{
-		SetComponentTickEnabled(false);
-		DestroyPreviewMesh();
-		CurrentStructure.Reset();
-		if (bCapturedCursorState)
-		{
-			PlayerController->bShowMouseCursor = bPreviousShowMouseCursor;
-			bCapturedCursorState = false;
-		}
-	}
-}
-
-void UBuildPreviewComponent::HidePreview()
-{
-	// Destroying and re-registering a component every frame rebuilds its render state and
-	// reads as flicker; the failure paths only need to stop drawing.
-	if (PreviewMesh)
-	{
-		PreviewMesh->SetVisibility(false, true);
-	}
-	bHasCurrentKey = false;
-}
-
 void UBuildPreviewComponent::DestroyPreviewMesh()
 {
 	if (PreviewMesh)
@@ -355,6 +234,17 @@ void UBuildPreviewComponent::DestroyPreviewMesh()
 	InvalidPreviewMaterialInstances.Reset();
 	bUsingInvalidPreviewMaterial = false;
 	bHasAppliedMaterialState = false;
+	bHasCurrentKey = false;
+}
+
+void UBuildPreviewComponent::HidePreview()
+{
+	// Destroying and re-registering a component every frame rebuilds its render state and
+	// reads as flicker; the failure paths only need to stop drawing.
+	if (PreviewMesh)
+	{
+		PreviewMesh->SetVisibility(false, true);
+	}
 	bHasCurrentKey = false;
 }
 
@@ -379,7 +269,6 @@ void UBuildPreviewComponent::ConfigurePreviewMesh(const UBuildPieceDefinition* D
 		PreviewMesh->SetGenerateOverlapEvents(false);
 		PreviewMesh->SetCanEverAffectNavigation(false);
 		PreviewMesh->SetCastShadow(false);
-		PreviewMesh->SetRenderCustomDepth(false);
 		PreviewMesh->SetTranslucentSortPriority(100);
 		PreviewMesh->SetBoundsScale(2.0f);
 		OwnerActor->AddInstanceComponent(PreviewMesh);
@@ -585,13 +474,4 @@ bool UBuildPreviewComponent::IsLocallyWithinRange(
 	return OwnerPawn
 		&& FVector::DistSquared(OwnerPawn->GetActorLocation(), Structure->SlotToWorld(Key))
 			<= FMath::Square(LocalPlacementDistance);
-}
-
-void UBuildPreviewComponent::TriggerFailureFeedback(FGameplayTag FailReason)
-{
-	if (const UWorld* World = GetWorld())
-	{
-		FailureShakeEndSeconds = World->GetTimeSeconds() + FailureShakeDuration;
-	}
-	CurrentFailReason = FailReason;
 }

@@ -10,6 +10,8 @@
 class AActor;
 class UActorComponent;
 class UGameFeatureAction;
+class UInputMappingContext;
+class ULyraInputConfig;
 
 /**
  * Reflection bridge for asset-authoring operations that Unreal Python cannot express
@@ -31,5 +33,24 @@ public:
 		const TArray<TSubclassOf<AActor>>& ActorClasses,
 		const TArray<TSubclassOf<UActorComponent>>& ComponentClasses,
 		bool bClientComponent = true,
-		bool bServerComponent = true);
+		bool bServerComponent = true,
+		FName ActionName = NAME_None);
+
+	/**
+	 * Creates an Add Input Context Mapping action owned by Outer.
+	 * FInputMappingContextAndPriority is not a BlueprintType, so Python cannot build it.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Ocean Adventure|Assets")
+	static UGameFeatureAction* CreateAddInputContextMappingAction(
+		UObject* Outer,
+		UInputMappingContext* InputMapping,
+		int32 Priority = 0,
+		FName ActionName = NAME_None);
+
+	/** Creates an Add Input Binding action owned by Outer. */
+	UFUNCTION(BlueprintCallable, Category = "Ocean Adventure|Assets")
+	static UGameFeatureAction* CreateAddInputBindingAction(
+		UObject* Outer,
+		const TArray<ULyraInputConfig*>& InputConfigs,
+		FName ActionName = NAME_None);
 };

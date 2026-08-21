@@ -49,6 +49,22 @@
 		{
 			"Name": "TopDownFeature",
 			"Enabled": true
+		},
+		{
+			"Name": "BuildingCore",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayMessageRouter",
+			"Enabled": true
+		},
+		{
+			"Name": "CommonUI",
+			"Enabled": true
+		},
+		{
+			"Name": "CommonGame",
+			"Enabled": true
 		}
 	],
 	"ExplicitlyLoaded": true,
