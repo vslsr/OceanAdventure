@@ -3,6 +3,7 @@
 #include "Build/OceanAdventureGameplayAbility_PlacePiece.h"
 
 #include "AbilitySystemComponent.h"
+#include "Abilities/Tasks/AbilityTask_WaitInputRelease.h"
 #include "Build/OceanAdventureBuildMessages.h"
 #include "Build/OceanAdventureBuildTags.h"
 #include "Building/BuildGameplayTags.h"
@@ -70,6 +71,8 @@ void UOceanAdventureGameplayAbility_PlacePiece::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
+	bPlacementAttemptFinished = false;
+	bWaitingForInputRelease = false;
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 	UE_LOG(
 		LogOceanAdventure,
@@ -102,13 +105,17 @@ void UOceanAdventureGameplayAbility_PlacePiece::ActivateAbility(
 
 	if (!ActorInfo->IsLocallyControlled())
 	{
+		const bool bHadPendingTargetData = AbilitySystem->CallReplicatedTargetDataDelegatesIfSet(
+			Handle,
+			ActivationInfo.GetActivationPredictionKey());
 		UE_LOG(
 			LogOceanAdventure,
 			Display,
-			TEXT("[BuildPlacement] Server waiting for TargetData avatar=%s spec=%s prediction=%s"),
+			TEXT("[BuildPlacement] Server target-data state avatar=%s spec=%s prediction=%s pending_data_consumed=%d"),
 			*GetNameSafe(ActorInfo->AvatarActor.Get()),
 			*Handle.ToString(),
-			*ActivationInfo.GetActivationPredictionKey().ToString());
+			*ActivationInfo.GetActivationPredictionKey().ToString(),
+			bHadPendingTargetData);
 		return;
 	}
 
@@ -116,6 +123,7 @@ void UOceanAdventureGameplayAbility_PlacePiece::ActivateAbility(
 	FGameplayTag FailReason;
 	if (!BuildLocalTargetData(LocalData, FailReason))
 	{
+		bPlacementAttemptFinished = true;
 		const UBuildPreviewComponent* Preview = GetPreviewComponent();
 		UE_LOG(
 			LogOceanAdventure,
@@ -137,7 +145,7 @@ void UOceanAdventureGameplayAbility_PlacePiece::ActivateAbility(
 			MutablePreview->TriggerFailureFeedback(FailReason);
 		}
 		BroadcastFailure(FailReason, LocalData.HostActor.Get());
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		WaitForInputRelease();
 		return;
 	}
 
@@ -171,6 +179,33 @@ void UOceanAdventureGameplayAbility_PlacePiece::OnTargetDataReadyCallback(
 	{
 		UE_LOG(LogOceanAdventure, Error, TEXT("[BuildPlacement] TargetData callback aborted stage=MissingASC"));
 		return;
+	}
+
+	if (bPlacementAttemptFinished)
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Warning,
+			TEXT("[BuildPlacement] Duplicate TargetData ignored avatar=%s spec=%s prediction=%s items=%d"),
+			*GetNameSafe(CurrentActorInfo ? CurrentActorInfo->AvatarActor.Get() : nullptr),
+			*CurrentSpecHandle.ToString(),
+			*CurrentActivationInfo.GetActivationPredictionKey().ToString(),
+			InData.Num());
+		AbilitySystem->ConsumeClientReplicatedTargetData(
+			CurrentSpecHandle,
+			CurrentActivationInfo.GetActivationPredictionKey());
+		return;
+	}
+	bPlacementAttemptFinished = true;
+
+	// One activation owns one placement attempt. Stop accepting target data immediately;
+	// the ability stays active only to absorb Triggered frames until the input is released.
+	if (OnTargetDataReadyHandle.IsValid())
+	{
+		AbilitySystem->AbilityTargetDataSetDelegate(
+			CurrentSpecHandle,
+			CurrentActivationInfo.GetActivationPredictionKey()).Remove(OnTargetDataReadyHandle);
+		OnTargetDataReadyHandle.Reset();
 	}
 
 	UE_LOG(
@@ -269,6 +304,41 @@ void UOceanAdventureGameplayAbility_PlacePiece::OnTargetDataReadyCallback(
 		CurrentSpecHandle,
 		CurrentActivationInfo.GetActivationPredictionKey());
 
+	WaitForInputRelease();
+}
+
+void UOceanAdventureGameplayAbility_PlacePiece::WaitForInputRelease()
+{
+	if (bWaitingForInputRelease)
+	{
+		return;
+	}
+
+	bWaitingForInputRelease = true;
+	UAbilityTask_WaitInputRelease* WaitTask =
+		UAbilityTask_WaitInputRelease::WaitInputRelease(this, /*bTestAlreadyReleased=*/true);
+	if (!WaitTask)
+	{
+		UE_LOG(LogOceanAdventure, Error, TEXT("[BuildPlacement] Failed to create WaitInputRelease task"));
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
+
+	WaitTask->OnRelease.AddDynamic(this, &ThisClass::OnPlacementInputReleased);
+	WaitTask->ReadyForActivation();
+}
+
+void UOceanAdventureGameplayAbility_PlacePiece::OnPlacementInputReleased(float TimeHeld)
+{
+	UE_LOG(
+		LogOceanAdventure,
+		Verbose,
+		TEXT("[BuildPlacement] Placement input released avatar=%s spec=%s prediction=%s held_seconds=%.3f"),
+		*GetNameSafe(CurrentActorInfo ? CurrentActorInfo->AvatarActor.Get() : nullptr),
+		*CurrentSpecHandle.ToString(),
+		*CurrentActivationInfo.GetActivationPredictionKey().ToString(),
+		TimeHeld);
+	bWaitingForInputRelease = false;
 	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, false);
 }
 
@@ -279,6 +349,7 @@ void UOceanAdventureGameplayAbility_PlacePiece::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	bWaitingForInputRelease = false;
 	if (OnTargetDataReadyHandle.IsValid() && ActorInfo)
 	{
 		if (UAbilitySystemComponent* AbilitySystem = ActorInfo->AbilitySystemComponent.Get())

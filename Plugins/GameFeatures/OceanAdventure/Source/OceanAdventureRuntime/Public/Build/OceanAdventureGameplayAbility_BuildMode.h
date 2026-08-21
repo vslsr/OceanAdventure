@@ -51,6 +51,12 @@ public:
 		const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo) override;
 
+	/** Completes the press/release gate used to distinguish a new press from Triggered repeats. */
+	virtual void InputReleased(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo) override;
+
 protected:
 	/** Its only job is to declare the FUIInputConfig for build mode. */
 	UPROPERTY(EditDefaultsOnly, Category = "Building")
@@ -67,4 +73,10 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCommonActivatableWidget> PushedInputWidget;
+
+	/** False until the physical press that activated build mode has completed. */
+	bool bActivationInputReleased = false;
+
+	/** A later press requests exit; cancellation waits for its release to prevent reactivation. */
+	bool bExitRequested = false;
 };

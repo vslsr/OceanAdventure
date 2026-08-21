@@ -60,6 +60,12 @@ protected:
 
 private:
 	void OnTargetDataReadyCallback(const FGameplayAbilityTargetDataHandle& InData, FGameplayTag ApplicationTag);
+	void WaitForInputRelease();
+
+	UFUNCTION()
+	void OnPlacementInputReleased(float TimeHeld);
 
 	FDelegateHandle OnTargetDataReadyHandle;
+	bool bPlacementAttemptFinished = false;
+	bool bWaitingForInputRelease = false;
 };

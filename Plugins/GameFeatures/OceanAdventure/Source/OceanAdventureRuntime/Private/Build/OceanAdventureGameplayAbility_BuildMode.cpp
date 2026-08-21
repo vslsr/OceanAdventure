@@ -71,6 +71,8 @@ void UOceanAdventureGameplayAbility_BuildMode::ActivateAbility(
 	const FGameplayAbilityActivationInfo ActivationInfo,
 	const FGameplayEventData* TriggerEventData)
 {
+	bActivationInputReleased = false;
+	bExitRequested = false;
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 	UE_LOG(
 		LogOceanAdventure,
@@ -223,14 +225,63 @@ void UOceanAdventureGameplayAbility_BuildMode::InputPressed(
 	const FGameplayAbilityActivationInfo ActivationInfo)
 {
 	Super::InputPressed(Handle, ActorInfo, ActivationInfo);
+	if (!bActivationInputReleased)
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Verbose,
+			TEXT("[BuildPlacement] BuildMode ignored repeated Triggered frame before initial release avatar=%s spec=%s prediction=%s"),
+			*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+			*Handle.ToString(),
+			*ActivationInfo.GetActivationPredictionKey().ToString());
+		return;
+	}
+
+	if (bExitRequested)
+	{
+		return;
+	}
+
+	bExitRequested = true;
 	UE_LOG(
 		LogOceanAdventure,
 		Display,
-		TEXT("[BuildPlacement] BuildMode input pressed again; cancelling avatar=%s spec=%s prediction=%s"),
+		TEXT("[BuildPlacement] BuildMode exit requested; waiting for input release avatar=%s spec=%s prediction=%s"),
 		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
 		*Handle.ToString(),
 		*ActivationInfo.GetActivationPredictionKey().ToString());
-	CancelAbility(Handle, ActorInfo, ActivationInfo, /*bReplicateCancelAbility=*/true);
+}
+
+void UOceanAdventureGameplayAbility_BuildMode::InputReleased(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo)
+{
+	Super::InputReleased(Handle, ActorInfo, ActivationInfo);
+	if (!bActivationInputReleased)
+	{
+		bActivationInputReleased = true;
+		UE_LOG(
+			LogOceanAdventure,
+			Verbose,
+			TEXT("[BuildPlacement] BuildMode initial input released; toggle is armed avatar=%s spec=%s prediction=%s"),
+			*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+			*Handle.ToString(),
+			*ActivationInfo.GetActivationPredictionKey().ToString());
+		return;
+	}
+
+	if (bExitRequested)
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Display,
+			TEXT("[BuildPlacement] BuildMode exit input released; cancelling avatar=%s spec=%s prediction=%s"),
+			*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+			*Handle.ToString(),
+			*ActivationInfo.GetActivationPredictionKey().ToString());
+		CancelAbility(Handle, ActorInfo, ActivationInfo, /*bReplicateCancelAbility=*/true);
+	}
 }
 
 UBuildPreviewComponent* UOceanAdventureGameplayAbility_BuildMode::GetPreviewComponent() const
