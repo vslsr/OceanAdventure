@@ -5,6 +5,7 @@
 #include "AbilitySystemComponent.h"
 #include "CollisionShape.h"
 #include "Engine/World.h"
+#include "Engine/OverlapResult.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
 #include "GameFramework/Pawn.h"
 #include "Naval/NavalGameplayTags.h"

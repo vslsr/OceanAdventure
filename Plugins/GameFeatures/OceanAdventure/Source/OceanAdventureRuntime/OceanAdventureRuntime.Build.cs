@@ -33,6 +33,7 @@ public class OceanAdventureRuntime : ModuleRules
 				"LyraGame",
 				"ModularGameplay",
 				"ModularGameplayActors",
+				"NetCore",
 				"OceanCoreRuntime",
 				"ProceduralMeshComponent",
 				// Build gameplay layer: the framework, the message bus the failure feedback

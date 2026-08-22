@@ -33,7 +33,7 @@ public:
 	void CollectOperationalVessels(TArray<UNavalVesselComponent*>& OutVessels) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Naval|Registry")
-	UNavalVesselComponent* FindNearestVessel(const FVector& Location, int32 TeamFilter = INDEX_NONE) const;
+	UNavalVesselComponent* FindNearestVessel(const FVector& Location, int32 TeamFilter = -1) const;
 
 	virtual void Deinitialize() override;
 

@@ -7,6 +7,7 @@
 #include "Building/BuildPieceDefinition.h"
 #include "Building/BuildStructureComponent.h"
 #include "Building/BuildStructureHost.h"
+#include "BuildingCoreRuntimeModule.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "Engine/World.h"
 #include "Engine/CollisionProfile.h"
@@ -234,6 +235,17 @@ void UBuildStructureVisualComponent::RefreshSpawnedActors()
 			SpawnParameters);
 		if (!SpawnedActor)
 		{
+			UE_LOG(
+				LogBuildingCore,
+				Error,
+				TEXT("[BuildVisual] Spawn failed host=%s definition=%s actor_class=%s key=%s slot=%d edge=%u transform=%s"),
+				*GetNameSafe(OwnerActor),
+				*GetNameSafe(Definition),
+				*GetNameSafe(SpawnFragment->ActorClass),
+				*Entry.Key.Coord.ToString(),
+				static_cast<int32>(Entry.Key.Slot),
+				Entry.Key.EdgeIndex,
+				*SpawnTransform.ToHumanReadableString());
 			continue;
 		}
 
@@ -248,6 +260,20 @@ void UBuildStructureVisualComponent::RefreshSpawnedActors()
 		{
 			PlacedActor->SetSourceDefinition(Definition);
 		}
+		UE_LOG(
+			LogBuildingCore,
+			Display,
+			TEXT("[BuildVisual] Spawned host=%s definition=%s actor=%s class=%s key=%s slot=%d edge=%u mesh=%s location=%s scale=%s"),
+			*GetNameSafe(OwnerActor),
+			*GetNameSafe(Definition),
+			*GetNameSafe(SpawnedActor),
+			*GetNameSafe(SpawnedActor->GetClass()),
+			*Entry.Key.Coord.ToString(),
+			static_cast<int32>(Entry.Key.Slot),
+			Entry.Key.EdgeIndex,
+			*GetNameSafe(Definition->Mesh),
+			*SpawnedActor->GetActorLocation().ToCompactString(),
+			*SpawnedActor->GetActorScale3D().ToCompactString());
 
 		SpawnedActors.Add(Entry.Key, SpawnedActor);
 	}

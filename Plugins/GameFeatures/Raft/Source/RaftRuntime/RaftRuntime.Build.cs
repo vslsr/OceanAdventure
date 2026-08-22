@@ -25,7 +25,8 @@ public class RaftRuntime : ModuleRules
 			new string[]
 			{
 				"GameplayTags",
-				"OceanCoreRuntime"
+				"OceanCoreRuntime",
+				"Projects"
 			}
 		);
 	}

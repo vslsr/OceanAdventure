@@ -9,6 +9,7 @@
 #include "TopDownPawnComponent.generated.h"
 
 class APlayerController;
+class UCommonActivatableWidget;
 class UEnhancedInputComponent;
 struct FComponentRequestHandle;
 struct FInputActionValue;
@@ -49,14 +50,19 @@ private:
 	void BindInputIfReady();
 	void UnbindInput();
 	void Input_TopDownClick(const FInputActionValue& InputActionValue);
+	void EnsureInputWidget(APlayerController* PlayerController);
+	void RemoveInputWidget();
 
 	/** Native action in the active PawnData InputConfig that represents a world click. */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
 	FGameplayTag ClickInputTag;
 
-	/** Show the hardware cursor while click movement is bound. */
+	/** CommonUI policy widget that keeps the cursor visible without touching PlayerController state. */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input")
-	bool bShowMouseCursor;
+	TSubclassOf<UCommonActivatableWidget> InputWidgetClass;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "UI.Layer"))
+	FGameplayTag UILayerTag;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Trace")
 	TEnumAsByte<ECollisionChannel> GroundTraceChannel;
@@ -75,12 +81,11 @@ private:
 	TObjectPtr<UEnhancedInputComponent> BoundInputComponent;
 
 	UPROPERTY(Transient)
-	TObjectPtr<APlayerController> CursorController;
+	TObjectPtr<UCommonActivatableWidget> PushedInputWidget;
 
 	TArray<uint32> InputBindingHandles;
 	TSharedPtr<FComponentRequestHandle> ExtensionRequestHandle;
 	FVector MoveTarget;
 	bool bHasMoveTarget;
 	bool bInputBound;
-	bool bPreviousShowMouseCursor;
 };

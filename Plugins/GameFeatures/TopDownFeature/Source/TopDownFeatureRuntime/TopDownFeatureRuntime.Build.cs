@@ -15,14 +15,17 @@ public class TopDownFeatureRuntime : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"GameplayTags",
+				"CommonUI",
 				"LyraGame",
-				"ModularGameplay"
+				"ModularGameplay",
+				"UMG"
 			}
 		);
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"CommonGame",
 				"EnhancedInput"
 			}
 		);

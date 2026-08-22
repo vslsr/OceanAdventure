@@ -9,6 +9,14 @@
 namespace RaftBuildTags
 {
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(PieceFoundationWood, "Raft.Piece.Foundation.Wood");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(PieceFloorDeck, "Raft.Piece.Floor.Deck");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(PiecePropCampfire, "Raft.Piece.Prop.Campfire");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(PieceWallPlain, "Raft.Piece.Wall.Plain");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(PieceWallFireWindow, "Raft.Piece.Wall.FireWindow");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(PiecePropPontoon, "Raft.Piece.Prop.Pontoon");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(PiecePropThruster, "Raft.Piece.Prop.Thruster");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(PiecePropRudder, "Raft.Piece.Prop.Rudder");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(PiecePropHeavyCannon, "Raft.Piece.Prop.HeavyCannon");
 }
 
 URaftBuildPieceDefinition::URaftBuildPieceDefinition()

@@ -38,10 +38,10 @@ void UOceanAdventureNavalDamageRelay::Initialize(FSubsystemCollectionBase& Colle
 
 void UOceanAdventureNavalDamageRelay::Deinitialize()
 {
-	if (const UWorld* World = GetWorld(); World && ImpactListenerHandle.IsValid())
-	{
-		UGameplayMessageSubsystem::Get(World).UnregisterListener(ImpactListenerHandle);
-	}
+	// The game-instance message subsystem may already be gone while world subsystems are
+	// tearing down. The handle owns a weak reference to the router and safely becomes a no-op
+	// in that case; calling UGameplayMessageSubsystem::Get here would assert on a null router.
+	ImpactListenerHandle.Unregister();
 	ImpactListenerHandle = FGameplayMessageListenerHandle();
 
 	Super::Deinitialize();

@@ -44,7 +44,7 @@ enum class ELyraAbilityTargetingSource : uint8
  * An ability granted by and associated with a ranged weapon instance
  */
 UCLASS()
-class ULyraGameplayAbility_RangedWeapon : public ULyraGameplayAbility_FromEquipment
+class LYRAGAME_API ULyraGameplayAbility_RangedWeapon : public ULyraGameplayAbility_FromEquipment
 {
 	GENERATED_BODY()
 

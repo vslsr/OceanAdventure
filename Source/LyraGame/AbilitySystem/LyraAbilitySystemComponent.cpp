@@ -187,13 +187,43 @@ void ULyraAbilitySystemComponent::AbilityInputTagPressed(const FGameplayTag& Inp
 {
 	if (InputTag.IsValid())
 	{
+		const bool bBuildInput = InputTag.ToString().StartsWith(TEXT("InputTag.Build"));
+		int32 MatchingSpecs = 0;
 		for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
 		{
 			if (AbilitySpec.Ability && (AbilitySpec.GetDynamicSpecSourceTags().HasTagExact(InputTag)))
 			{
+				++MatchingSpecs;
 				InputPressedSpecHandles.AddUnique(AbilitySpec.Handle);
 				InputHeldSpecHandles.AddUnique(AbilitySpec.Handle);
+				if (bBuildInput)
+				{
+					const ULyraGameplayAbility* LyraAbility = Cast<ULyraGameplayAbility>(AbilitySpec.Ability);
+					UE_LOG(
+						LogLyraAbilitySystem,
+						Display,
+						TEXT("[BuildInput] ASC matched tag=%s spec=%s ability=%s active=%d policy=%d avatar=%s"),
+						*InputTag.ToString(),
+						*AbilitySpec.Handle.ToString(),
+						*GetNameSafe(AbilitySpec.Ability),
+						AbilitySpec.IsActive(),
+						LyraAbility ? static_cast<int32>(LyraAbility->GetActivationPolicy()) : INDEX_NONE,
+						*GetNameSafe(GetAvatarActor()));
+				}
 			}
+		}
+		if (bBuildInput)
+		{
+			UE_LOG(
+				LogLyraAbilitySystem,
+				Display,
+				TEXT("[BuildInput] ASC press summary tag=%s matching_specs=%d pressed_queue=%d held_queue=%d blocked=%d avatar=%s"),
+				*InputTag.ToString(),
+				MatchingSpecs,
+				InputPressedSpecHandles.Num(),
+				InputHeldSpecHandles.Num(),
+				HasMatchingGameplayTag(TAG_Gameplay_AbilityInputBlocked),
+				*GetNameSafe(GetAvatarActor()));
 		}
 	}
 }
@@ -280,7 +310,21 @@ void ULyraAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGam
 	//
 	for (const FGameplayAbilitySpecHandle& AbilitySpecHandle : AbilitiesToActivate)
 	{
-		TryActivateAbility(AbilitySpecHandle);
+		const FGameplayAbilitySpec* AbilitySpec = FindAbilitySpecFromHandle(AbilitySpecHandle);
+		const bool bBuildAbility = AbilitySpec
+			&& AbilitySpec->GetDynamicSpecSourceTags().ToStringSimple().Contains(TEXT("InputTag.Build"));
+		const bool bActivated = TryActivateAbility(AbilitySpecHandle);
+		if (bBuildAbility)
+		{
+			UE_LOG(
+				LogLyraAbilitySystem,
+				Display,
+				TEXT("[BuildInput] ASC activation result spec=%s ability=%s activated=%d avatar=%s"),
+				*AbilitySpecHandle.ToString(),
+				*GetNameSafe(AbilitySpec ? AbilitySpec->Ability.Get() : nullptr),
+				bActivated,
+				*GetNameSafe(GetAvatarActor()));
+		}
 	}
 
 	//

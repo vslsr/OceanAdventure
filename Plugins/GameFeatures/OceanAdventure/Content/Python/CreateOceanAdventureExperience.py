@@ -6,7 +6,8 @@ that turns it into the mode's player, and the wiring that injects everything els
     BP_Experience_Ocean
       DefaultPawnData ------> DA_OceanAdventure_PawnData
                                 PawnClass        -> BP_OceanAdventure_Pawn
-                                AbilitySets      -> [] (intentional)
+                                AbilitySets      -> preserved build/naval grants
+                                InputConfig      -> DA_InputConfig_OceanAdventure
                                 DefaultCameraMode-> ULyraCameraMode_TopDownFollow
       GameFeaturesToEnable -> "OceanAdventure", "TopDownFeature", "Raft"
 
@@ -17,7 +18,10 @@ that turns it into the mode's player, and the wiring that injects everything els
                               AOceanChunkActor     gets UOceanChunkPresentationComponent
 
     TopDownFeature (GameFeatureData, already configured)
-      AddComponents        -> UTopDownPawnComponent, AddInputMapping -> IMC_TopDown
+      AddComponents        -> UTopDownPawnComponent
+
+    OceanAdventure (GameFeatureData)
+      AddInputMapping      -> IMC_OceanAdventure_Base (owned top-down click action)
 
 The chunk components live in OceanCore, a plain plugin. GameFeatureAction_AddComponents
 takes any TSubclassOf<UActorComponent>, so OceanCore does not have to be a game feature
@@ -40,10 +44,9 @@ To run again in the same editor session:
 Requires the OceanAdventureRuntime module to be compiled, and CreateGameFeatureData to
 have been run first so /OceanAdventure/OceanAdventure exists.
 
-Idempotent: assets are created if missing, and their properties are rewritten either
-way, so re-running repairs hand edits. Note that this rewrites the GameFeatureData's
-Actions list, PawnData AbilitySets, and the experience's GameFeaturesToEnable / ActionSets
-wholesale. Pawn movement tuning is stored on BP_OceanAdventure_Pawn, not its C++ base.
+Idempotent: assets are created if missing, and owned properties are repaired on re-run.
+Named base GameFeature actions are replaced while unrelated actions and PawnData AbilitySets
+are preserved. Pawn movement tuning is stored on BP_OceanAdventure_Pawn, not its C++ base.
 """
 
 import unreal
@@ -54,8 +57,15 @@ PAWN_DATA_PATH = "/OceanAdventure/Character/DA_OceanAdventure_PawnData"
 GAME_FEATURE_DATA_PATH = "/OceanAdventure/OceanAdventure"
 EXPERIENCE_PATH = "/OceanAdventure/Experience/BP_Experience_Ocean"
 
-INPUT_CONFIG_PATH = "/Game/Input/DA_InputConfig_Base"
+INPUT_ROOT = "/OceanAdventure/Input"
+BASE_INPUT_CONFIG_PATH = "/Game/Input/DA_InputConfig_Base"
+INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanAdventure"
+CLICK_ACTION_PATH = f"{INPUT_ROOT}/IA_OceanAdventure_TopDownClick"
+INPUT_MAPPING_PATH = f"{INPUT_ROOT}/IMC_OceanAdventure_Base"
 MAX_SWIM_SPEED = 600.0
+
+BASE_COMPONENTS_ACTION_NAME = "OceanBase_AddComponents"
+BASE_INPUT_MAPPING_ACTION_NAME = "OceanBase_AddInputMapping"
 
 ACTION_SET_PATHS = [
     "/Game/ActionSet/LSA_Standard_Components",
@@ -126,15 +136,16 @@ def get_or_create_blueprint(asset_path, parent_class):
     return blueprint
 
 
-def get_or_create_data_asset(asset_path, asset_class):
+def get_or_create_data_asset(asset_path, asset_class, factory=None):
     existing = load_existing(asset_path)
     if existing is not None:
         log(f"Data asset already exists: {asset_path}")
         return existing
 
     package_path, asset_name = split_path(asset_path)
-    factory = unreal.DataAssetFactory()
-    factory.set_editor_property("data_asset_class", asset_class)
+    if factory is None:
+        factory = unreal.DataAssetFactory()
+        factory.set_editor_property("data_asset_class", asset_class)
 
     asset = require(
         unreal.AssetToolsHelpers.get_asset_tools().create_asset(
@@ -144,6 +155,66 @@ def get_or_create_data_asset(asset_path, asset_class):
     )
     log(f"Created data asset: {asset_path}")
     return asset
+
+
+def load_or_duplicate(source_path, destination_path):
+    existing = load_existing(destination_path)
+    if existing is not None:
+        return existing
+
+    return require(
+        unreal.EditorAssetLibrary.duplicate_asset(source_path, destination_path),
+        f"Failed to duplicate {source_path} to {destination_path}",
+    )
+
+
+def make_key(key_name):
+    key = unreal.Key()
+    key.set_editor_property("key_name", unreal.Name(key_name))
+    return key
+
+
+def configure_input_assets():
+    """Own the click action used by this feature's PawnData; never reference sibling content."""
+    input_config = load_or_duplicate(BASE_INPUT_CONFIG_PATH, INPUT_CONFIG_PATH)
+    click_action = get_or_create_data_asset(
+        CLICK_ACTION_PATH,
+        unreal.InputAction,
+        unreal.InputActionFactory() if hasattr(unreal, "InputActionFactory") else None,
+    )
+    click_action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+
+    input_mapping = get_or_create_data_asset(
+        INPUT_MAPPING_PATH,
+        unreal.InputMappingContext,
+        unreal.InputMappingContext_Factory()
+        if hasattr(unreal, "InputMappingContext_Factory")
+        else None,
+    )
+    input_mapping.unmap_all_keys_from_action(click_action)
+    input_mapping.map_key(click_action, make_key("LeftMouseButton"))
+
+    component_class = require_type("TopDownPawnComponent", "the TopDownFeature plugin")
+    component_cdo = unreal.get_default_object(component_class)
+    click_tag = require(
+        component_cdo.get_editor_property("click_input_tag"),
+        "UTopDownPawnComponent has no valid ClickInputTag",
+    )
+    native_actions = [
+        action
+        for action in input_config.get_editor_property("native_input_actions")
+        if action.get_editor_property("input_tag") != click_tag
+    ]
+    native_actions.append(
+        unreal.LyraInputAction(input_action=click_action, input_tag=click_tag)
+    )
+    input_config.set_editor_property("native_input_actions", native_actions)
+
+    save(CLICK_ACTION_PATH)
+    save(INPUT_MAPPING_PATH)
+    save(INPUT_CONFIG_PATH)
+    log("Configured OceanAdventure-owned top-down click action, mapping and InputConfig")
+    return input_config, input_mapping
 
 
 def get_blueprint_class(blueprint, asset_path):
@@ -176,7 +247,7 @@ def configure_pawn_blueprint(pawn_blueprint_class):
     log(f"Pawn blueprint MaxSwimSpeed is {configured_speed}")
 
 
-def make_add_components_action(outer, component_specs):
+def make_add_components_action(outer, component_specs, action_name):
     asset_library = require_type(
         "OceanAdventureAssetLibrary", "the OceanAdventureRuntime module"
     )
@@ -188,23 +259,23 @@ def make_add_components_action(outer, component_specs):
     # Python retains responsibility for asset composition and saving.
     return require(
         asset_library.create_add_components_action(
-            outer, actor_classes, component_classes, True, True
+            outer,
+            actor_classes,
+            component_classes,
+            True,
+            True,
+            unreal.Name(action_name),
         ),
         "Failed to create the AddComponents action",
     )
 
 
-def create_pawn_data(pawn_blueprint_class):
+def create_pawn_data(pawn_blueprint_class, input_config):
     pawn_data = get_or_create_data_asset(PAWN_DATA_PATH, unreal.LyraPawnData)
 
     pawn_data.set_editor_property("pawn_class", pawn_blueprint_class)
-    # This mode currently uses native movement/input only. Add a real Ocean-owned
-    # AbilitySet when the mode gains abilities; do not reference a sibling GameFeature.
-    pawn_data.set_editor_property("ability_sets", [])
-
-    input_config = require(
-        load_existing(INPUT_CONFIG_PATH), f"Missing input config: {INPUT_CONFIG_PATH}"
-    )
+    # Build and naval scripts append their AbilitySets here. A base-experience repair must
+    # never erase those grants.
     pawn_data.set_editor_property("input_config", input_config)
 
     # Comes from TopDownFeature, which this plugin already depends on in its .uplugin.
@@ -213,14 +284,22 @@ def create_pawn_data(pawn_blueprint_class):
     pawn_data.set_editor_property("default_camera_mode", camera_mode)
 
     save(PAWN_DATA_PATH)
+    configured_input = pawn_data.get_editor_property("input_config")
+    require(
+        configured_input == input_config,
+        (
+            f"{PAWN_DATA_PATH} did not retain InputConfig {INPUT_CONFIG_PATH}; "
+            f"actual={configured_input}"
+        ),
+    )
     log(
         f"PawnData points at {PAWN_BLUEPRINT_PATH} with the top down camera "
-        "and intentionally empty AbilitySets"
+        f"and InputConfig {INPUT_CONFIG_PATH}"
     )
     return pawn_data
 
 
-def configure_game_feature_data(pawn_class):
+def configure_game_feature_data(pawn_class, input_mapping):
     game_feature_data = require(
         load_existing(GAME_FEATURE_DATA_PATH),
         f"Missing GameFeatureData: {GAME_FEATURE_DATA_PATH}. Run CreateGameFeatureData first.",
@@ -249,13 +328,42 @@ def configure_game_feature_data(pawn_class):
         (chunk_class, presentation_class),
     ]
 
-    action = make_add_components_action(game_feature_data, component_specs)
-    game_feature_data.set_editor_property("actions", [action])
+    # Replace only the named base actions owned by this script. Legacy unnamed actions and
+    # hand-authored actions are preserved because their reflected component entries cannot be
+    # inspected reliably from UE 5.7 Python.
+    actions = [
+        action
+        for action in game_feature_data.get_editor_property("actions")
+        if action is not None
+        and str(action.get_name()) not in {
+            BASE_COMPONENTS_ACTION_NAME,
+            BASE_INPUT_MAPPING_ACTION_NAME,
+        }
+    ]
+    actions.append(
+        make_add_components_action(
+            game_feature_data,
+            component_specs,
+            BASE_COMPONENTS_ACTION_NAME,
+        )
+    )
+    actions.append(
+        require(
+            unreal.OceanAdventureAssetLibrary.create_add_input_context_mapping_action(
+                game_feature_data,
+                input_mapping,
+                0,
+                unreal.Name(BASE_INPUT_MAPPING_ACTION_NAME),
+            ),
+            "Failed to create OceanAdventure base input mapping action",
+        )
+    )
+    game_feature_data.set_editor_property("actions", actions)
 
     save(GAME_FEATURE_DATA_PATH)
     log(
         "GameFeatureData injects the ocean world manager, Lyra hero bridge, "
-        "chunk invoker, and chunk presentation"
+        "chunk invoker, chunk presentation, and top-down click mapping"
     )
 
 
@@ -308,14 +416,16 @@ def main():
 
     pawn_class = require_type("OceanAdventurePawn", "the OceanAdventureRuntime module")
 
+    input_config, input_mapping = configure_input_assets()
+
     blueprint = get_or_create_blueprint(PAWN_BLUEPRINT_PATH, pawn_class)
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
     pawn_blueprint_class = get_blueprint_class(blueprint, PAWN_BLUEPRINT_PATH)
     configure_pawn_blueprint(pawn_blueprint_class)
     save(PAWN_BLUEPRINT_PATH)
 
-    pawn_data = create_pawn_data(pawn_blueprint_class)
-    configure_game_feature_data(pawn_class)
+    pawn_data = create_pawn_data(pawn_blueprint_class, input_config)
+    configure_game_feature_data(pawn_class, input_mapping)
     configure_experience(pawn_data)
 
     log("Done. Restart the editor so the game features re-register with the new actions.")

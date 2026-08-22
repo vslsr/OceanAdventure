@@ -6,7 +6,8 @@
 
 TOptional<FUIInputConfig> UOceanAdventureBuildInputWidget::GetDesiredInputConfig() const
 {
-	// All == game and menu input both run; NoCapture keeps the cursor free for placement.
+	// CommonUI shows the mouse cursor for GameAndMenu input. Keeping game input enabled is
+	// required so B can reach the active build ability again and cancel it.
 	FUIInputConfig Config(ECommonInputMode::All, EMouseCaptureMode::NoCapture);
 	Config.bIgnoreLookInput = true;
 	return Config;

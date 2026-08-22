@@ -134,7 +134,25 @@ void UGameFeatureAction_AddInputBinding::AddInputMappingForPlayer(APawn* Pawn, F
 				{
 					if (const ULyraInputConfig* BindSet = Entry.Get())
 					{
+						UE_LOG(
+							LogGameFeatures,
+							Display,
+							TEXT("[BuildInput] AddInputBinding applying config=%s path=%s pawn=%s hero=%s actions=%d"),
+							*GetNameSafe(BindSet),
+							*Entry.ToSoftObjectPath().ToString(),
+							*GetNameSafe(Pawn),
+							*GetNameSafe(HeroComponent),
+							BindSet->AbilityInputActions.Num());
 						HeroComponent->AddAdditionalInputConfig(BindSet);
+					}
+					else
+					{
+						UE_LOG(
+							LogGameFeatures,
+							Warning,
+							TEXT("[BuildInput] AddInputBinding skipped unloaded config path=%s pawn=%s"),
+							*Entry.ToSoftObjectPath().ToString(),
+							*GetNameSafe(Pawn));
 					}
 				}
 			}

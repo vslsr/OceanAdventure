@@ -26,7 +26,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnNavalLoadChanged, const FNavalLoadState& 
  * Recomputed on structure and part changes only. Nothing here runs per frame except the
  * dangerous-draft water ingress.
  */
-UCLASS(BlueprintType, ClassGroup = (Naval), meta = (BlueprintSpawnableComponent))
+UCLASS(BlueprintType, Blueprintable, ClassGroup = (Naval), meta = (BlueprintSpawnableComponent))
 class NAVALCORERUNTIME_API UNavalLoadComponent : public UActorComponent
 {
 	GENERATED_BODY()

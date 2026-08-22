@@ -14,6 +14,7 @@ INPUT_ROOT = f"{FEATURE_ROOT}/Input"
 BUILD_ROOT = f"{FEATURE_ROOT}/Build"
 GAME_FEATURE_DATA_PATH = f"{FEATURE_ROOT}/OceanAdventure"
 PAWN_DATA_PATH = f"{FEATURE_ROOT}/Character/DA_OceanAdventure_PawnData"
+BASE_INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanAdventure"
 
 # Key bindings. Confirm intentionally shares the left mouse button with click-to-move:
 # the placement ability only activates while Status.Build.Active is present. Every action is
@@ -230,12 +231,27 @@ def main():
     save(ability_set)
 
     pawn_data = unreal.EditorAssetLibrary.load_asset(PAWN_DATA_PATH)
-    if pawn_data is not None:
-        ability_sets = list(pawn_data.get_editor_property("ability_sets"))
-        if ability_set not in ability_sets:
-            ability_sets.append(ability_set)
-        pawn_data.set_editor_property("ability_sets", ability_sets)
-        save(pawn_data)
+    require(
+        pawn_data is not None,
+        f"Missing {PAWN_DATA_PATH}; run CreateOceanAdventureExperience.py first",
+    )
+    expected_input_config = require(
+        unreal.EditorAssetLibrary.load_asset(BASE_INPUT_CONFIG_PATH),
+        f"Missing {BASE_INPUT_CONFIG_PATH}; run CreateOceanAdventureExperience.py first",
+    )
+    actual_input_config = pawn_data.get_editor_property("input_config")
+    require(
+        actual_input_config == expected_input_config,
+        (
+            f"{PAWN_DATA_PATH} still uses {actual_input_config}; run "
+            "CreateOceanAdventureExperience.py before creating build assets"
+        ),
+    )
+    ability_sets = list(pawn_data.get_editor_property("ability_sets"))
+    if ability_set not in ability_sets:
+        ability_sets.append(ability_set)
+    pawn_data.set_editor_property("ability_sets", ability_sets)
+    save(pawn_data)
 
     game_feature_data = require(
         unreal.EditorAssetLibrary.load_asset(GAME_FEATURE_DATA_PATH),

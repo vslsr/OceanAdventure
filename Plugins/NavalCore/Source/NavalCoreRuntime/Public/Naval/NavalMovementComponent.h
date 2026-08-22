@@ -21,7 +21,7 @@ class UNavalVesselComponent;
  * from the carry model, propulsion and rudder capability from parts, control authority from
  * the helm core. There is no separate "engine damage" number hidden here.
  */
-UCLASS(BlueprintType, ClassGroup = (Naval), meta = (BlueprintSpawnableComponent))
+UCLASS(BlueprintType, Blueprintable, ClassGroup = (Naval), meta = (BlueprintSpawnableComponent))
 class NAVALCORERUNTIME_API UNavalMovementComponent : public UActorComponent
 {
 	GENERATED_BODY()

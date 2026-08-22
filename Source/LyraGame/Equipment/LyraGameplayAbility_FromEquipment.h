@@ -15,7 +15,7 @@ class ULyraInventoryItemInstance;
  * An ability granted by and associated with an equipment instance
  */
 UCLASS()
-class ULyraGameplayAbility_FromEquipment : public ULyraGameplayAbility
+class LYRAGAME_API ULyraGameplayAbility_FromEquipment : public ULyraGameplayAbility
 {
 	GENERATED_BODY()
 

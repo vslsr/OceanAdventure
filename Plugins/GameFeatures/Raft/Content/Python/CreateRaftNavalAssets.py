@@ -219,6 +219,15 @@ def gameplay_tag(tag_name):
     return tag
 
 
+def validate_gameplay_tags():
+    """Fail before touching assets if the Raft module did not register its tag directory."""
+    tag_names = [spec["tag"] for spec in PIECES]
+    tag_names.append(DECK_CANNON_PIECE["tag"])
+    for tag_name in tag_names:
+        gameplay_tag(tag_name)
+    log(f"Validated {len(tag_names)} registered Raft naval piece tags")
+
+
 def split_path(asset_path):
     return asset_path.rsplit("/", 1)
 
@@ -554,6 +563,8 @@ def configure_game_feature_data(component_classes):
 
 def main():
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([FEATURE_ROOT], True, True)
+
+    validate_gameplay_tags()
 
     piece_class = require_type("RaftBuildPieceDefinition", "RaftRuntime")
     catalog_class = require_type("BuildPieceCatalog", "BuildingCoreRuntime")

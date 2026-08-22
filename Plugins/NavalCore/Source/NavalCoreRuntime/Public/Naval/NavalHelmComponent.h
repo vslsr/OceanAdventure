@@ -28,7 +28,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnNavalHelmChanged, UNavalHelmComponent* /*
  * The core never manufactures mobility on its own: with propulsion gone it can only drift,
  * with rudders gone it only gets a weak emergency correction.
  */
-UCLASS(BlueprintType, ClassGroup = (Naval), meta = (BlueprintSpawnableComponent))
+UCLASS(BlueprintType, Blueprintable, ClassGroup = (Naval), meta = (BlueprintSpawnableComponent))
 class NAVALCORERUNTIME_API UNavalHelmComponent : public UActorComponent
 {
 	GENERATED_BODY()

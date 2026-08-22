@@ -26,7 +26,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnNavalVesselPartsChanged, UNavalVesselComp
  * Independent of GAS on purpose: cheats, save restore and editor tooling drive these calls
  * directly.
  */
-UCLASS(BlueprintType, ClassGroup = (Naval), meta = (BlueprintSpawnableComponent))
+UCLASS(BlueprintType, Blueprintable, ClassGroup = (Naval), meta = (BlueprintSpawnableComponent))
 class NAVALCORERUNTIME_API UNavalVesselComponent : public UActorComponent
 {
 	GENERATED_BODY()

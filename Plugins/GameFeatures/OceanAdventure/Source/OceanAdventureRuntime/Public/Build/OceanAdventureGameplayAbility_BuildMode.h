@@ -11,11 +11,12 @@ class UBuildPreviewComponent;
 class UCommonActivatableWidget;
 
 /**
- * Build mode: a toggle held by GAS.
+ * Build mode: a long-running ability owned by GAS.
  *
  * Activation grants Status.Build.Active (which is what the placement abilities require),
  * pushes the CommonUI input widget that owns cursor policy, and turns on the local ghost.
- * Pressing the same input again cancels it. No structure state lives here.
+ * Pressing the same input while it is active cancels the ability. No separate build-mode
+ * boolean or structure state lives here.
  */
 UCLASS()
 class OCEANADVENTURERUNTIME_API UOceanAdventureGameplayAbility_BuildMode : public ULyraGameplayAbility
@@ -45,13 +46,13 @@ public:
 		bool bReplicateEndAbility,
 		bool bWasCancelled) override;
 
-	/** Pressing the build input while already in build mode leaves build mode. */
+	/** A new build-input press requests cancellation once that physical press is released. */
 	virtual void InputPressed(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
 		const FGameplayAbilityActivationInfo ActivationInfo) override;
 
-	/** Completes the press/release gate used to distinguish a new press from Triggered repeats. */
+	/** Arms the toggle after the activating press, then completes a later exit request. */
 	virtual void InputReleased(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
@@ -74,9 +75,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UCommonActivatableWidget> PushedInputWidget;
 
-	/** False until the physical press that activated build mode has completed. */
+	/** False until the physical press that activated this ability has completed. */
 	bool bActivationInputReleased = false;
 
-	/** A later press requests exit; cancellation waits for its release to prevent reactivation. */
+	/** A later press requests exit; cancellation waits for release to prevent reactivation. */
 	bool bExitRequested = false;
 };

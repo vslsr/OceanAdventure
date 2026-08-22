@@ -9,6 +9,7 @@
 #include "BuildingCoreRuntimeModule.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/World.h"
+#include "Engine/StaticMesh.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/CheatManagerDefines.h"
 #include "GameFramework/Pawn.h"
@@ -302,7 +303,7 @@ bool UBuildStructureComponent::CanPlacePiece(
 	if ((!PlacementRules || PlacementRules->bBlockedByPawns)
 		&& Key.Slot != EBuildSlotType::Floor
 		&& Key.Slot != EBuildSlotType::Foundation
-		&& IsCellBlockedByPawn(Key.Coord))
+		&& IsPlacementBlockedByPawn(Key, Definition))
 	{
 		OutFailReason = BuildGameplayTags::Fail_Blocked;
 		return false;
@@ -492,30 +493,42 @@ bool UBuildStructureComponent::HasPieceAt(
 	return SlotToEntryIndex.Contains(FBuildSlotKey(Coord, Slot));
 }
 
-bool UBuildStructureComponent::IsCellBlockedByPawn(const FBuildGridCoord& Coord) const
+bool UBuildStructureComponent::IsPlacementBlockedByPawn(
+	const FBuildSlotKey& Key,
+	const UBuildPieceDefinition* Definition) const
 {
 	const UWorld* World = GetWorld();
 	const AActor* OwnerActor = GetOwner();
 	const IBuildStructureHost* HostInterface = Host.GetInterface();
-	if (!World || !OwnerActor || !HostInterface)
+	if (!World || !OwnerActor || !HostInterface || !Definition)
 	{
 		return false;
 	}
 
 	const FTransform StructureSpace = HostInterface->GetStructureSpace();
-	const FVector2D CellSize = BuildGrid::GetCellSize(GridSettings);
-	const FVector Center = StructureSpace.TransformPosition(
-		BuildGrid::CoordToLocalCenter(Coord, GridSettings)
-		+ FVector(0.0, 0.0, GridSettings.LevelHeight * 0.5));
-	const FCollisionShape Shape = FCollisionShape::MakeBox(
-		FVector(
-			CellSize.X * 0.5,
-			CellSize.Y * 0.5,
-			GridSettings.LevelHeight * 0.5));
+	const FTransform PieceRelativeTransform = GetPieceRelativeTransform(Key, Definition, 0);
+	const FTransform PieceWorldTransform = PieceRelativeTransform * StructureSpace;
+
+	// A raft section can intentionally be one large grid cell with walls on its edges and a
+	// 3x3 set of prop sub-cells. Testing the whole cell makes any pawn anywhere on the deck
+	// block every wall and prop. Use the authored mesh bounds at the snapped transform so only
+	// a pawn intersecting the actual proposed piece rejects placement.
+	FVector PieceExtent(25.0, 25.0, FMath::Max(25.0, GridSettings.LevelHeight * 0.25));
+	if (Definition->Mesh)
+	{
+		const FVector MeshExtent = Definition->Mesh->GetBounds().BoxExtent;
+		const FVector MeshScale = Definition->MeshScale.GetAbs();
+		PieceExtent = MeshExtent * MeshScale;
+		PieceExtent.X = FMath::Max(PieceExtent.X, 5.0);
+		PieceExtent.Y = FMath::Max(PieceExtent.Y, 5.0);
+		PieceExtent.Z = FMath::Max(PieceExtent.Z, 5.0);
+	}
+
+	const FCollisionShape Shape = FCollisionShape::MakeBox(PieceExtent);
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(BuildPlacementBlocked), false, OwnerActor);
 	return World->OverlapAnyTestByChannel(
-		Center,
-		StructureSpace.GetRotation(),
+		PieceWorldTransform.GetLocation(),
+		PieceWorldTransform.GetRotation(),
 		ECC_Pawn,
 		Shape,
 		QueryParams);
@@ -660,6 +673,20 @@ bool UBuildStructureComponent::TryPlacePieceWithReason(
 	NewEntry.PieceIndex = PieceIndex;
 	NewEntry.Rotation = Rotation & 3;
 	PieceList.MarkItemDirty(NewEntry);
+	UE_LOG(
+		LogBuildingCore,
+		Display,
+		TEXT("[BuildPlacement] Structure accepted host=%s definition=%s piece=%d key=%s slot=%d edge=%u sub_cell=%u rotation=%u entries=%d instigator=%s"),
+		*GetNameSafe(GetOwner()),
+		*GetNameSafe(Definition),
+		PieceIndex,
+		*Key.Coord.ToString(),
+		static_cast<int32>(Key.Slot),
+		Key.EdgeIndex,
+		Key.SubCell,
+		Rotation & 3,
+		PieceList.Entries.Num(),
+		*GetNameSafe(Instigator));
 
 	// Only the new entry's cells enter the index; a full rebuild here is what made restoring
 	// a save game quadratic.

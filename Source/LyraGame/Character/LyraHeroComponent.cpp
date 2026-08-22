@@ -32,6 +32,11 @@ namespace LyraHero
 {
 	static const float LookYawRate = 300.0f;
 	static const float LookPitchRate = 165.0f;
+
+	static bool IsBuildInputTag(const FGameplayTag& InputTag)
+	{
+		return InputTag.IsValid() && InputTag.ToString().StartsWith(TEXT("InputTag.Build"));
+	}
 };
 
 const FName ULyraHeroComponent::NAME_BindInputsNow("BindInputsNow");
@@ -304,6 +309,34 @@ void ULyraHeroComponent::InitializePlayerInput(UInputComponent* PlayerInputCompo
 void ULyraHeroComponent::AddAdditionalInputConfig(const ULyraInputConfig* InputConfig)
 {
 	TArray<uint32> BindHandles;
+	const bool bContainsBuildInput = InputConfig && InputConfig->AbilityInputActions.ContainsByPredicate(
+		[](const FLyraInputAction& Action)
+		{
+			return LyraHero::IsBuildInputTag(Action.InputTag);
+		});
+	if (bContainsBuildInput)
+	{
+		UE_LOG(
+			LogLyra,
+			Display,
+			TEXT("[BuildInput] AddAdditionalInputConfig begin config=%s actions=%d hero=%s pawn=%s ready=%d"),
+			*GetNameSafe(InputConfig),
+			InputConfig->AbilityInputActions.Num(),
+			*GetNameSafe(this),
+			*GetNameSafe(GetPawn<APawn>()),
+			bReadyToBindInputs);
+		for (const FLyraInputAction& Action : InputConfig->AbilityInputActions)
+		{
+			UE_LOG(
+				LogLyra,
+				Display,
+				TEXT("[BuildInput] Config entry config=%s tag=%s action=%s valid=%d"),
+				*GetNameSafe(InputConfig),
+				*Action.InputTag.ToString(),
+				*GetNameSafe(Action.InputAction),
+				Action.InputAction != nullptr && Action.InputTag.IsValid());
+		}
+	}
 
 	const APawn* Pawn = GetPawn<APawn>();
 	if (!Pawn)
@@ -326,6 +359,17 @@ void ULyraHeroComponent::AddAdditionalInputConfig(const ULyraInputConfig* InputC
 		if (ensureMsgf(LyraIC, TEXT("Unexpected Input Component class! The Gameplay Abilities will not be bound to their inputs. Change the input component to ULyraInputComponent or a subclass of it.")))
 		{
 			LyraIC->BindAbilityActions(InputConfig, this, &ThisClass::Input_AbilityInputTagPressed, &ThisClass::Input_AbilityInputTagReleased, /*out*/ BindHandles);
+			if (bContainsBuildInput)
+			{
+				UE_LOG(
+					LogLyra,
+					Display,
+					TEXT("[BuildInput] AddAdditionalInputConfig bound config=%s handles=%d input_component=%s pawn=%s"),
+					*GetNameSafe(InputConfig),
+					BindHandles.Num(),
+					*GetNameSafe(LyraIC),
+					*GetNameSafe(Pawn));
+			}
 		}
 	}
 }
@@ -342,6 +386,16 @@ bool ULyraHeroComponent::IsReadyToBindInputs() const
 
 void ULyraHeroComponent::Input_AbilityInputTagPressed(FGameplayTag InputTag)
 {
+	if (LyraHero::IsBuildInputTag(InputTag))
+	{
+		UE_LOG(
+			LogLyra,
+			Display,
+			TEXT("[BuildInput] Hero pressed tag=%s pawn=%s controller=%s"),
+			*InputTag.ToString(),
+			*GetNameSafe(GetPawn<APawn>()),
+			*GetNameSafe(GetController<APlayerController>()));
+	}
 	if (const APawn* Pawn = GetPawn<APawn>())
 	{
 		if (const ULyraPawnExtensionComponent* PawnExtComp = ULyraPawnExtensionComponent::FindPawnExtensionComponent(Pawn))
@@ -356,6 +410,15 @@ void ULyraHeroComponent::Input_AbilityInputTagPressed(FGameplayTag InputTag)
 
 void ULyraHeroComponent::Input_AbilityInputTagReleased(FGameplayTag InputTag)
 {
+	if (LyraHero::IsBuildInputTag(InputTag))
+	{
+		UE_LOG(
+			LogLyra,
+			Display,
+			TEXT("[BuildInput] Hero released tag=%s pawn=%s"),
+			*InputTag.ToString(),
+			*GetNameSafe(GetPawn<APawn>()));
+	}
 	const APawn* Pawn = GetPawn<APawn>();
 	if (!Pawn)
 	{

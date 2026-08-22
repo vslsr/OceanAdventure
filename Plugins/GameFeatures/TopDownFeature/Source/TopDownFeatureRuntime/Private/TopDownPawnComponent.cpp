@@ -6,6 +6,8 @@
 #include "Character/LyraPawnData.h"
 #include "Character/LyraPawnExtensionComponent.h"
 #include "Components/GameFrameworkComponentManager.h"
+#include "CommonUIExtensions.h"
+#include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "EnhancedInputComponent.h"
 #include "GameFramework/PlayerController.h"
@@ -13,6 +15,7 @@
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "TopDownFeatureGameplayTags.h"
+#include "TopDownInputWidget.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TopDownPawnComponent)
 
@@ -21,17 +24,17 @@ DEFINE_LOG_CATEGORY_STATIC(LogTopDownPawnComponent, Log, All);
 UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ClickInputTag(TopDownFeatureGameplayTags::InputTag_TopDownClick)
-	, bShowMouseCursor(true)
+	, InputWidgetClass(UTopDownInputWidget::StaticClass())
+	, UILayerTag(FGameplayTag::RequestGameplayTag(FName("UI.Layer.Game"), false))
 	, GroundTraceChannel(ECC_Visibility)
 	, MaxGroundTraceDistance(100000.0f)
 	, bTraceComplex(false)
 	, AcceptanceRadius(75.0f)
 	, BoundInputComponent(nullptr)
-	, CursorController(nullptr)
+	, PushedInputWidget(nullptr)
 	, MoveTarget(FVector::ZeroVector)
 	, bHasMoveTarget(false)
 	, bInputBound(false)
-	, bPreviousShowMouseCursor(false)
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
@@ -177,6 +180,7 @@ void UTopDownPawnComponent::BindInputIfReady()
 	{
 		return;
 	}
+	EnsureInputWidget(PlayerController);
 
 	const ULyraPawnExtensionComponent* PawnExtension = ULyraPawnExtensionComponent::FindPawnExtensionComponent(Pawn);
 	const ULyraPawnData* PawnData = PawnExtension ? PawnExtension->GetPawnData<ULyraPawnData>() : nullptr;
@@ -210,12 +214,6 @@ void UTopDownPawnComponent::BindInputIfReady()
 	BoundInputComponent = InputComponent;
 	bInputBound = true;
 
-	if (bShowMouseCursor)
-	{
-		CursorController = PlayerController;
-		bPreviousShowMouseCursor = PlayerController->ShouldShowMouseCursor();
-		PlayerController->SetShowMouseCursor(true);
-	}
 }
 
 void UTopDownPawnComponent::UnbindInput()
@@ -229,14 +227,35 @@ void UTopDownPawnComponent::UnbindInput()
 	}
 	InputBindingHandles.Reset();
 
-	if (CursorController && bShowMouseCursor)
-	{
-		CursorController->SetShowMouseCursor(bPreviousShowMouseCursor);
-	}
+	RemoveInputWidget();
 
 	BoundInputComponent = nullptr;
-	CursorController = nullptr;
 	bInputBound = false;
+}
+
+void UTopDownPawnComponent::EnsureInputWidget(APlayerController* PlayerController)
+{
+	if (PushedInputWidget || !PlayerController || !InputWidgetClass || !UILayerTag.IsValid())
+	{
+		return;
+	}
+
+	if (ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer())
+	{
+		PushedInputWidget = UCommonUIExtensions::PushContentToLayer_ForPlayer(
+			LocalPlayer,
+			UILayerTag,
+			InputWidgetClass);
+	}
+}
+
+void UTopDownPawnComponent::RemoveInputWidget()
+{
+	if (PushedInputWidget)
+	{
+		UCommonUIExtensions::PopContentFromLayer(PushedInputWidget);
+		PushedInputWidget = nullptr;
+	}
 }
 
 void UTopDownPawnComponent::Input_TopDownClick(const FInputActionValue& InputActionValue)

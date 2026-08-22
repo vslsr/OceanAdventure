@@ -5,6 +5,7 @@
 #include "CollisionShape.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "Engine/OverlapResult.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Naval/NavalHelmComponent.h"

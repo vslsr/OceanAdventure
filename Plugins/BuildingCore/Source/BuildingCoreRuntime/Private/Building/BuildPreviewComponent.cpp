@@ -554,7 +554,14 @@ void UBuildPreviewComponent::UpdatePreview()
 			0.0f,
 			1.0f)
 		: 0.0f;
-	ApplyPreviewMaterial(Definition, bCurrentPlacementValid, FailureShakeAmplitude * ShakeAlpha);
+	// A rejected click is presentation state, not a new placement verdict. Force the invalid
+	// material for the short feedback window even when the cursor is still over a locally valid
+	// slot (for example a server-side race rejection); the next update restores the real state.
+	const bool bShowFailureFeedback = ShakeAlpha > 0.0f;
+	ApplyPreviewMaterial(
+		Definition,
+		bCurrentPlacementValid && !bShowFailureFeedback,
+		FailureShakeAmplitude * ShakeAlpha);
 
 	// The ghost always stays on the snapped cell. Letting it jump to the raw cursor position
 	// while invalid made every validity flip look like a teleport.

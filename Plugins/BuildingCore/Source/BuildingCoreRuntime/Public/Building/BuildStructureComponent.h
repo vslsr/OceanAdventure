@@ -208,7 +208,9 @@ private:
 	void RebuildIndex();
 	bool CheckSupport(const FBuildSlotKey& Key, const UBuildPieceDefinition* Definition) const;
 	bool HasPieceAt(const FBuildGridCoord& Coord, EBuildSlotType Slot) const;
-	bool IsCellBlockedByPawn(const FBuildGridCoord& Coord) const;
+	bool IsPlacementBlockedByPawn(
+		const FBuildSlotKey& Key,
+		const UBuildPieceDefinition* Definition) const;
 	bool WouldStayConnectedWithout(int32 SkipEntryIndex) const;
 	bool IsInstigatorWithinRange(const FBuildSlotKey& Key, const AController* Instigator) const;
 	void NotifyStructureChanged();

@@ -28,6 +28,7 @@ NAVAL_ROOT = f"{FEATURE_ROOT}/Naval"
 EXPERIENCE_ROOT = f"{FEATURE_ROOT}/Experience"
 GAME_FEATURE_DATA_PATH = f"{FEATURE_ROOT}/OceanAdventure"
 PAWN_DATA_PATH = f"{FEATURE_ROOT}/Character/DA_OceanAdventure_PawnData"
+BASE_INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanAdventure"
 EXPERIENCE_PATH = f"{EXPERIENCE_ROOT}/B_Experience_NavalP0"
 BASE_EXPERIENCE_PATH = f"{EXPERIENCE_ROOT}/BP_Experience_Ocean"
 
@@ -306,9 +307,22 @@ def configure_game_feature_data(input_mapping, input_config):
 
 def configure_pawn_data(ability_set):
     pawn_data = unreal.EditorAssetLibrary.load_asset(PAWN_DATA_PATH)
-    if pawn_data is None:
-        log(f"{PAWN_DATA_PATH} is missing; run CreateOceanAdventureExperience.py first")
-        return None
+    require(
+        pawn_data is not None,
+        f"{PAWN_DATA_PATH} is missing; run CreateOceanAdventureExperience.py first",
+    )
+    expected_input_config = require(
+        unreal.EditorAssetLibrary.load_asset(BASE_INPUT_CONFIG_PATH),
+        f"{BASE_INPUT_CONFIG_PATH} is missing; run CreateOceanAdventureExperience.py first",
+    )
+    actual_input_config = pawn_data.get_editor_property("input_config")
+    require(
+        actual_input_config == expected_input_config,
+        (
+            f"{PAWN_DATA_PATH} still uses {actual_input_config}; run "
+            "CreateOceanAdventureExperience.py before CreateNavalP0Assets.py"
+        ),
+    )
 
     ability_sets = list(pawn_data.get_editor_property("ability_sets"))
     if ability_set not in ability_sets:
