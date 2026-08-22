@@ -40,8 +40,16 @@ protected:
 	UFUNCTION()
 	void OnRep_SourceDefinition();
 
-	/** Pushes mesh, scale and materials from the definition onto the component. */
-	void ApplySourceDefinition();
+	/**
+	 * Pushes mesh, scale and materials from the definition onto the component.
+	 *
+	 * Virtual because the definition arrives after BeginPlay -- the host spawns the Actor and
+	 * only then hands it the definition -- so a subclass that reads its own fragments (naval
+	 * durability, a fire window's arc) has no earlier hook. Called on the server from
+	 * SetSourceDefinition and on clients from OnRep_SourceDefinition, so an override runs on
+	 * both sides.
+	 */
+	virtual void ApplySourceDefinition();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Building")
 	TObjectPtr<UStaticMeshComponent> MeshComponent;

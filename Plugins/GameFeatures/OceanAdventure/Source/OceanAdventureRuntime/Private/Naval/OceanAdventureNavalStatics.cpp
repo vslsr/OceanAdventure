@@ -1,0 +1,173 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Naval/OceanAdventureNavalStatics.h"
+
+#include "CollisionShape.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
+#include "Naval/NavalHelmComponent.h"
+#include "Naval/NavalLoadComponent.h"
+#include "Naval/NavalMovementComponent.h"
+#include "Naval/NavalPartComponent.h"
+#include "Naval/NavalVesselComponent.h"
+
+#include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureNavalStatics)
+
+AActor* UOceanAdventureNavalStatics::FindNearestStationActor(
+	const UObject* WorldContextObject,
+	const FVector& Origin,
+	float Radius,
+	TSubclassOf<AActor> StationClass)
+{
+	const UWorld* World = GEngine
+		? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull)
+		: nullptr;
+	if (!World || !StationClass)
+	{
+		return nullptr;
+	}
+
+	FCollisionObjectQueryParams ObjectQueryParams;
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+	TArray<FOverlapResult> Overlaps;
+	World->OverlapMultiByObjectType(
+		Overlaps,
+		Origin,
+		FQuat::Identity,
+		ObjectQueryParams,
+		FCollisionShape::MakeSphere(FMath::Max(10.0f, Radius)));
+
+	AActor* Nearest = nullptr;
+	double NearestDistanceSquared = TNumericLimits<double>::Max();
+	for (const FOverlapResult& Overlap : Overlaps)
+	{
+		AActor* Candidate = Overlap.GetActor();
+		if (!Candidate || !Candidate->IsA(StationClass))
+		{
+			continue;
+		}
+
+		const double DistanceSquared = FVector::DistSquared(Origin, Candidate->GetActorLocation());
+		if (DistanceSquared < NearestDistanceSquared)
+		{
+			NearestDistanceSquared = DistanceSquared;
+			Nearest = Candidate;
+		}
+	}
+
+	return Nearest;
+}
+
+UNavalVesselComponent* UOceanAdventureNavalStatics::FindVesselForActor(AActor* Actor)
+{
+	return UNavalVesselComponent::FindVessel(Actor);
+}
+
+UNavalVesselComponent* UOceanAdventureNavalStatics::FindVesselUnderPawn(APawn* Pawn)
+{
+	if (!Pawn)
+	{
+		return nullptr;
+	}
+
+	// Standing on a deck means the deck is the character's movement base, so no trace is
+	// needed to answer "which ship am I on".
+	if (const UPrimitiveComponent* MovementBase = Pawn->GetMovementBase())
+	{
+		if (UNavalVesselComponent* Vessel = UNavalVesselComponent::FindVessel(MovementBase->GetOwner()))
+		{
+			return Vessel;
+		}
+	}
+
+	return UNavalVesselComponent::FindVessel(Pawn->GetAttachParentActor());
+}
+
+FOceanAdventureNavalHudState UOceanAdventureNavalStatics::GetVesselHudState(AActor* VesselActor)
+{
+	FOceanAdventureNavalHudState State;
+
+	const UNavalVesselComponent* Vessel = VesselActor
+		? VesselActor->FindComponentByClass<UNavalVesselComponent>()
+		: nullptr;
+	if (!Vessel)
+	{
+		return State;
+	}
+
+	State.bValid = true;
+	State.VesselState = Vessel->GetVesselState();
+	State.HullFraction = Vessel->GetHullFraction();
+	State.FounderSecondsRemaining = Vessel->GetFounderSecondsRemaining();
+	State.bEmergencyRepairAvailable = Vessel->IsEmergencyRepairAvailable();
+	State.TeamId = Vessel->GetTeamId();
+	State.RudderCapability = Vessel->GetPartCapability(ENavalPartType::Rudder);
+	State.PropulsionCapability = Vessel->GetPartCapability(ENavalPartType::Propulsion);
+
+	if (const UNavalHelmComponent* Helm = VesselActor->FindComponentByClass<UNavalHelmComponent>())
+	{
+		State.HelmState = Helm->GetHelmState();
+		State.CaptureProgress = Helm->GetCaptureProgress();
+		if (const UNavalPartComponent* Core = Helm->GetCorePart())
+		{
+			State.HelmCoreFraction = Core->GetDurabilityFraction();
+		}
+	}
+
+	if (const UNavalLoadComponent* Load = VesselActor->FindComponentByClass<UNavalLoadComponent>())
+	{
+		State.LoadState = Load->GetLoadState();
+	}
+
+	if (const UNavalMovementComponent* Movement = VesselActor->FindComponentByClass<UNavalMovementComponent>())
+	{
+		State.SpeedFraction = Movement->GetSpeedFraction();
+	}
+
+	return State;
+}
+
+bool UOceanAdventureNavalStatics::GetCursorAimLocation(
+	APlayerController* PlayerController, FVector& OutAimLocation)
+{
+	if (!PlayerController)
+	{
+		return false;
+	}
+
+	FHitResult CursorHit;
+	if (PlayerController->GetHitResultUnderCursor(ECC_Visibility, /*bTraceComplex=*/false, CursorHit)
+		&& CursorHit.bBlockingHit)
+	{
+		OutAimLocation = CursorHit.ImpactPoint;
+		return true;
+	}
+
+	// Nothing under the cursor: project onto the plane the pawn is standing on so aiming out
+	// over open water still produces a point on the water rather than nothing at all.
+	FVector WorldOrigin = FVector::ZeroVector;
+	FVector WorldDirection = FVector::ForwardVector;
+	const APawn* Pawn = PlayerController->GetPawn();
+	if (!Pawn || !PlayerController->DeprojectMousePositionToWorld(WorldOrigin, WorldDirection))
+	{
+		return false;
+	}
+
+	const double PlaneZ = Pawn->GetActorLocation().Z;
+	if (FMath::IsNearlyZero(WorldDirection.Z))
+	{
+		return false;
+	}
+
+	const double Distance = (PlaneZ - WorldOrigin.Z) / WorldDirection.Z;
+	if (Distance <= 0.0)
+	{
+		return false;
+	}
+
+	OutAimLocation = WorldOrigin + WorldDirection * Distance;
+	return true;
+}

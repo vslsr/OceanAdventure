@@ -35,6 +35,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "NavalCore",
+			"Enabled": true
+		},
+		{
 			"Name": "OceanCore",
 			"Enabled": true
 		},

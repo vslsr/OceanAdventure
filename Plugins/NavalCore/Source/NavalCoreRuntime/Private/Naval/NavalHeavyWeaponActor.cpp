@@ -1,0 +1,535 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "Naval/NavalHeavyWeaponActor.h"
+
+#include "Components/BoxComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "GameFramework/GameplayMessageSubsystem.h"
+#include "GameFramework/Pawn.h"
+#include "Naval/NavalBallistics.h"
+#include "Naval/NavalCoreTypes.h"
+#include "Naval/NavalFireWindowComponent.h"
+#include "Naval/NavalGameplayTags.h"
+#include "Naval/NavalMessages.h"
+#include "Naval/NavalPartComponent.h"
+#include "Naval/NavalProjectile.h"
+#include "Naval/NavalTeamStatics.h"
+#include "Naval/NavalTimeStatics.h"
+#include "Naval/NavalVesselComponent.h"
+#include "NavalCoreRuntimeModule.h"
+#include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
+
+#include UE_INLINE_GENERATED_CPP_BY_NAME(NavalHeavyWeaponActor)
+
+ANavalHeavyWeaponActor::ANavalHeavyWeaponActor()
+{
+	PrimaryActorTick.bCanEverTick = true;
+	bReplicates = true;
+	// Ground guns never move and deck guns ride their host's attachment, so movement
+	// replication would only fight the attachment.
+	SetReplicateMovement(false);
+	NetDormancy = DORM_Never;
+
+	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
+	SetRootComponent(SceneRoot);
+
+	BaseMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BaseMesh"));
+	BaseMesh->SetupAttachment(SceneRoot);
+	BaseMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BaseMesh->SetCanEverAffectNavigation(false);
+
+	TurretPivot = CreateDefaultSubobject<USceneComponent>(TEXT("TurretPivot"));
+	TurretPivot->SetupAttachment(SceneRoot);
+
+	BarrelMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("BarrelMesh"));
+	BarrelMesh->SetupAttachment(TurretPivot);
+	BarrelMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	BarrelMesh->SetCanEverAffectNavigation(false);
+
+	MuzzlePoint = CreateDefaultSubobject<USceneComponent>(TEXT("MuzzlePoint"));
+	MuzzlePoint->SetupAttachment(TurretPivot);
+	MuzzlePoint->SetRelativeLocation(FVector(160.0, 0.0, 70.0));
+
+	// One collision body for the whole gun: the design wants the weapon itself shot apart,
+	// not its foundation, so there is nothing else to aim at.
+	WeaponCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("WeaponCollision"));
+	WeaponCollision->SetupAttachment(SceneRoot);
+	WeaponCollision->SetBoxExtent(FVector(80.0, 80.0, 70.0));
+	WeaponCollision->SetRelativeLocation(FVector(0.0, 0.0, 70.0));
+	WeaponCollision->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	WeaponCollision->SetCollisionObjectType(ECC_WorldDynamic);
+	WeaponCollision->SetCollisionResponseToAllChannels(ECR_Block);
+	WeaponCollision->SetCollisionResponseToChannel(ECC_Camera, ECR_Ignore);
+	WeaponCollision->SetCanEverAffectNavigation(false);
+
+	// A working default so a greybox gun fires without an authored projectile asset; a real
+	// shell Blueprint replaces it per feature.
+	ProjectileClass = ANavalProjectile::StaticClass();
+
+	PartComponent = CreateDefaultSubobject<UNavalPartComponent>(TEXT("PartComponent"));
+	// 2.5-4s to set up a field gun, per design 7.8's field heavy weapon band.
+	PartComponent->ConfigureFromFragment(
+		ENavalPartType::HeavyWeapon,
+		/*MaxDurability=*/320.0f,
+		/*DeploySeconds=*/0.9f,
+		/*ConstructionSeconds=*/2.4f);
+}
+
+void ANavalHeavyWeaponActor::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (PartComponent)
+	{
+		PartComponent->OnPartStateChanged.AddUObject(this, &ANavalHeavyWeaponActor::HandlePartStateChanged);
+	}
+	BroadcastWeaponState();
+}
+
+void ANavalHeavyWeaponActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+
+	DOREPLIFETIME(ANavalHeavyWeaponActor, WeaponOperator);
+	DOREPLIFETIME(ANavalHeavyWeaponActor, TurretYawLocal);
+	DOREPLIFETIME(ANavalHeavyWeaponActor, NextFireServerTime);
+	DOREPLIFETIME(ANavalHeavyWeaponActor, GroundTeamId);
+}
+
+void ANavalHeavyWeaponActor::BeginDeployment(int32 InTeamId)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	GroundTeamId = InTeamId;
+	if (PartComponent)
+	{
+		PartComponent->BeginConstruction();
+	}
+
+	// The setup itself is the warning. An enemy who sees this has time to close, break the
+	// half-built gun, or simply leave the arc.
+	FNavalAlertMessage Alert;
+	Alert.Vessel = this;
+	Alert.AlertTag = NavalGameplayTags::Alert_HeavyWeaponDeploying;
+	Alert.WorldLocation = GetActorLocation();
+	Alert.TeamId = InTeamId;
+	if (const UWorld* World = GetWorld())
+	{
+		UGameplayMessageSubsystem::Get(World).BroadcastMessage(NavalGameplayTags::Message_Vessel_Alert, Alert);
+	}
+	ForceNetUpdate();
+}
+
+int32 ANavalHeavyWeaponActor::GetTeamId() const
+{
+	// A deck gun belongs to whoever owns the ship, which is what makes a captured raft's guns
+	// change hands in one authoritative write instead of piece by piece.
+	if (const UNavalVesselComponent* Vessel = UNavalVesselComponent::FindVessel(this))
+	{
+		return Vessel->GetTeamId();
+	}
+	return GroundTeamId;
+}
+
+bool ANavalHeavyWeaponActor::CanOperate(const AActor* Candidate, FGameplayTag& OutFailReason) const
+{
+	if (!Candidate)
+	{
+		OutFailReason = NavalGameplayTags::Fail_WrongTeam;
+		return false;
+	}
+	if (!PartComponent || PartComponent->GetPartState() == ENavalPartState::Deploying)
+	{
+		OutFailReason = NavalGameplayTags::Fail_UnderConstruction;
+		return false;
+	}
+	if (!PartComponent->IsFunctional())
+	{
+		// A gun still being built is a target, not a weapon.
+		OutFailReason = PartComponent->GetPartState() == ENavalPartState::UnderConstruction
+			? NavalGameplayTags::Fail_UnderConstruction
+			: NavalGameplayTags::Fail_NotOperational;
+		return false;
+	}
+
+	const int32 WeaponTeam = GetTeamId();
+	if (NavalTeam::IsValidTeam(WeaponTeam) && NavalTeam::GetTeamId(Candidate) != WeaponTeam)
+	{
+		OutFailReason = NavalGameplayTags::Fail_WrongTeam;
+		return false;
+	}
+	if (WeaponOperator != nullptr && WeaponOperator != Candidate)
+	{
+		OutFailReason = NavalGameplayTags::Fail_SeatOccupied;
+		return false;
+	}
+
+	const double DistanceSquared = FVector::DistSquared(Candidate->GetActorLocation(), GetActorLocation());
+	if (DistanceSquared > FMath::Square(static_cast<double>(InteractionRange)))
+	{
+		OutFailReason = NavalGameplayTags::Fail_TooFar;
+		return false;
+	}
+
+	return true;
+}
+
+bool ANavalHeavyWeaponActor::TryOccupy(AActor* NewOperator)
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	FGameplayTag FailReason;
+	if (!CanOperate(NewOperator, FailReason))
+	{
+		return false;
+	}
+
+	WeaponOperator = NewOperator;
+	ForceNetUpdate();
+	BroadcastWeaponState();
+	return true;
+}
+
+void ANavalHeavyWeaponActor::ReleaseOperator(AActor* LeavingOperator)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+	if (LeavingOperator != nullptr && WeaponOperator != LeavingOperator)
+	{
+		return;
+	}
+
+	WeaponOperator = nullptr;
+	// A shot already in its windup is not cancelled by stepping away; committing to the shot
+	// is part of what makes the gun risky to use.
+	ForceNetUpdate();
+	BroadcastWeaponState();
+}
+
+void ANavalHeavyWeaponActor::SetDesiredAimLocation(AActor* Source, const FVector& WorldAimLocation)
+{
+	if (!HasAuthority() || Source == nullptr || WeaponOperator != Source)
+	{
+		return;
+	}
+
+	PendingAimLocation = WorldAimLocation;
+
+	const FVector LocalAim = GetActorTransform().InverseTransformPosition(WorldAimLocation);
+	const float RawYaw = FMath::RadiansToDegrees(FMath::Atan2(LocalAim.Y, LocalAim.X));
+	// Clamped, not wrapped: the operator has to physically rotate the mount or give up the
+	// angle, which is what stops a gun covering its own blind side.
+	DesiredTurretYawLocal = FMath::Clamp(RawYaw, -TraverseHalfAngleDegrees, TraverseHalfAngleDegrees);
+}
+
+void ANavalHeavyWeaponActor::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (HasAuthority() && !FMath::IsNearlyEqual(TurretYawLocal, DesiredTurretYawLocal, 0.05f))
+	{
+		TurretYawLocal = FMath::FInterpConstantTo(
+			TurretYawLocal, DesiredTurretYawLocal, DeltaTime, TraverseSpeedDegreesPerSecond);
+	}
+
+	if (TurretPivot)
+	{
+		// Presentation on every machine from the replicated angle; no client authority here.
+		TurretPivot->SetRelativeRotation(FRotator(0.0f, TurretYawLocal, 0.0f));
+	}
+}
+
+FVector ANavalHeavyWeaponActor::GetMuzzleLocation() const
+{
+	return MuzzlePoint ? MuzzlePoint->GetComponentLocation() : GetActorLocation();
+}
+
+FVector ANavalHeavyWeaponActor::GetMuzzleDirection() const
+{
+	return TurretPivot ? TurretPivot->GetForwardVector() : GetActorForwardVector();
+}
+
+float ANavalHeavyWeaponActor::GetReloadSecondsRemaining() const
+{
+	const double Now = NavalTime::GetNetworkTimeSeconds(this);
+	return static_cast<float>(FMath::Max(0.0, NextFireServerTime - Now));
+}
+
+UNavalFireWindowComponent* ANavalHeavyWeaponActor::FindPairedWindow() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return nullptr;
+	}
+
+	// Whatever the muzzle is pointing at first: if that happens to be a friendly window in
+	// its authorised zone, the pair is formed. Nothing further away can be "borrowed".
+	const FVector MuzzleLocation = GetMuzzleLocation();
+	const FVector MuzzleDirection = GetMuzzleDirection();
+
+	FCollisionQueryParams TraceParams(FName(TEXT("NavalWindowPairing")), /*bTraceComplex=*/false);
+	TraceParams.AddIgnoredActor(this);
+	if (const AActor* Operator = WeaponOperator)
+	{
+		TraceParams.AddIgnoredActor(Operator);
+	}
+
+	FHitResult Hit;
+	const FVector TraceEnd = MuzzleLocation + MuzzleDirection * 400.0;
+	if (!World->LineTraceSingleByChannel(Hit, MuzzleLocation, TraceEnd, TraceChannel, TraceParams))
+	{
+		return nullptr;
+	}
+
+	const AActor* HitActor = Hit.GetActor();
+	UNavalFireWindowComponent* Window = HitActor ? HitActor->FindComponentByClass<UNavalFireWindowComponent>() : nullptr;
+	if (Window && Window->IsMuzzlePaired(MuzzleLocation, MuzzleDirection, GetTeamId()))
+	{
+		return Window;
+	}
+	return nullptr;
+}
+
+bool ANavalHeavyWeaponActor::CanFire(
+	const AActor* Requester, const FVector& AimLocation, FGameplayTag& OutFailReason) const
+{
+	if (!PartComponent || !PartComponent->IsFunctional())
+	{
+		OutFailReason = PartComponent && PartComponent->GetPartState() == ENavalPartState::UnderConstruction
+			? NavalGameplayTags::Fail_UnderConstruction
+			: NavalGameplayTags::Fail_NotOperational;
+		return false;
+	}
+	if (Requester == nullptr || WeaponOperator != Requester)
+	{
+		OutFailReason = NavalGameplayTags::Fail_SeatOccupied;
+		return false;
+	}
+	if (GetReloadSecondsRemaining() > 0.0f)
+	{
+		OutFailReason = NavalGameplayTags::Fail_Reloading;
+		return false;
+	}
+
+	const FVector MuzzleLocation = GetMuzzleLocation();
+	if (FVector::DistSquared(MuzzleLocation, AimLocation) < FMath::Square(static_cast<double>(MinimumRange)))
+	{
+		OutFailReason = NavalGameplayTags::Fail_MinimumRange;
+		return false;
+	}
+
+	// Muzzle blocking, including by the shooter's own wall. A friendly one-way window in the
+	// way is not a block: that is the pairing the design wants players to build towards.
+	FNavalShotQuery Query;
+	Query.WorldContextObject = this;
+	Query.Start = MuzzleLocation;
+	Query.End = MuzzleLocation + GetMuzzleDirection() * FMath::Max(200.0f, MaxRange);
+	Query.TeamId = GetTeamId();
+	Query.TraceChannel = TraceChannel;
+	Query.MinimumRange = 0.0f;
+	Query.IgnoreActors.Add(const_cast<ANavalHeavyWeaponActor*>(this));
+	if (WeaponOperator)
+	{
+		Query.IgnoreActors.Add(WeaponOperator);
+	}
+
+	ENavalShotBlockReason BlockReason = ENavalShotBlockReason::None;
+	FVector BlockLocation = FVector::ZeroVector;
+	if (!FNavalBallistics::IsFireLineClear(Query, BlockReason, BlockLocation))
+	{
+		OutFailReason = NavalGameplayTags::Fail_MuzzleBlocked;
+		return false;
+	}
+
+	return true;
+}
+
+bool ANavalHeavyWeaponActor::TryFire(AActor* Requester, const FVector& AimLocation)
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	FGameplayTag FailReason;
+	if (!CanFire(Requester, AimLocation, FailReason))
+	{
+		UE_LOG(
+			LogNavalCore,
+			Verbose,
+			TEXT("[HeavyWeapon] Fire refused weapon=%s requester=%s reason=%s"),
+			*GetName(),
+			*GetNameSafe(Requester),
+			*FailReason.ToString());
+		return false;
+	}
+
+	PendingAimLocation = AimLocation;
+	NextFireServerTime = NavalTime::GetNetworkTimeSeconds(this) + FireWindupSeconds + ReloadSeconds;
+	ForceNetUpdate();
+	BroadcastWeaponState();
+
+	// A paired window opens under the same input; the shell just waits out the shutter.
+	const UNavalFireWindowComponent* PairedWindow = FindPairedWindow();
+	const float WindupSeconds = FireWindupSeconds
+		+ (PairedWindow ? PairedWindow->GetOpenWindupSeconds() : 0.0f);
+
+	if (WindupSeconds <= 0.0f)
+	{
+		SpawnProjectile();
+		return true;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(
+			FireWindupTimerHandle,
+			this,
+			&ANavalHeavyWeaponActor::HandleFireWindupElapsed,
+			WindupSeconds,
+			false);
+	}
+	return true;
+}
+
+void ANavalHeavyWeaponActor::HandleFireWindupElapsed()
+{
+	SpawnProjectile();
+}
+
+void ANavalHeavyWeaponActor::SpawnProjectile()
+{
+	UWorld* World = GetWorld();
+	if (!World || !HasAuthority() || !ProjectileClass)
+	{
+		return;
+	}
+
+	const FVector MuzzleLocation = GetMuzzleLocation();
+	const FVector Direction = (PendingAimLocation - MuzzleLocation).GetSafeNormal(
+		UE_SMALL_NUMBER, GetMuzzleDirection());
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Owner = this;
+	SpawnParameters.Instigator = Cast<APawn>(WeaponOperator);
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+	ANavalProjectile* Projectile = World->SpawnActor<ANavalProjectile>(
+		ProjectileClass, MuzzleLocation, Direction.Rotation(), SpawnParameters);
+	if (!Projectile)
+	{
+		return;
+	}
+
+	FNavalProjectileLaunchParams Params;
+	Params.Direction = Direction;
+	Params.SourceWeapon = this;
+	Params.SourceOperator = WeaponOperator;
+	Params.TeamId = GetTeamId();
+	Params.MinimumRange = MinimumRange;
+	Params.MaxRange = MaxRange;
+	Projectile->LaunchProjectile(Params);
+}
+
+void ANavalHeavyWeaponActor::HandlePartStateChanged(UNavalPartComponent* /*Part*/)
+{
+	if (PartComponent && !PartComponent->IsFunctional() && WeaponOperator != nullptr)
+	{
+		// A gun shot out from under its operator stops being a gun immediately.
+		ReleaseOperator(WeaponOperator);
+	}
+	BroadcastWeaponState();
+}
+
+void ANavalHeavyWeaponActor::BroadcastWeaponState() const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FNavalHeavyWeaponMessage Message;
+	Message.Weapon = const_cast<ANavalHeavyWeaponActor*>(this);
+	Message.Operator = WeaponOperator;
+	Message.WeaponState = PartComponent ? PartComponent->GetPartState() : ENavalPartState::Operational;
+	Message.DurabilityFraction = PartComponent ? PartComponent->GetDurabilityFraction() : 1.0f;
+	Message.ReloadSecondsRemaining = GetReloadSecondsRemaining();
+	UGameplayMessageSubsystem::Get(World).BroadcastMessage(
+		NavalGameplayTags::Message_HeavyWeapon_State, Message);
+}
+
+bool ANavalHeavyWeaponActor::IsGroundSuitable(
+	const UObject* WorldContextObject,
+	const FVector& Location,
+	float FootprintRadius,
+	float MaxSlopeDegrees,
+	FGameplayTag& OutFailReason)
+{
+	const UWorld* World = GEngine
+		? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull)
+		: nullptr;
+	if (!World)
+	{
+		OutFailReason = NavalGameplayTags::Fail_GroundUnsuitable;
+		return false;
+	}
+
+	// Four legs plus the centre. "No foundation required" still means the whole footprint has
+	// to rest on ground that exists and is flat enough -- not a cliff edge, not deep water.
+	const TArray<FVector2D> Offsets = {
+		FVector2D(0.0, 0.0),
+		FVector2D(FootprintRadius, 0.0),
+		FVector2D(-FootprintRadius, 0.0),
+		FVector2D(0.0, FootprintRadius),
+		FVector2D(0.0, -FootprintRadius)
+	};
+
+	const double CosMaxSlope = FMath::Cos(FMath::DegreesToRadians(FMath::Clamp(MaxSlopeDegrees, 1.0f, 45.0f)));
+	FCollisionQueryParams TraceParams(FName(TEXT("NavalGroundCheck")), /*bTraceComplex=*/false);
+
+	double MinHeight = TNumericLimits<double>::Max();
+	double MaxHeight = TNumericLimits<double>::Lowest();
+	for (const FVector2D& Offset : Offsets)
+	{
+		const FVector Start = Location + FVector(Offset.X, Offset.Y, 250.0);
+		const FVector End = Location + FVector(Offset.X, Offset.Y, -400.0);
+
+		FHitResult Hit;
+		if (!World->LineTraceSingleByChannel(Hit, Start, End, ECC_WorldStatic, TraceParams))
+		{
+			OutFailReason = NavalGameplayTags::Fail_GroundUnsuitable;
+			return false;
+		}
+		if (FVector::DotProduct(Hit.ImpactNormal, FVector::UpVector) < CosMaxSlope)
+		{
+			OutFailReason = NavalGameplayTags::Fail_GroundUnsuitable;
+			return false;
+		}
+
+		MinHeight = FMath::Min(MinHeight, static_cast<double>(Hit.ImpactPoint.Z));
+		MaxHeight = FMath::Max(MaxHeight, static_cast<double>(Hit.ImpactPoint.Z));
+	}
+
+	// A step or a crevice between the legs is as unusable as a slope, even when every
+	// individual sample was flat.
+	if (MaxHeight - MinHeight > FootprintRadius)
+	{
+		OutFailReason = NavalGameplayTags::Fail_GroundUnsuitable;
+		return false;
+	}
+
+	return true;
+}

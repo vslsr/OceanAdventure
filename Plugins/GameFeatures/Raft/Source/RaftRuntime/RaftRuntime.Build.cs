@@ -14,7 +14,10 @@ public class RaftRuntime : ModuleRules
 				"BuildingCoreRuntime",
 				"Core",
 				"CoreUObject",
-				"Engine"
+				"Engine",
+				// Framework layer only: the raft implements INavalBuoyancyControl so the vessel
+				// state machine can stop a wreck floating without knowing how a raft floats.
+				"NavalCoreRuntime"
 			}
 		);
 

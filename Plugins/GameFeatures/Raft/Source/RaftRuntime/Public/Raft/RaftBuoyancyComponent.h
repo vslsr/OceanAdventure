@@ -4,6 +4,7 @@
 
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
+#include "Naval/NavalBuoyancyControl.h"
 
 #include "RaftBuoyancyComponent.generated.h"
 
@@ -11,9 +12,15 @@ class UOceanGenerationSettings;
 class UOceanWorldManagerComponent;
 class URaftDefinition;
 
-/** Server-only kinematic buoyancy; the owning raft replicates the resulting movement. */
+/**
+ * Server-only kinematic buoyancy; the owning raft replicates the resulting movement.
+ *
+ * Implements INavalBuoyancyControl so a vessel that has become a wreck stops being held at
+ * the waterline. The naval framework only ever asks for the switch; how a raft floats stays
+ * entirely here.
+ */
 UCLASS(BlueprintType, Blueprintable, ClassGroup = (Raft), meta = (BlueprintSpawnableComponent))
-class RAFTRUNTIME_API URaftBuoyancyComponent : public UActorComponent
+class RAFTRUNTIME_API URaftBuoyancyComponent : public UActorComponent, public INavalBuoyancyControl
 {
 	GENERATED_BODY()
 
@@ -31,8 +38,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Raft|Buoyancy")
 	void RebuildFromStructure(const FBox& LocalStructureBounds);
 
+	// INavalBuoyancyControl
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Raft|Buoyancy")
-	void SetBuoyancyEnabled(bool bEnabled);
+	virtual void SetBuoyancyEnabled(bool bEnabled) override;
 
 	UFUNCTION(BlueprintPure, Category = "Raft|Buoyancy")
 	bool IsBuoyancyEnabled() const { return bBuoyancyEnabled; }

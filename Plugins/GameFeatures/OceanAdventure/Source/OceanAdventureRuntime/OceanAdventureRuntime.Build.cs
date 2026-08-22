@@ -38,9 +38,15 @@ public class OceanAdventureRuntime : ModuleRules
 				// Build gameplay layer: the framework, the message bus the failure feedback
 				// travels on, and the CommonUI stack that owns cursor/input policy.
 				"BuildingCoreRuntime",
+				// Naval framework: vessel state, the ballistic rule, heavy weapons. The
+				// gameplay layer here owns the GAS abilities, input and match rules on top.
+				"NavalCoreRuntime",
 				"GameplayMessageRuntime",
 				"CommonUI",
 				"CommonGame",
+				// UOceanAdventureNavalSettings derives from UDeveloperSettings in a public
+				// header, and LyraGame only depends on this module privately.
+				"DeveloperSettings",
 				"UMG"
 			}
 		);
