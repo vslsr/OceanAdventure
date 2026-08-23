@@ -14,6 +14,7 @@ class TOPDOWNFEATURERUNTIME_API ULyraCameraMode_TopDownFollow : public ULyraCame
 
 public:
 	ULyraCameraMode_TopDownFollow();
+	virtual void OnActivation() override;
 
 protected:
 	virtual void UpdateView(float DeltaTime) override;
@@ -29,4 +30,11 @@ protected:
 	/** Distance from the pawn pivot along the inverse camera forward vector. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Top Down Camera", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float FollowDistance;
+
+	/** Higher values make wheel zoom and drag rotation settle faster. Zero snaps immediately. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Top Down Camera", meta = (ClampMin = "0.0"))
+	float CameraInputInterpSpeed;
+
+	float CurrentFollowDistance;
+	float CurrentYawOffset;
 };

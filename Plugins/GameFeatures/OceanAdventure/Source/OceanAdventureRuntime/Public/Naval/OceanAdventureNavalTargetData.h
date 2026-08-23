@@ -48,6 +48,17 @@ struct FOceanAdventureNavalTargetData : public FGameplayAbilityTargetData
 	UPROPERTY()
 	FVector_NetQuantize100 AimLocation = FVector::ZeroVector;
 
+	/** 0..100 charge for a heavy-weapon shot. The server clamps and recomputes the arc. */
+	UPROPERTY()
+	uint8 QuantizedCharge = 100;
+
+	void SetChargeAlpha(float ChargeAlpha)
+	{
+		QuantizedCharge = static_cast<uint8>(FMath::RoundToInt(FMath::Clamp(ChargeAlpha, 0.0f, 1.0f) * 100.0f));
+	}
+
+	float GetChargeAlpha() const { return QuantizedCharge / 100.0f; }
+
 	/** -1..1, quantised to a byte; a boat's throttle does not need more precision than that. */
 	UPROPERTY()
 	int8 QuantizedThrottle = 0;

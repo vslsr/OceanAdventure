@@ -8,7 +8,7 @@
 #include "OceanAdventureGameplayAbility_FireHeavyWeapon.generated.h"
 
 /**
- * One press, one shell.
+ * Hold to charge one shell, release to fire.
  *
  * Split from the operate ability so that holding the trigger cannot become a stream and so
  * that every refusal -- reloading, minimum range, a wall in front of the muzzle -- is a
@@ -51,7 +51,33 @@ protected:
 
 private:
 	void OnTargetDataReadyCallback(const FGameplayAbilityTargetDataHandle& InData, FGameplayTag ApplicationTag);
+	void UpdateCharge(float DeltaTime);
+	void UpdateTrajectoryPreview();
+	void CommitChargedShot();
+	void DestroyTrajectoryPreview();
+
+	UFUNCTION()
+	void OnInputReleased(float TimeHeld);
+
+	UPROPERTY(EditDefaultsOnly, Category = "OceanAdventure|Naval|Cannon", meta = (ClampMin = "0.1", Units = "s"))
+	float MaxChargeSeconds = 1.8f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "OceanAdventure|Naval|Cannon", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MinimumChargeAlpha = 0.12f;
+
+	UPROPERTY(EditDefaultsOnly, Category = "OceanAdventure|Naval|Cannon", meta = (ClampMin = "0.016", Units = "s"))
+	float PreviewSampleInterval = 0.08f;
 
 	FDelegateHandle OnTargetDataReadyHandle;
+
+	UPROPERTY()
+	TObjectPtr<class UOceanAdventureAbilityTask_NavalControl> ChargeTask;
+
+	UPROPERTY()
+	TObjectPtr<class AOceanAdventureCannonTrajectoryPreview> TrajectoryPreview;
+
+	TWeakObjectPtr<class ANavalHeavyWeaponActor> ChargingWeapon;
+	float ChargeElapsedSeconds = 0.0f;
+	float CurrentChargeAlpha = 0.0f;
 	bool bFireResolved = false;
 };

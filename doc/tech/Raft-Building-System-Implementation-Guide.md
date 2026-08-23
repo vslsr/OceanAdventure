@@ -1521,6 +1521,8 @@ Dedicated Server + 2 客户端：
 
 - `FBuildGridSettings` 新增 `CellOrigin`（XY 网格线偏移）与 `BaseHeight`（Level 0 的地面高度）。
   `LocalToCoord` / `CoordToLocalCenter` 都按这两个值换算。
+- 船体/甲板模块的水平吸附间距直接由 `URaftDefinition::DeckBoxExtent` 的完整尺寸推导；
+  `FBuildGridCoord` 只作为复制和占用索引，不能再用独立网格尺寸改变模块的物理间距。
 - `ARaftActor::RecomputeGridAlignment()`（`PostInitializeComponents` 与 `ApplyDefinition` 中调用）
   按甲板尺寸算出**能完整放进甲板的整格数**：奇数格自动加半格偏移保持居中，
   余数留作不可建的视觉边缘。甲板 248×400 + 200 格 → 1×2 格（200×400），
@@ -1645,10 +1647,10 @@ enum class EBuildSlotType : uint8
 `FBuildSlotKey` 定型为 `{Coord, Slot, EdgeIndex, SubCell}`：
 
 - `EdgeIndex` 仅 `Wall` / `WallProp` 有意义（`UsesEdgeIndex()`）
-- `SubCell` 仅 `Prop` 有意义（`UsesSubCell()`），0..8 行主序，**4 是格心**
+- `SubCell` 仅 `Prop` 有意义（`UsesSubCell()`），0..80 行主序，**40 是格心**
 - 构造函数把无意义的字段归零，**保证描述同一槽位的两个键必然相等且同哈希**
 
-格内位取 `CellSize/3` 的三分点而非二分点，外圈到格边留出余量，相邻格的家具不会贴脸。
+Prop 使用类似编辑器移动网格的 9×9 格内吸附，步长为 `CellSize/9`。外圈到格边保留半个吸附步长，相邻格的家具不会贴脸。
 
 ### 15.2 支撑规则
 

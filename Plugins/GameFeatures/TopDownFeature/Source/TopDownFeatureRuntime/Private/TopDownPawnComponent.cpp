@@ -15,6 +15,7 @@
 #include "InputAction.h"
 #include "InputActionValue.h"
 #include "TopDownFeatureGameplayTags.h"
+#include "TopDownCameraDragInputWidget.h"
 #include "TopDownInputWidget.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TopDownPawnComponent)
@@ -24,17 +25,30 @@ DEFINE_LOG_CATEGORY_STATIC(LogTopDownPawnComponent, Log, All);
 UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ClickInputTag(TopDownFeatureGameplayTags::InputTag_TopDownClick)
+	, CameraZoomInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraZoom)
+	, CameraRotateHoldInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraRotateHold)
+	, CameraRotateInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraRotate)
 	, InputWidgetClass(UTopDownInputWidget::StaticClass())
+	, CameraDragInputWidgetClass(UTopDownCameraDragInputWidget::StaticClass())
 	, UILayerTag(FGameplayTag::RequestGameplayTag(FName("UI.Layer.Game"), false))
 	, GroundTraceChannel(ECC_Visibility)
 	, MaxGroundTraceDistance(100000.0f)
 	, bTraceComplex(false)
 	, AcceptanceRadius(75.0f)
+	, InitialCameraDistance(1800.0f)
+	, MinCameraDistance(600.0f)
+	, MaxCameraDistance(3200.0f)
+	, ZoomUnitsPerStep(180.0f)
+	, RotationDegreesPerPixel(0.25f)
 	, BoundInputComponent(nullptr)
 	, PushedInputWidget(nullptr)
+	, PushedCameraDragInputWidget(nullptr)
 	, MoveTarget(FVector::ZeroVector)
+	, CameraDistance(InitialCameraDistance)
+	, CameraYawOffset(0.0f)
 	, bHasMoveTarget(false)
 	, bInputBound(false)
+	, bCameraRotateHeld(false)
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
@@ -43,6 +57,8 @@ UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectIni
 void UTopDownPawnComponent::BeginPlay()
 {
 	Super::BeginPlay();
+	CameraDistance = FMath::Clamp(InitialCameraDistance, MinCameraDistance, FMath::Max(MinCameraDistance, MaxCameraDistance));
+	CameraYawOffset = 0.0f;
 
 	APawn* Pawn = GetPawn<APawn>();
 	if (!ensure(Pawn))
@@ -186,31 +202,50 @@ void UTopDownPawnComponent::BindInputIfReady()
 	const ULyraPawnData* PawnData = PawnExtension ? PawnExtension->GetPawnData<ULyraPawnData>() : nullptr;
 	const ULyraInputConfig* InputConfig = PawnData ? PawnData->InputConfig : nullptr;
 	UEnhancedInputComponent* InputComponent = Pawn->FindComponentByClass<UEnhancedInputComponent>();
-	if (!InputConfig || !InputComponent || !ClickInputTag.IsValid())
+	if (!InputConfig || !InputComponent || !ClickInputTag.IsValid() || !CameraZoomInputTag.IsValid() ||
+		!CameraRotateHoldInputTag.IsValid() || !CameraRotateInputTag.IsValid())
 	{
 		return;
 	}
 
-	const UInputAction* ClickAction = nullptr;
-	for (const FLyraInputAction& NativeAction : InputConfig->NativeInputActions)
+	// ULyraInputConfig's lookup helper is not exported from LyraGame, so GameFeature
+	// modules must inspect the public native-action entries instead of calling it.
+	const auto FindNativeAction = [InputConfig](const FGameplayTag& InputTag) -> const UInputAction*
 	{
-		if (NativeAction.InputAction && NativeAction.InputTag == ClickInputTag)
+		for (const FLyraInputAction& NativeAction : InputConfig->NativeInputActions)
 		{
-			ClickAction = NativeAction.InputAction;
-			break;
+			if (NativeAction.InputAction && NativeAction.InputTag == InputTag)
+			{
+				return NativeAction.InputAction;
+			}
 		}
-	}
+		return nullptr;
+	};
 
-	if (!ClickAction)
+	const UInputAction* ClickAction = FindNativeAction(ClickInputTag);
+	const UInputAction* ZoomAction = FindNativeAction(CameraZoomInputTag);
+	const UInputAction* RotateHoldAction = FindNativeAction(CameraRotateHoldInputTag);
+	const UInputAction* RotateAction = FindNativeAction(CameraRotateInputTag);
+	if (!ClickAction || !ZoomAction || !RotateHoldAction || !RotateAction)
 	{
 		UE_LOG(LogTopDownPawnComponent, Warning,
-			TEXT("PawnData InputConfig '%s' has no native action for '%s'; click movement is disabled for '%s'."),
-			*GetNameSafe(InputConfig), *ClickInputTag.ToString(), *GetNameSafe(Pawn));
+			TEXT("PawnData InputConfig '%s' is missing one or more top-down native actions; top-down input is disabled for '%s'."),
+			*GetNameSafe(InputConfig), *GetNameSafe(Pawn));
 		return;
 	}
 
 	InputBindingHandles.Add(
 		InputComponent->BindAction(ClickAction, ETriggerEvent::Started, this, &ThisClass::Input_TopDownClick).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(ZoomAction, ETriggerEvent::Triggered, this, &ThisClass::Input_CameraZoom).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(RotateHoldAction, ETriggerEvent::Started, this, &ThisClass::Input_CameraRotateStarted).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(RotateHoldAction, ETriggerEvent::Completed, this, &ThisClass::Input_CameraRotateCompleted).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(RotateHoldAction, ETriggerEvent::Canceled, this, &ThisClass::Input_CameraRotateCompleted).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(RotateAction, ETriggerEvent::Triggered, this, &ThisClass::Input_CameraRotate).GetHandle());
 	BoundInputComponent = InputComponent;
 	bInputBound = true;
 
@@ -226,6 +261,8 @@ void UTopDownPawnComponent::UnbindInput()
 		}
 	}
 	InputBindingHandles.Reset();
+	bCameraRotateHeld = false;
+	PopCameraDragInputWidget();
 
 	RemoveInputWidget();
 
@@ -258,7 +295,62 @@ void UTopDownPawnComponent::RemoveInputWidget()
 	}
 }
 
+void UTopDownPawnComponent::PushCameraDragInputWidget(APlayerController* PlayerController)
+{
+	if (PushedCameraDragInputWidget || !PlayerController || !CameraDragInputWidgetClass || !UILayerTag.IsValid())
+	{
+		return;
+	}
+
+	if (ULocalPlayer* LocalPlayer = PlayerController->GetLocalPlayer())
+	{
+		PushedCameraDragInputWidget = UCommonUIExtensions::PushContentToLayer_ForPlayer(
+			LocalPlayer, UILayerTag, CameraDragInputWidgetClass);
+	}
+}
+
+void UTopDownPawnComponent::PopCameraDragInputWidget()
+{
+	if (PushedCameraDragInputWidget)
+	{
+		UCommonUIExtensions::PopContentFromLayer(PushedCameraDragInputWidget);
+		PushedCameraDragInputWidget = nullptr;
+	}
+}
+
 void UTopDownPawnComponent::Input_TopDownClick(const FInputActionValue& InputActionValue)
 {
 	SetMoveTargetUnderCursor();
+}
+
+void UTopDownPawnComponent::Input_CameraZoom(const FInputActionValue& InputActionValue)
+{
+	CameraDistance = FMath::Clamp(
+		CameraDistance - InputActionValue.Get<float>() * ZoomUnitsPerStep,
+		MinCameraDistance,
+		FMath::Max(MinCameraDistance, MaxCameraDistance));
+}
+
+void UTopDownPawnComponent::Input_CameraRotateStarted(const FInputActionValue& InputActionValue)
+{
+	bCameraRotateHeld = true;
+	APawn* Pawn = GetPawn<APawn>();
+	PushCameraDragInputWidget(Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr);
+}
+
+void UTopDownPawnComponent::Input_CameraRotateCompleted(const FInputActionValue& InputActionValue)
+{
+	bCameraRotateHeld = false;
+	PopCameraDragInputWidget();
+}
+
+void UTopDownPawnComponent::Input_CameraRotate(const FInputActionValue& InputActionValue)
+{
+	if (!bCameraRotateHeld)
+	{
+		return;
+	}
+
+	const FVector2D PointerDelta = InputActionValue.Get<FVector2D>();
+	CameraYawOffset = FRotator::NormalizeAxis(CameraYawOffset + PointerDelta.X * RotationDegreesPerPixel);
 }

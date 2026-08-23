@@ -25,6 +25,9 @@ class RAFTRUNTIME_API ARaftActor : public AActor, public IBuildStructureHost
 public:
 	ARaftActor();
 
+	virtual void PreInitializeComponents() override;
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void PostInitializeComponents() override;
 
@@ -72,8 +75,8 @@ protected:
 	TObjectPtr<UBuildStructureVisualComponent> BuildStructureVisualComponent;
 
 	/**
-	 * LevelHeight and the legacy square CellSize are authored. CellSizeXY, CellOrigin, and
-	 * BaseHeight are derived from the RaftDefinition so one cell is one complete raft module.
+	 * LevelHeight is authored for vertical construction. Horizontal module spacing, origin,
+	 * and the level-0 height are always derived from the raft's physical deck bounds.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Build")
 	FBuildGridSettings BuildGridSettings;
@@ -85,7 +88,7 @@ protected:
 private:
 	void ApplyDefinition();
 
-	/** Aligns the grid to the deck and caches the anchored cell range. */
+	/** Aligns logical occupancy coordinates to the physical deck and caches its anchor. */
 	void RecomputeGridAlignment();
 
 	FVector GetBaseDeckExtent() const;

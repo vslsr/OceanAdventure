@@ -188,6 +188,8 @@ void ULyraAbilitySystemComponent::AbilityInputTagPressed(const FGameplayTag& Inp
 	if (InputTag.IsValid())
 	{
 		const bool bBuildInput = InputTag.ToString().StartsWith(TEXT("InputTag.Build"));
+		const bool bNavalInput = InputTag.ToString().StartsWith(TEXT("InputTag.Naval"));
+		const bool bDiagnosticInput = bBuildInput || bNavalInput;
 		int32 MatchingSpecs = 0;
 		for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
 		{
@@ -196,13 +198,13 @@ void ULyraAbilitySystemComponent::AbilityInputTagPressed(const FGameplayTag& Inp
 				++MatchingSpecs;
 				InputPressedSpecHandles.AddUnique(AbilitySpec.Handle);
 				InputHeldSpecHandles.AddUnique(AbilitySpec.Handle);
-				if (bBuildInput)
+				if (bDiagnosticInput)
 				{
 					const ULyraGameplayAbility* LyraAbility = Cast<ULyraGameplayAbility>(AbilitySpec.Ability);
 					UE_LOG(
 						LogLyraAbilitySystem,
 						Display,
-						TEXT("[BuildInput] ASC matched tag=%s spec=%s ability=%s active=%d policy=%d avatar=%s"),
+						TEXT("[AbilityInput] ASC matched tag=%s spec=%s ability=%s active=%d policy=%d avatar=%s"),
 						*InputTag.ToString(),
 						*AbilitySpec.Handle.ToString(),
 						*GetNameSafe(AbilitySpec.Ability),
@@ -212,12 +214,12 @@ void ULyraAbilitySystemComponent::AbilityInputTagPressed(const FGameplayTag& Inp
 				}
 			}
 		}
-		if (bBuildInput)
+		if (bDiagnosticInput)
 		{
 			UE_LOG(
 				LogLyraAbilitySystem,
 				Display,
-				TEXT("[BuildInput] ASC press summary tag=%s matching_specs=%d pressed_queue=%d held_queue=%d blocked=%d avatar=%s"),
+				TEXT("[AbilityInput] ASC press summary tag=%s matching_specs=%d pressed_queue=%d held_queue=%d blocked=%d avatar=%s"),
 				*InputTag.ToString(),
 				MatchingSpecs,
 				InputPressedSpecHandles.Num(),
@@ -232,13 +234,23 @@ void ULyraAbilitySystemComponent::AbilityInputTagReleased(const FGameplayTag& In
 {
 	if (InputTag.IsValid())
 	{
+		const bool bNavalInput = InputTag.ToString().StartsWith(TEXT("InputTag.Naval"));
+		int32 MatchingSpecs = 0;
 		for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
 		{
 			if (AbilitySpec.Ability && (AbilitySpec.GetDynamicSpecSourceTags().HasTagExact(InputTag)))
 			{
+				++MatchingSpecs;
 				InputReleasedSpecHandles.AddUnique(AbilitySpec.Handle);
 				InputHeldSpecHandles.Remove(AbilitySpec.Handle);
 			}
+		}
+		if (bNavalInput)
+		{
+			UE_LOG(LogLyraAbilitySystem, Display,
+				TEXT("[AbilityInput] ASC release tag=%s matching_specs=%d released_queue=%d held_queue=%d avatar=%s"),
+				*InputTag.ToString(), MatchingSpecs, InputReleasedSpecHandles.Num(),
+				InputHeldSpecHandles.Num(), *GetNameSafe(GetAvatarActor()));
 		}
 	}
 }

@@ -473,9 +473,9 @@ def configure_life_raft():
     )
     life_raft_definition = get_or_create_data_asset(LIFE_RAFT_DEFINITION_PATH, definition_class)
     for property_name in (
-        "visual_mesh",
-        "deck_box_extent",
-        "visual_mesh_offset",
+		"visual_mesh",
+		"deck_box_extent",
+		"visual_mesh_offset",
         "pontoon_offsets",
         "waterline_offset",
         "max_tilt_degrees",

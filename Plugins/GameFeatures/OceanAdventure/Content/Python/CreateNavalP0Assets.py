@@ -201,7 +201,16 @@ def configure_input_assets():
             unreal.InputActionFactory() if hasattr(unreal, "InputActionFactory") else None,
         )
         action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
-        configure_pressed_trigger(action)
+        if tag_name == "InputTag.Naval.Fire":
+            # Fire remains Triggered for the full hold so GAS receives a real Completed
+            # event on physical release; the active ability absorbs repeated press samples.
+            action.set_editor_property("triggers", [])
+            require(
+                len(action.get_editor_property("triggers")) == 0,
+                "IA_Naval_Fire still has an edge trigger; hold/release firing would complete immediately",
+            )
+        else:
+            configure_pressed_trigger(action)
         save(action)
 
         input_mapping.unmap_all_keys_from_action(action)

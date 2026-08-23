@@ -6,6 +6,7 @@
 #include "Naval/NavalHeavyWeaponActor.h"
 #include "Naval/OceanAdventureNavalStatics.h"
 #include "Naval/OceanAdventureNavalTags.h"
+#include "OceanAdventureRuntimeModule.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureGameplayAbility_OperateHeavyWeapon)
 
@@ -26,14 +27,27 @@ AActor* UOceanAdventureGameplayAbility_OperateHeavyWeapon::FindStationInRange() 
 		return nullptr;
 	}
 
-	return UOceanAdventureNavalStatics::FindNearestStationActor(
+	AActor* Station = UOceanAdventureNavalStatics::FindNearestStationActor(
 		this, Avatar->GetActorLocation(), StationSearchRadius, ANavalHeavyWeaponActor::StaticClass());
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[HeavyWeaponOperate] Search avatar=%s origin=%s radius=%.1f result=%s distance=%.1f"),
+		*GetNameSafe(Avatar), *Avatar->GetActorLocation().ToCompactString(), StationSearchRadius,
+		*GetNameSafe(Station), Station ? FVector::Dist(Avatar->GetActorLocation(), Station->GetActorLocation()) : -1.0f);
+	return Station;
 }
 
 bool UOceanAdventureGameplayAbility_OperateHeavyWeapon::ServerOccupyStation(AActor* Station)
 {
 	ANavalHeavyWeaponActor* Weapon = Cast<ANavalHeavyWeaponActor>(Station);
-	return Weapon && Weapon->TryOccupy(GetAvatarActorFromActorInfo());
+	AActor* Avatar = GetAvatarActorFromActorInfo();
+	FGameplayTag FailReason;
+	const bool bCanOperate = Weapon && Weapon->CanOperate(Avatar, FailReason);
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[HeavyWeaponOperate] Server validate weapon=%s avatar=%s can_operate=%d reason=%s distance=%.1f operator=%s"),
+		*GetNameSafe(Weapon), *GetNameSafe(Avatar), bCanOperate, *FailReason.ToString(),
+		Weapon && Avatar ? FVector::Dist(Weapon->GetActorLocation(), Avatar->GetActorLocation()) : -1.0f,
+		*GetNameSafe(Weapon ? Weapon->GetWeaponOperator() : nullptr));
+	return bCanOperate && Weapon->TryOccupy(Avatar);
 }
 
 void UOceanAdventureGameplayAbility_OperateHeavyWeapon::ServerReleaseStation(AActor* Station)
@@ -49,6 +63,10 @@ void UOceanAdventureGameplayAbility_OperateHeavyWeapon::ServerApplyControl(
 {
 	if (ANavalHeavyWeaponActor* Weapon = Cast<ANavalHeavyWeaponActor>(Station))
 	{
+		UE_LOG(LogOceanAdventure, VeryVerbose,
+			TEXT("[HeavyWeaponOperate] Aim sample weapon=%s avatar=%s aim=%s muzzle_dir=%s"),
+			*GetNameSafe(Weapon), *GetNameSafe(GetAvatarActorFromActorInfo()),
+			*Data.AimLocation.ToString(), *Weapon->GetMuzzleDirection().ToString());
 		// Clamped to the traverse arc inside the weapon; the client cannot aim past it by
 		// sending a point behind the mount.
 		Weapon->SetDesiredAimLocation(GetAvatarActorFromActorInfo(), Data.AimLocation);
@@ -66,6 +84,10 @@ bool UOceanAdventureGameplayAbility_OperateHeavyWeapon::BuildControlSample(
 	}
 
 	OutData.AimLocation = AimLocation;
+	if (ANavalHeavyWeaponActor* Weapon = Cast<ANavalHeavyWeaponActor>(GetStationActor()))
+	{
+		Weapon->SetLocalPredictedAimLocation(GetAvatarActorFromActorInfo(), AimLocation);
+	}
 	return true;
 }
 
@@ -86,4 +108,17 @@ bool UOceanAdventureGameplayAbility_OperateHeavyWeapon::IsStationStillValid(AAct
 	// leaving them standing at a wreck.
 	const AActor* CurrentOperator = Weapon->GetWeaponOperator();
 	return (CurrentOperator == nullptr || CurrentOperator == GetAvatarActorFromActorInfo());
+}
+
+bool UOceanAdventureGameplayAbility_OperateHeavyWeapon::GetOperatorTransform(
+	AActor* Station, FTransform& OutTransform) const
+{
+	const ANavalHeavyWeaponActor* Weapon = Cast<ANavalHeavyWeaponActor>(Station);
+	if (!Weapon)
+	{
+		return false;
+	}
+
+	OutTransform = Weapon->GetOperatorTransform();
+	return true;
 }

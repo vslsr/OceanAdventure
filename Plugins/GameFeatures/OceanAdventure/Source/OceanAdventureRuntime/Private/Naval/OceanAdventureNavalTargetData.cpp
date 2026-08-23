@@ -25,6 +25,7 @@ bool FOceanAdventureNavalTargetData::NetSerialize(FArchive& Ar, UPackageMap* Map
 
 	bool bAimSuccess = true;
 	AimLocation.NetSerialize(Ar, Map, bAimSuccess);
+	Ar << QuantizedCharge;
 
 	Ar << QuantizedThrottle;
 	Ar << QuantizedSteer;

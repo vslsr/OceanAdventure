@@ -60,9 +60,15 @@ EXPERIENCE_PATH = "/OceanAdventure/Experience/BP_Experience_Ocean"
 INPUT_ROOT = "/OceanAdventure/Input"
 BASE_INPUT_CONFIG_PATH = "/Game/Input/DA_InputConfig_Base"
 INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanAdventure"
-CLICK_ACTION_PATH = f"{INPUT_ROOT}/IA_OceanAdventure_TopDownClick"
 INPUT_MAPPING_PATH = f"{INPUT_ROOT}/IMC_OceanAdventure_Base"
 MAX_SWIM_SPEED = 600.0
+
+TOP_DOWN_INPUT_SPECS = [
+    ("IA_OceanAdventure_TopDownClick", unreal.InputActionValueType.BOOLEAN, "click_input_tag", "LeftMouseButton"),
+    ("IA_OceanAdventure_TopDownCameraZoom", unreal.InputActionValueType.AXIS1D, "camera_zoom_input_tag", "MouseWheelAxis"),
+    ("IA_OceanAdventure_TopDownCameraRotateHold", unreal.InputActionValueType.BOOLEAN, "camera_rotate_hold_input_tag", "RightMouseButton"),
+    ("IA_OceanAdventure_TopDownCameraRotate", unreal.InputActionValueType.AXIS2D, "camera_rotate_input_tag", "Mouse2D"),
+]
 
 BASE_COMPONENTS_ACTION_NAME = "OceanBase_AddComponents"
 BASE_INPUT_MAPPING_ACTION_NAME = "OceanBase_AddInputMapping"
@@ -175,14 +181,17 @@ def make_key(key_name):
 
 
 def configure_input_assets():
-    """Own the click action used by this feature's PawnData; never reference sibling content."""
+    """Own the top-down actions used by this feature's PawnData."""
     input_config = load_or_duplicate(BASE_INPUT_CONFIG_PATH, INPUT_CONFIG_PATH)
-    click_action = get_or_create_data_asset(
-        CLICK_ACTION_PATH,
-        unreal.InputAction,
-        unreal.InputActionFactory() if hasattr(unreal, "InputActionFactory") else None,
-    )
-    click_action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+    input_actions = []
+    for asset_name, value_type, _, _ in TOP_DOWN_INPUT_SPECS:
+        action = get_or_create_data_asset(
+            f"{INPUT_ROOT}/{asset_name}",
+            unreal.InputAction,
+            unreal.InputActionFactory() if hasattr(unreal, "InputActionFactory") else None,
+        )
+        action.set_editor_property("value_type", value_type)
+        input_actions.append(action)
 
     input_mapping = get_or_create_data_asset(
         INPUT_MAPPING_PATH,
@@ -191,29 +200,35 @@ def configure_input_assets():
         if hasattr(unreal, "InputMappingContext_Factory")
         else None,
     )
-    input_mapping.unmap_all_keys_from_action(click_action)
-    input_mapping.map_key(click_action, make_key("LeftMouseButton"))
+    for action, (_, _, _, key_name) in zip(input_actions, TOP_DOWN_INPUT_SPECS):
+        input_mapping.unmap_all_keys_from_action(action)
+        input_mapping.map_key(action, make_key(key_name))
 
     component_class = require_type("TopDownPawnComponent", "the TopDownFeature plugin")
     component_cdo = unreal.get_default_object(component_class)
-    click_tag = require(
-        component_cdo.get_editor_property("click_input_tag"),
-        "UTopDownPawnComponent has no valid ClickInputTag",
-    )
+    owned_tags = [
+        require(
+            component_cdo.get_editor_property(tag_property),
+            f"UTopDownPawnComponent has no valid {tag_property}",
+        )
+        for _, _, tag_property, _ in TOP_DOWN_INPUT_SPECS
+    ]
     native_actions = [
         action
         for action in input_config.get_editor_property("native_input_actions")
-        if action.get_editor_property("input_tag") != click_tag
+        if action.get_editor_property("input_tag") not in owned_tags
     ]
-    native_actions.append(
-        unreal.LyraInputAction(input_action=click_action, input_tag=click_tag)
-    )
+    for action, input_tag in zip(input_actions, owned_tags):
+        native_actions.append(
+            unreal.LyraInputAction(input_action=action, input_tag=input_tag)
+        )
     input_config.set_editor_property("native_input_actions", native_actions)
 
-    save(CLICK_ACTION_PATH)
+    for asset_name, _, _, _ in TOP_DOWN_INPUT_SPECS:
+        save(f"{INPUT_ROOT}/{asset_name}")
     save(INPUT_MAPPING_PATH)
     save(INPUT_CONFIG_PATH)
-    log("Configured OceanAdventure-owned top-down click action, mapping and InputConfig")
+    log("Configured OceanAdventure-owned top-down click and camera actions, mapping and InputConfig")
     return input_config, input_mapping
 
 

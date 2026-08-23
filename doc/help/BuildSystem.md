@@ -76,3 +76,10 @@ BuildSelect Raft.Piece.Prop.Campfire
          下一帧 UpdatePreview 用新索引从目录取件、重建幽灵
 ```
 
+
+## 错误排查
+
+现象	原因
+unknown piece	tag 没注册（RaftTags.ini 没生效或编辑器没重载插件），或目录里没有带这个 tag 的件
+没日志、静默返回	GetBuildComponent() 返回空——附近没有宿主
+有 "Selected build piece" 但幽灵没变	FindOrAddPreviewComponent(false) 传的是 false，不创建组件。没进建造模式时预览组件可能还不存在

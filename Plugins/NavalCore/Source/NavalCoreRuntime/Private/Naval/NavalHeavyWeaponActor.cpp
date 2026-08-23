@@ -53,6 +53,10 @@ ANavalHeavyWeaponActor::ANavalHeavyWeaponActor()
 	MuzzlePoint->SetupAttachment(TurretPivot);
 	MuzzlePoint->SetRelativeLocation(FVector(160.0, 0.0, 70.0));
 
+	OperatorPoint = CreateDefaultSubobject<USceneComponent>(TEXT("OperatorPoint"));
+	OperatorPoint->SetupAttachment(SceneRoot);
+	OperatorPoint->SetRelativeLocation(FVector(-110.0f, 0.0f, 90.0f));
+
 	// One collision body for the whole gun: the design wants the weapon itself shot apart,
 	// not its foundation, so there is nothing else to aim at.
 	WeaponCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("WeaponCollision"));
@@ -233,20 +237,42 @@ void ANavalHeavyWeaponActor::SetDesiredAimLocation(AActor* Source, const FVector
 	DesiredTurretYawLocal = FMath::Clamp(RawYaw, -TraverseHalfAngleDegrees, TraverseHalfAngleDegrees);
 }
 
+void ANavalHeavyWeaponActor::SetLocalPredictedAimLocation(
+	const AActor* Source, const FVector& WorldAimLocation)
+{
+	if (HasAuthority() || !Source || Source->GetAttachParentActor() != this)
+	{
+		return;
+	}
+
+	const FVector LocalAim = GetActorTransform().InverseTransformPosition(WorldAimLocation);
+	const float RawYaw = FMath::RadiansToDegrees(FMath::Atan2(LocalAim.Y, LocalAim.X));
+	LocalPredictedTurretYawLocal = FMath::Clamp(
+		RawYaw, -TraverseHalfAngleDegrees, TraverseHalfAngleDegrees);
+	bHasLocalPredictedAim = true;
+}
+
 void ANavalHeavyWeaponActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
 	if (HasAuthority() && !FMath::IsNearlyEqual(TurretYawLocal, DesiredTurretYawLocal, 0.05f))
 	{
-		TurretYawLocal = FMath::FInterpConstantTo(
-			TurretYawLocal, DesiredTurretYawLocal, DeltaTime, TraverseSpeedDegreesPerSecond);
+		// Scalar interpolation takes the long route when the target crosses +180/-180.
+		// Advance through the normalized angular delta so a full-traverse gun always turns
+		// along the shortest arc under the cursor.
+		const float DeltaYaw = FMath::FindDeltaAngleDegrees(TurretYawLocal, DesiredTurretYawLocal);
+		const float MaxStep = TraverseSpeedDegreesPerSecond * DeltaTime;
+		TurretYawLocal = FMath::UnwindDegrees(
+			TurretYawLocal + FMath::Clamp(DeltaYaw, -MaxStep, MaxStep));
 	}
 
 	if (TurretPivot)
 	{
-		// Presentation on every machine from the replicated angle; no client authority here.
-		TurretPivot->SetRelativeRotation(FRotator(0.0f, TurretYawLocal, 0.0f));
+		const float DisplayYaw = !HasAuthority() && bHasLocalPredictedAim
+			? LocalPredictedTurretYawLocal
+			: TurretYawLocal;
+		TurretPivot->SetRelativeRotation(FRotator(0.0f, DisplayYaw, 0.0f));
 	}
 }
 
@@ -335,7 +361,7 @@ bool ANavalHeavyWeaponActor::CanFire(
 	FNavalShotQuery Query;
 	Query.WorldContextObject = this;
 	Query.Start = MuzzleLocation;
-	Query.End = MuzzleLocation + GetMuzzleDirection() * FMath::Max(200.0f, MaxRange);
+	Query.End = AimLocation;
 	Query.TeamId = GetTeamId();
 	Query.TraceChannel = TraceChannel;
 	Query.MinimumRange = 0.0f;
@@ -356,15 +382,52 @@ bool ANavalHeavyWeaponActor::CanFire(
 	return true;
 }
 
-bool ANavalHeavyWeaponActor::TryFire(AActor* Requester, const FVector& AimLocation)
+bool ANavalHeavyWeaponActor::BuildChargedTrajectory(
+	const FVector& AimLocation,
+	float ChargeAlpha,
+	FVector& OutInitialVelocity,
+	float& OutGravityZ,
+	float& OutRange) const
+{
+	const FVector MuzzleLocation = GetMuzzleLocation();
+	FVector PlanarDirection = GetMuzzleDirection().GetSafeNormal2D();
+	if (PlanarDirection.IsNearlyZero())
+	{
+		PlanarDirection = GetActorForwardVector().GetSafeNormal2D();
+	}
+
+	const float FlightSeconds = FMath::Max(0.25f, TrajectoryFlightSeconds);
+	OutRange = FMath::Lerp(MinimumRange, MaxRange, FMath::Clamp(ChargeAlpha, 0.0f, 1.0f));
+	OutGravityZ = MaxTrajectoryRise > 0.0f
+		? -(8.0f * MaxTrajectoryRise) / FMath::Square(FlightSeconds)
+		: 0.0f;
+	const float VerticalSpeed = -0.5f * OutGravityZ * FlightSeconds;
+	OutInitialVelocity = PlanarDirection * (OutRange / FlightSeconds) + FVector::UpVector * VerticalSpeed;
+	return true;
+}
+
+FTransform ANavalHeavyWeaponActor::GetOperatorTransform() const
+{
+	return OperatorPoint ? OperatorPoint->GetComponentTransform() : GetActorTransform();
+}
+
+bool ANavalHeavyWeaponActor::TryFire(AActor* Requester, const FVector& AimLocation, float ChargeAlpha)
 {
 	if (!HasAuthority())
 	{
 		return false;
 	}
 
+	const float SanitizedCharge = FMath::Clamp(ChargeAlpha, 0.0f, 1.0f);
+	FVector PreviewVelocity = FVector::ZeroVector;
+	float PreviewGravityZ = 0.0f;
+	float SanitizedRange = 0.0f;
+	BuildChargedTrajectory(AimLocation, SanitizedCharge, PreviewVelocity, PreviewGravityZ, SanitizedRange);
+	const FVector SanitizedAimLocation = GetMuzzleLocation()
+		+ GetMuzzleDirection().GetSafeNormal2D() * SanitizedRange;
+
 	FGameplayTag FailReason;
-	if (!CanFire(Requester, AimLocation, FailReason))
+	if (!CanFire(Requester, SanitizedAimLocation, FailReason))
 	{
 		UE_LOG(
 			LogNavalCore,
@@ -376,7 +439,8 @@ bool ANavalHeavyWeaponActor::TryFire(AActor* Requester, const FVector& AimLocati
 		return false;
 	}
 
-	PendingAimLocation = AimLocation;
+	PendingAimLocation = SanitizedAimLocation;
+	PendingChargeAlpha = SanitizedCharge;
 	NextFireServerTime = NavalTime::GetNetworkTimeSeconds(this) + FireWindupSeconds + ReloadSeconds;
 	ForceNetUpdate();
 	BroadcastWeaponState();
@@ -418,8 +482,11 @@ void ANavalHeavyWeaponActor::SpawnProjectile()
 	}
 
 	const FVector MuzzleLocation = GetMuzzleLocation();
-	const FVector Direction = (PendingAimLocation - MuzzleLocation).GetSafeNormal(
-		UE_SMALL_NUMBER, GetMuzzleDirection());
+	FVector InitialVelocity = FVector::ZeroVector;
+	float GravityZ = 0.0f;
+	float ChargedRange = MaxRange;
+	BuildChargedTrajectory(PendingAimLocation, PendingChargeAlpha, InitialVelocity, GravityZ, ChargedRange);
+	const FVector Direction = InitialVelocity.GetSafeNormal(UE_SMALL_NUMBER, GetMuzzleDirection());
 
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.Owner = this;
@@ -434,12 +501,13 @@ void ANavalHeavyWeaponActor::SpawnProjectile()
 	}
 
 	FNavalProjectileLaunchParams Params;
-	Params.Direction = Direction;
+	Params.InitialVelocity = InitialVelocity;
+	Params.GravityZ = GravityZ;
 	Params.SourceWeapon = this;
 	Params.SourceOperator = WeaponOperator;
 	Params.TeamId = GetTeamId();
 	Params.MinimumRange = MinimumRange;
-	Params.MaxRange = MaxRange;
+	Params.MaxRange = ChargedRange;
 	Projectile->LaunchProjectile(Params);
 }
 

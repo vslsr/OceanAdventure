@@ -5,6 +5,7 @@
 #include "Building/BuildStructureComponent.h"
 #include "Building/BuildStructureVisualComponent.h"
 #include "Components/BoxComponent.h"
+#include "Components/GameFrameworkComponentManager.h"
 #include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/CollisionProfile.h"
@@ -51,6 +52,25 @@ ARaftActor::ARaftActor()
 	NetDormancy = DORM_Awake;
 }
 
+void ARaftActor::PreInitializeComponents()
+{
+	Super::PreInitializeComponents();
+	UGameFrameworkComponentManager::AddGameFrameworkComponentReceiver(this);
+}
+
+void ARaftActor::BeginPlay()
+{
+	Super::BeginPlay();
+	UGameFrameworkComponentManager::SendGameFrameworkComponentExtensionEvent(
+		this, UGameFrameworkComponentManager::NAME_GameActorReady);
+}
+
+void ARaftActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UGameFrameworkComponentManager::RemoveGameFrameworkComponentReceiver(this);
+	Super::EndPlay(EndPlayReason);
+}
+
 void ARaftActor::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
@@ -91,9 +111,9 @@ FVector ARaftActor::GetBaseDeckExtent() const
 void ARaftActor::RecomputeGridAlignment()
 {
 	const FVector Extent = GetBaseDeckExtent();
-	// A build cell is one complete raft section. Rectangular cells are required because the
-	// authored raft is much longer than it is wide; forcing it into a square is what caused
-	// the old preview to be scaled down and overlap the base raft.
+	// One hull/deck module is exactly one physical raft footprint. The grid coordinate is only
+	// the replicated occupancy address; it must never introduce a separately authored snap
+	// distance that can leave adjacent hull meshes overlapping or separated by a gap.
 	BuildGridSettings.CellSizeXY = FVector2D(Extent.X * 2.0, Extent.Y * 2.0);
 	const FVector2D CellSize = BuildGrid::GetCellSize(BuildGridSettings);
 

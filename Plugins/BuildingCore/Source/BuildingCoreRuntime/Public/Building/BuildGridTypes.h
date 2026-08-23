@@ -68,6 +68,11 @@ struct BUILDINGCORERUNTIME_API FBuildSlotKey
 {
 	GENERATED_BODY()
 
+	/** Dense, editor-style in-cell snap grid for props. */
+	static constexpr uint8 SubCellSide = 9;
+	static constexpr uint8 SubCellCount = SubCellSide * SubCellSide;
+	static constexpr uint8 CenterSubCell = SubCellCount / 2;
+
 	FBuildSlotKey() = default;
 	FBuildSlotKey(
 		const FBuildGridCoord& InCoord,
@@ -79,12 +84,11 @@ struct BUILDINGCORERUNTIME_API FBuildSlotKey
 		// Each field is normalised to zero where it carries no meaning, so two keys that
 		// describe the same slot always hash and compare equal.
 		, EdgeIndex(UsesEdgeIndex(InSlot) ? (InEdgeIndex & 3) : 0)
-		, SubCell(UsesSubCell(InSlot) ? FMath::Min<uint8>(InSubCell, 8) : CenterSubCell)
+		, SubCell(UsesSubCell(InSlot)
+			? FMath::Min<uint8>(InSubCell, SubCellCount - 1)
+			: CenterSubCell)
 	{
 	}
-
-	/** 3x3 layout inside a cell; 4 is the centre. */
-	static constexpr uint8 CenterSubCell = 4;
 
 	static bool UsesEdgeIndex(EBuildSlotType Slot)
 	{
@@ -106,7 +110,7 @@ struct BUILDINGCORERUNTIME_API FBuildSlotKey
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building")
 	uint8 EdgeIndex = 0;
 
-	/** Prop only: position inside the cell, 0..8 in row-major order with 4 at the centre. */
+	/** Prop only: position inside the 9x9 snap grid, row-major with 40 at the centre. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Building")
 	uint8 SubCell = FBuildSlotKey::CenterSubCell;
 
@@ -218,15 +222,19 @@ namespace BuildGrid
 		return 90.0f * (EdgeIndex & 3);
 	}
 
-	/** Offset from the cell centre for one of the nine in-cell prop positions. */
+	/** Offset from the cell centre for one point on the dense in-cell prop snap grid. */
 	inline FVector SubCellOffset(uint8 SubCell, const FBuildGridSettings& Settings)
 	{
 		const FVector2D CellSize = GetCellSize(Settings);
-		const int32 Clamped = FMath::Clamp<int32>(SubCell, 0, 8);
-		// Thirds rather than halves: the outer positions keep a margin to the cell edge, so
+		const int32 Clamped = FMath::Clamp<int32>(
+			SubCell, 0, FBuildSlotKey::SubCellCount - 1);
+		const int32 HalfSide = FBuildSlotKey::SubCellSide / 2;
+		// Dividing by the point count leaves half a snap step at the cell edge, so
 		// furniture on adjacent cells does not touch.
-		const double OffsetX = (Clamped % 3 - 1) * CellSize.X / 3.0;
-		const double OffsetY = (Clamped / 3 - 1) * CellSize.Y / 3.0;
+		const double OffsetX = (Clamped % FBuildSlotKey::SubCellSide - HalfSide)
+			* CellSize.X / FBuildSlotKey::SubCellSide;
+		const double OffsetY = (Clamped / FBuildSlotKey::SubCellSide - HalfSide)
+			* CellSize.Y / FBuildSlotKey::SubCellSide;
 		return FVector(OffsetX, OffsetY, 0.0);
 	}
 
@@ -234,9 +242,15 @@ namespace BuildGrid
 	inline uint8 FindNearestSubCell(const FVector& OffsetFromCenter, const FBuildGridSettings& Settings)
 	{
 		const FVector2D CellSize = GetCellSize(Settings);
-		const int32 Column = FMath::Clamp(FMath::RoundToInt(OffsetFromCenter.X / (CellSize.X / 3.0)), -1, 1);
-		const int32 Row = FMath::Clamp(FMath::RoundToInt(OffsetFromCenter.Y / (CellSize.Y / 3.0)), -1, 1);
-		return static_cast<uint8>((Row + 1) * 3 + (Column + 1));
+		const int32 HalfSide = FBuildSlotKey::SubCellSide / 2;
+		const double StepX = CellSize.X / FBuildSlotKey::SubCellSide;
+		const double StepY = CellSize.Y / FBuildSlotKey::SubCellSide;
+		const int32 Column = FMath::Clamp(
+			FMath::RoundToInt(OffsetFromCenter.X / StepX), -HalfSide, HalfSide);
+		const int32 Row = FMath::Clamp(
+			FMath::RoundToInt(OffsetFromCenter.Y / StepY), -HalfSide, HalfSide);
+		return static_cast<uint8>(
+			(Row + HalfSide) * FBuildSlotKey::SubCellSide + Column + HalfSide);
 	}
 
 	/** Same-level 4-neighbours only; used for snapping and support checks. */

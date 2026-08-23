@@ -64,6 +64,8 @@ protected:
 	/** Client side. True while the station is still worth staying at. */
 	virtual bool IsStationStillValid(AActor* Station) const;
 
+	virtual bool GetOperatorTransform(AActor* Station, FTransform& OutTransform) const;
+
 	AActor* GetStationActor() const { return ActiveStation.Get(); }
 
 	/** Vessel the station belongs to, when it is on one. */

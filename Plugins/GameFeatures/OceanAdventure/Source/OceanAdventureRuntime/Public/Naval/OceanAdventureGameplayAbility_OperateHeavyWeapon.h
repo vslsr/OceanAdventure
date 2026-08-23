@@ -34,4 +34,5 @@ protected:
 	virtual bool BuildControlSample(FOceanAdventureNavalTargetData& OutData) const override;
 	virtual FGameplayTag GetStationStatusTag() const override;
 	virtual bool IsStationStillValid(AActor* Station) const override;
+	virtual bool GetOperatorTransform(AActor* Station, FTransform& OutTransform) const override;
 };

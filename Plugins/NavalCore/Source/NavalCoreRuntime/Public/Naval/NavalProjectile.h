@@ -11,7 +11,8 @@ class UStaticMeshComponent;
 /** What the firing weapon hands its shell. */
 struct FNavalProjectileLaunchParams
 {
-	FVector Direction = FVector::ForwardVector;
+	FVector InitialVelocity = FVector::ForwardVector * 3200.0f;
+	float GravityZ = -40.0f;
 	AActor* SourceWeapon = nullptr;
 	AActor* SourceOperator = nullptr;
 	int32 TeamId = INDEX_NONE;
@@ -20,15 +21,15 @@ struct FNavalProjectileLaunchParams
 };
 
 /**
- * A heavy weapon's shell: slow, straight, and loud enough to be read and dodged.
+ * A heavy weapon's shell: slow, low-arc, and loud enough to be read and dodged.
  *
- * There is no gravity and no homing, both on purpose. Design 7.7 rule 4 rules out lobbing
- * anything over a wall, and 7.10 wants a moving character to be able to sidestep a shell
- * after seeing the muzzle -- which only works if the flight is honest and readable.
+ * The shallow custom gravity makes charge readable without turning the cannon into a mortar.
+ * The server still applies the shared wall rule before launch and along every travelled
+ * segment, so no charge can lob a shell over cover.
  *
  * The server owns the hit: it sweeps the segment travelled each frame through the shared
  * ballistic rule, so a shell is stopped by the same walls and passed by the same windows as
- * a rifle round. Clients run the same straight-line motion purely as presentation.
+ * a rifle round. Clients run the same deterministic motion purely as presentation.
  */
 UCLASS(BlueprintType, Blueprintable)
 class NAVALCORERUNTIME_API ANavalProjectile : public AActor
@@ -41,20 +42,16 @@ public:
 	virtual void Tick(float DeltaTime) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	/** Server-side. Sets heading, ownership and the range window, then starts the flight. */
+	/** Server-side. Sets ballistic velocity, ownership and the range window, then starts the flight. */
 	void LaunchProjectile(const FNavalProjectileLaunchParams& Params);
 
 	UFUNCTION(BlueprintPure, Category = "Naval|Projectile")
-	float GetSpeed() const { return Speed; }
+	float GetSpeed() const { return FlightVelocity.Size(); }
 
 	UFUNCTION(BlueprintPure, Category = "Naval|Projectile")
 	int32 GetTeamId() const { return TeamId; }
 
 protected:
-	/** Deliberately slow. 32 m/s leaves a visible, dodgeable flight at engagement ranges. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Projectile", meta = (ClampMin = "100.0", Units = "cm/s"))
-	float Speed = 3200.0f;
-
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Projectile", meta = (ClampMin = "0.1", Units = "s"))
 	float MaxLifeSeconds = 6.0f;
 
@@ -86,7 +83,10 @@ protected:
 	int32 TeamId = INDEX_NONE;
 
 	UPROPERTY(Replicated)
-	FVector_NetQuantizeNormal FlightDirection = FVector::ForwardVector;
+	FVector_NetQuantize100 FlightVelocity = FVector::ForwardVector * 3200.0f;
+
+	UPROPERTY(Replicated)
+	float GravityZ = -40.0f;
 
 private:
 	void HandleImpact(const struct FNavalShotResult& Result);

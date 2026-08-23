@@ -2,17 +2,17 @@
 
 This GameFeature provides two reusable runtime classes:
 
-- `ULyraCameraMode_TopDownFollow`: fixed-angle camera centered on the current Lyra camera target.
-- `UTopDownPawnComponent`: optional direct click-to-move input using the pawn's existing movement component.
+- `ULyraCameraMode_TopDownFollow`: smooth zoomable/orbiting camera centered on the current Lyra camera target.
+- `UTopDownPawnComponent`: optional direct click-to-move plus local camera input using the pawn's existing Lyra input component.
 
 ## Generated assets
 
 The following assets are included in the plugin:
 
 1. `/TopDownFeature/TopDownFeature` (`UGameFeatureData`).
-2. `/TopDownFeature/Input/IA_TopDownClick` (`UInputAction`, Boolean).
-3. `/TopDownFeature/Input/IMC_TopDown`, mapping left mouse button to `IA_TopDownClick`.
-4. `/TopDownFeature/Input/DA_TopDown_InputConfig`, with the click action registered as the `InputTag.TopDownClick` native action.
+2. `/TopDownFeature/Input/IA_TopDownClick` plus zoom, rotate-hold and pointer-delta `UInputAction` assets.
+3. `/TopDownFeature/Input/IMC_TopDown`, mapping left click, mouse wheel, right click and mouse delta.
+4. `/TopDownFeature/Input/DA_TopDown_InputConfig`, registering all four actions by native `InputTag`.
 5. `/TopDownFeature/Pawn/DA_TopDown_PawnData`, using the project-owned default hero pawn and `ULyraCameraMode_TopDownFollow` as `DefaultCameraMode`.
 
 The generated PawnData intentionally has no AbilitySets. This keeps the reusable
@@ -44,6 +44,6 @@ The target pawn must be a ModularGameplay component receiver and own a `ULyraCam
 
 ## Runtime behavior
 
-The component waits for Lyra's `BindInputsNow` extension event before binding the native click action. If the component is injected after that event, it uses `ULyraHeroComponent::IsReadyToBindInputs()` to bind immediately. Input handles and cursor state are restored when the component or GameFeature is removed.
+The component waits for Lyra's `BindInputsNow` extension event before binding its native actions. If the component is injected after that event, it uses `ULyraHeroComponent::IsReadyToBindInputs()` to bind immediately. Mouse-wheel zoom is clamped and smoothed by the camera mode. Holding right mouse pushes a CommonUI game-capture policy; horizontal pointer delta rotates the camera until release, when the prior CommonUI policy is restored. Input handles and UI state are also restored when the component or GameFeature is removed.
 
 Click movement is intentionally direct movement, not pathfinding. It runs only for the locally controlled pawn and relies on the existing movement component's prediction and replication. Add NavMesh path following and server-side target validation as a separate multiplayer feature.

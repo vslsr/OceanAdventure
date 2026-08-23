@@ -139,16 +139,9 @@ bool UOceanAdventureNavalStatics::GetCursorAimLocation(
 		return false;
 	}
 
-	FHitResult CursorHit;
-	if (PlayerController->GetHitResultUnderCursor(ECC_Visibility, /*bTraceComplex=*/false, CursorHit)
-		&& CursorHit.bBlockingHit)
-	{
-		OutAimLocation = CursorHit.ImpactPoint;
-		return true;
-	}
-
-	// Nothing under the cursor: project onto the plane the pawn is standing on so aiming out
-	// over open water still produces a point on the water rather than nothing at all.
+	// Always project onto the operator's horizontal plane. GetHitResultUnderCursor is wrong
+	// for a station: the cursor commonly hits the attached character or the cannon itself,
+	// which makes the turret turn back toward its operator and appear to ignore the mouse.
 	FVector WorldOrigin = FVector::ZeroVector;
 	FVector WorldDirection = FVector::ForwardVector;
 	const APawn* Pawn = PlayerController->GetPawn();
@@ -157,7 +150,10 @@ bool UOceanAdventureNavalStatics::GetCursorAimLocation(
 		return false;
 	}
 
-	const double PlaneZ = Pawn->GetActorLocation().Z;
+	const AActor* AttachedStation = Pawn->GetAttachParentActor();
+	const double PlaneZ = AttachedStation
+		? AttachedStation->GetActorLocation().Z
+		: Pawn->GetActorLocation().Z;
 	if (FMath::IsNearlyZero(WorldDirection.Z))
 	{
 		return false;

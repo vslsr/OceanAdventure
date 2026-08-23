@@ -40,6 +40,9 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Top Down|Movement")
 	FVector GetMoveTarget() const { return MoveTarget; }
 
+	float GetCameraDistance() const { return CameraDistance; }
+	float GetCameraYawOffset() const { return CameraYawOffset; }
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -50,16 +53,35 @@ private:
 	void BindInputIfReady();
 	void UnbindInput();
 	void Input_TopDownClick(const FInputActionValue& InputActionValue);
+	void Input_CameraZoom(const FInputActionValue& InputActionValue);
+	void Input_CameraRotateStarted(const FInputActionValue& InputActionValue);
+	void Input_CameraRotateCompleted(const FInputActionValue& InputActionValue);
+	void Input_CameraRotate(const FInputActionValue& InputActionValue);
 	void EnsureInputWidget(APlayerController* PlayerController);
 	void RemoveInputWidget();
+	void PushCameraDragInputWidget(APlayerController* PlayerController);
+	void PopCameraDragInputWidget();
 
 	/** Native action in the active PawnData InputConfig that represents a world click. */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
 	FGameplayTag ClickInputTag;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
+	FGameplayTag CameraZoomInputTag;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
+	FGameplayTag CameraRotateHoldInputTag;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
+	FGameplayTag CameraRotateInputTag;
+
 	/** CommonUI policy widget that keeps the cursor visible without touching PlayerController state. */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input")
 	TSubclassOf<UCommonActivatableWidget> InputWidgetClass;
+
+	/** CommonUI policy used only while the rotate button is held, so pointer delta remains available at screen edges. */
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input")
+	TSubclassOf<UCommonActivatableWidget> CameraDragInputWidgetClass;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "UI.Layer"))
 	FGameplayTag UILayerTag;
@@ -77,15 +99,36 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Movement", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float AcceptanceRadius;
 
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Camera", meta = (ClampMin = "0.0"))
+	float InitialCameraDistance;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Camera", meta = (ClampMin = "0.0"))
+	float MinCameraDistance;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Camera", meta = (ClampMin = "0.0"))
+	float MaxCameraDistance;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Camera", meta = (ClampMin = "0.0"))
+	float ZoomUnitsPerStep;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Camera")
+	float RotationDegreesPerPixel;
+
 	UPROPERTY(Transient)
 	TObjectPtr<UEnhancedInputComponent> BoundInputComponent;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UCommonActivatableWidget> PushedInputWidget;
 
+	UPROPERTY(Transient)
+	TObjectPtr<UCommonActivatableWidget> PushedCameraDragInputWidget;
+
 	TArray<uint32> InputBindingHandles;
 	TSharedPtr<FComponentRequestHandle> ExtensionRequestHandle;
 	FVector MoveTarget;
+	float CameraDistance;
+	float CameraYawOffset;
 	bool bHasMoveTarget;
 	bool bInputBound;
+	bool bCameraRotateHeld;
 };

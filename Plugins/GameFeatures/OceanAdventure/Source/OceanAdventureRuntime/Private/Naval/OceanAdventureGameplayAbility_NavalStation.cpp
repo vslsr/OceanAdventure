@@ -33,6 +33,15 @@ void UOceanAdventureGameplayAbility_NavalStation::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[NavalStation] Activate ability=%s avatar=%s local=%d authority=%d search_radius=%.1f"),
+		*GetNameSafe(this),
+		*GetNameSafe(GetAvatarActorFromActorInfo()),
+		ActorInfo && ActorInfo->IsLocallyControlled(),
+		HasAuthority(&ActivationInfo),
+		StationSearchRadius);
 
 	UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	if (!AbilitySystem)
@@ -57,12 +66,23 @@ void UOceanAdventureGameplayAbility_NavalStation::ActivateAbility(
 	AActor* Station = FindStationInRange();
 	if (!Station)
 	{
+		const AActor* Avatar = GetAvatarActorFromActorInfo();
+		const FString OriginText = Avatar ? Avatar->GetActorLocation().ToCompactString() : TEXT("None");
+		UE_LOG(LogOceanAdventure, Warning,
+			TEXT("[NavalStation] No station found ability=%s avatar=%s origin=%s radius=%.1f"),
+			*GetNameSafe(this), *GetNameSafe(Avatar), *OriginText,
+			StationSearchRadius);
 		BroadcastStationFailure(NavalGameplayTags::Fail_TooFar, nullptr);
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
 	ActiveStation = Station;
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalStation] Local station selected ability=%s station=%s distance=%.1f"),
+		*GetNameSafe(this), *GetNameSafe(Station),
+		GetAvatarActorFromActorInfo()
+			? FVector::Dist(GetAvatarActorFromActorInfo()->GetActorLocation(), Station->GetActorLocation()) : -1.0f);
 
 	FOceanAdventureNavalTargetData OccupyData;
 	OccupyData.StationActor = Station;
@@ -90,6 +110,10 @@ void UOceanAdventureGameplayAbility_NavalStation::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalStation] End ability=%s avatar=%s station=%s entered=%d cancelled=%d local=%d authority=%d"),
+		*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(ActiveStation.Get()),
+		bStationEntered, bWasCancelled, ActorInfo && ActorInfo->IsLocallyControlled(), HasAuthority(&ActivationInfo));
 	if (OnTargetDataReadyHandle.IsValid() && ActorInfo)
 	{
 		if (UAbilitySystemComponent* AbilitySystem = ActorInfo->AbilitySystemComponent.Get())
@@ -166,6 +190,14 @@ void UOceanAdventureGameplayAbility_NavalStation::OnTargetDataReadyCallback(
 
 	if (CurrentActorInfo->IsLocallyControlled() && !CurrentActorInfo->IsNetAuthority())
 	{
+		UE_LOG(LogOceanAdventure, Verbose,
+			TEXT("[NavalStation] Send TargetData request=%d station=%s avatar=%s"),
+			static_cast<int32>(LocalData.Num() > 0
+				? static_cast<const FOceanAdventureNavalTargetData*>(LocalData.Get(0))->Request
+				: ENavalStationRequest::Release),
+			*GetNameSafe(LocalData.Num() > 0
+				? static_cast<const FOceanAdventureNavalTargetData*>(LocalData.Get(0))->StationActor.Get() : nullptr),
+			*GetNameSafe(GetAvatarActorFromActorInfo()));
 		AbilitySystem->CallServerSetReplicatedTargetData(
 			CurrentSpecHandle,
 			CurrentActivationInfo.GetActivationPredictionKey(),
@@ -190,8 +222,14 @@ void UOceanAdventureGameplayAbility_NavalStation::OnTargetDataReadyCallback(
 			{
 			case ENavalStationRequest::Occupy:
 				ActiveStation = Station;
+				UE_LOG(LogOceanAdventure, Display,
+					TEXT("[NavalStation] Server occupy request ability=%s station=%s avatar=%s"),
+					*GetNameSafe(this), *GetNameSafe(Station), *GetNameSafe(GetAvatarActorFromActorInfo()));
 				if (!ServerOccupyStation(Station))
 				{
+					UE_LOG(LogOceanAdventure, Warning,
+						TEXT("[NavalStation] Server occupy refused ability=%s station=%s avatar=%s"),
+						*GetNameSafe(this), *GetNameSafe(Station), *GetNameSafe(GetAvatarActorFromActorInfo()));
 					// Refused on the server. The client already attached optimistically, so
 					// ending here is what unwinds it.
 					ActiveStation.Reset();
@@ -199,6 +237,9 @@ void UOceanAdventureGameplayAbility_NavalStation::OnTargetDataReadyCallback(
 					return;
 				}
 				EnterStationPresentation(Station);
+				UE_LOG(LogOceanAdventure, Display,
+					TEXT("[NavalStation] Server occupy accepted ability=%s station=%s avatar=%s"),
+					*GetNameSafe(this), *GetNameSafe(Station), *GetNameSafe(GetAvatarActorFromActorInfo()));
 				break;
 
 			case ENavalStationRequest::Release:
@@ -276,6 +317,17 @@ void UOceanAdventureGameplayAbility_NavalStation::EnterStationPresentation(AActo
 		// the control samples below rather than being fed to the legs.
 		Movement->SetMovementMode(MOVE_None);
 	}
+
+	FTransform OperatorTransform;
+	if (GetOperatorTransform(Station, OperatorTransform))
+	{
+		Character->SetActorLocationAndRotation(
+			OperatorTransform.GetLocation(),
+			OperatorTransform.Rotator(),
+			/*bSweep=*/false,
+			nullptr,
+			ETeleportType::TeleportPhysics);
+	}
 	Character->AttachToActor(Station, FAttachmentTransformRules::KeepWorldTransform);
 
 	if (UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo())
@@ -284,6 +336,10 @@ void UOceanAdventureGameplayAbility_NavalStation::EnterStationPresentation(AActo
 		if (StatusTag.IsValid())
 		{
 			AbilitySystem->AddLooseGameplayTag(StatusTag);
+			UE_LOG(LogOceanAdventure, Display,
+				TEXT("[NavalStation] Presentation entered avatar=%s station=%s status=%s attached_to=%s"),
+				*GetNameSafe(Character), *GetNameSafe(Station), *StatusTag.ToString(),
+				*GetNameSafe(Character->GetAttachParentActor()));
 		}
 	}
 
@@ -403,4 +459,10 @@ FGameplayTag UOceanAdventureGameplayAbility_NavalStation::GetStationStatusTag() 
 bool UOceanAdventureGameplayAbility_NavalStation::IsStationStillValid(AActor* Station) const
 {
 	return IsValid(Station);
+}
+
+bool UOceanAdventureGameplayAbility_NavalStation::GetOperatorTransform(
+	AActor* /*Station*/, FTransform& /*OutTransform*/) const
+{
+	return false;
 }

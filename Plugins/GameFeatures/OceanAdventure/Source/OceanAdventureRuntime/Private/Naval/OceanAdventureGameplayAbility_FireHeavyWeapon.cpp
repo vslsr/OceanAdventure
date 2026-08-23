@@ -3,11 +3,15 @@
 #include "Naval/OceanAdventureGameplayAbility_FireHeavyWeapon.h"
 
 #include "AbilitySystemComponent.h"
+#include "Abilities/Tasks/AbilityTask_WaitInputRelease.h"
 #include "Engine/World.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
 #include "GameFramework/PlayerController.h"
+#include "Naval/NavalBallistics.h"
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalHeavyWeaponActor.h"
+#include "Naval/OceanAdventureAbilityTask_NavalControl.h"
+#include "Naval/OceanAdventureCannonTrajectoryPreview.h"
 #include "Naval/OceanAdventureNavalMessages.h"
 #include "Naval/OceanAdventureNavalStatics.h"
 #include "Naval/OceanAdventureNavalTags.h"
@@ -32,13 +36,20 @@ bool UOceanAdventureGameplayAbility_FireHeavyWeapon::CanActivateAbility(
 {
 	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
 	{
+		UE_LOG(LogOceanAdventure, Display,
+			TEXT("[NavalFire] CanActivate rejected by Super avatar=%s"),
+			*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr));
 		return false;
 	}
 
 	// Firing only exists while the player is actually at a gun, on both client and server.
 	const UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
-	return AbilitySystem
+	const bool bOperating = AbilitySystem
 		&& AbilitySystem->HasMatchingGameplayTag(OceanAdventureNavalTags::Status_Naval_OperatingHeavyWeapon);
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalFire] CanActivate avatar=%s has_asc=%d operating_tag=%d"),
+		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr), AbilitySystem != nullptr, bOperating);
+	return bOperating;
 }
 
 ANavalHeavyWeaponActor* UOceanAdventureGameplayAbility_FireHeavyWeapon::FindOperatedWeapon() const
@@ -56,7 +67,15 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::ActivateAbility(
 	const FGameplayEventData* TriggerEventData)
 {
 	bFireResolved = false;
+	ChargeElapsedSeconds = 0.0f;
+	CurrentChargeAlpha = MinimumChargeAlpha;
+	ChargingWeapon.Reset();
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalFire] Activate avatar=%s local=%d authority=%d attached_to=%s"),
+		*GetNameSafe(GetAvatarActorFromActorInfo()), ActorInfo && ActorInfo->IsLocallyControlled(),
+		HasAuthority(&ActivationInfo),
+		*GetNameSafe(GetAvatarActorFromActorInfo() ? GetAvatarActorFromActorInfo()->GetAttachParentActor() : nullptr));
 
 	UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	if (!AbilitySystem)
@@ -79,25 +98,157 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::ActivateAbility(
 	ANavalHeavyWeaponActor* Weapon = FindOperatedWeapon();
 	if (!Weapon)
 	{
+		UE_LOG(LogOceanAdventure, Warning,
+			TEXT("[NavalFire] No operated weapon found avatar=%s attached_to=%s"),
+			*GetNameSafe(GetAvatarActorFromActorInfo()),
+			*GetNameSafe(GetAvatarActorFromActorInfo() ? GetAvatarActorFromActorInfo()->GetAttachParentActor() : nullptr));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
 
-	APlayerController* PlayerController = Cast<APlayerController>(GetControllerFromActorInfo());
-	FVector AimLocation = FVector::ZeroVector;
-	if (!UOceanAdventureNavalStatics::GetCursorAimLocation(PlayerController, AimLocation))
+	ChargingWeapon = Weapon;
+	if (UWorld* World = GetWorld())
 	{
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.Owner = GetAvatarActorFromActorInfo();
+		SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		TrajectoryPreview = World->SpawnActor<AOceanAdventureCannonTrajectoryPreview>(
+			AOceanAdventureCannonTrajectoryPreview::StaticClass(), FTransform::Identity, SpawnParameters);
+	}
+
+	ChargeTask = UOceanAdventureAbilityTask_NavalControl::NavalControlTick(this, PreviewSampleInterval);
+	if (ChargeTask)
+	{
+		ChargeTask->OnControlSample.AddUObject(this, &ThisClass::UpdateCharge);
+		ChargeTask->ReadyForActivation();
+	}
+
+	UAbilityTask_WaitInputRelease* ReleaseTask = UAbilityTask_WaitInputRelease::WaitInputRelease(
+		this, /*bTestAlreadyReleased=*/false);
+	if (ReleaseTask)
+	{
+		ReleaseTask->OnRelease.AddDynamic(this, &ThisClass::OnInputReleased);
+		ReleaseTask->ReadyForActivation();
+	}
+	UpdateTrajectoryPreview();
+}
+
+void UOceanAdventureGameplayAbility_FireHeavyWeapon::UpdateCharge(float DeltaTime)
+{
+	ChargeElapsedSeconds += DeltaTime;
+	CurrentChargeAlpha = FMath::Clamp(
+		ChargeElapsedSeconds / FMath::Max(0.1f, MaxChargeSeconds),
+		MinimumChargeAlpha,
+		1.0f);
+	UpdateTrajectoryPreview();
+}
+
+void UOceanAdventureGameplayAbility_FireHeavyWeapon::UpdateTrajectoryPreview()
+{
+	ANavalHeavyWeaponActor* Weapon = ChargingWeapon.Get();
+	UWorld* World = GetWorld();
+	if (!Weapon || !TrajectoryPreview || !World)
+	{
 		return;
 	}
 
-	// The same predicate the server will run. Failing here means the player is told why
-	// without the round trip; passing here still proves nothing to the server.
+	const FVector Muzzle = Weapon->GetMuzzleLocation();
+	FVector AimDirection = Weapon->GetMuzzleDirection().GetSafeNormal2D();
+	if (AimDirection.IsNearlyZero())
+	{
+		AimDirection = Weapon->GetActorForwardVector().GetSafeNormal2D();
+	}
+	const FVector RequestedAim = Muzzle + AimDirection * Weapon->GetMaxRange();
+	FVector InitialVelocity = FVector::ZeroVector;
+	float GravityZ = 0.0f;
+	float Range = 0.0f;
+	Weapon->BuildChargedTrajectory(RequestedAim, CurrentChargeAlpha, InitialVelocity, GravityZ, Range);
+
+	const float PlanarSpeed = InitialVelocity.Size2D();
+	float MaxTime = PlanarSpeed > UE_KINDA_SMALL_NUMBER ? Range / PlanarSpeed : 0.0f;
+	bool bBlocked = false;
+
+	// A wall blocks the horizontal fire line even if the visual parabola could rise above it.
+	FNavalShotQuery HorizontalQuery;
+	HorizontalQuery.WorldContextObject = this;
+	HorizontalQuery.Start = Muzzle;
+	HorizontalQuery.End = Muzzle + AimDirection * Range;
+	HorizontalQuery.TeamId = Weapon->GetTeamId();
+	HorizontalQuery.IgnoreActors.Add(Weapon);
+	if (AActor* Avatar = GetAvatarActorFromActorInfo())
+	{
+		HorizontalQuery.IgnoreActors.Add(Avatar);
+	}
+	ENavalShotBlockReason HorizontalReason = ENavalShotBlockReason::None;
+	FVector HorizontalBlockLocation = HorizontalQuery.End;
+	if (!FNavalBallistics::IsFireLineClear(HorizontalQuery, HorizontalReason, HorizontalBlockLocation))
+	{
+		MaxTime = FMath::Min(MaxTime, FVector::Dist2D(Muzzle, HorizontalBlockLocation) / FMath::Max(1.0f, PlanarSpeed));
+		bBlocked = true;
+	}
+
+	TArray<FVector> Points;
+	Points.Reserve(FMath::CeilToInt(MaxTime / PreviewSampleInterval) + 2);
+	Points.Add(Muzzle);
+	FVector Previous = Muzzle;
+	const float SampleStep = FMath::Max(0.016f, PreviewSampleInterval);
+	for (float Time = FMath::Min(SampleStep, MaxTime); MaxTime > 0.0f; Time = FMath::Min(Time + SampleStep, MaxTime))
+	{
+		const float ClampedTime = FMath::Min(Time, MaxTime);
+		const FVector Point = Muzzle + InitialVelocity * ClampedTime
+			+ FVector(0.0f, 0.0f, 0.5f * GravityZ * FMath::Square(ClampedTime));
+
+		FNavalShotQuery SegmentQuery = HorizontalQuery;
+		SegmentQuery.Start = Previous;
+		SegmentQuery.End = Point;
+		FNavalShotResult SegmentResult;
+		if (FNavalBallistics::ResolveShot(SegmentQuery, SegmentResult) && SegmentResult.bHit)
+		{
+			Points.Add(SegmentResult.Hit.ImpactPoint);
+			bBlocked = bBlocked || FNavalBallistics::IsStructuralBlocker(SegmentResult.Hit);
+			break;
+		}
+
+		Points.Add(Point);
+		Previous = Point;
+		if (FMath::IsNearlyEqual(ClampedTime, MaxTime))
+		{
+			break;
+		}
+	}
+
+	TrajectoryPreview->SetTrajectory(Points, bBlocked);
+}
+
+void UOceanAdventureGameplayAbility_FireHeavyWeapon::OnInputReleased(float /*TimeHeld*/)
+{
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalFire] Input released avatar=%s charge=%.2f elapsed=%.2f"),
+		*GetNameSafe(GetAvatarActorFromActorInfo()), CurrentChargeAlpha, ChargeElapsedSeconds);
+	CommitChargedShot();
+}
+
+void UOceanAdventureGameplayAbility_FireHeavyWeapon::CommitChargedShot()
+{
+	ANavalHeavyWeaponActor* Weapon = ChargingWeapon.Get();
+	if (!Weapon || bFireResolved)
+	{
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+		return;
+	}
+
+	const FVector Muzzle = Weapon->GetMuzzleLocation();
+	const FVector AimLocation = Muzzle + Weapon->GetMuzzleDirection().GetSafeNormal2D()
+		* FMath::Lerp(Weapon->GetMinimumRange(), Weapon->GetMaxRange(), CurrentChargeAlpha);
 	FGameplayTag FailReason;
 	if (!Weapon->CanFire(GetAvatarActorFromActorInfo(), AimLocation, FailReason))
 	{
+		UE_LOG(LogOceanAdventure, Warning,
+			TEXT("[NavalFire] Local CanFire refused weapon=%s avatar=%s reason=%s aim=%s charge=%.2f"),
+			*GetNameSafe(Weapon), *GetNameSafe(GetAvatarActorFromActorInfo()), *FailReason.ToString(),
+			*AimLocation.ToString(), CurrentChargeAlpha);
 		BroadcastFailure(FailReason, Weapon);
-		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 		return;
 	}
 
@@ -105,6 +256,11 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::ActivateAbility(
 	FireData.StationActor = Weapon;
 	FireData.Request = ENavalStationRequest::Fire;
 	FireData.AimLocation = AimLocation;
+	FireData.SetChargeAlpha(CurrentChargeAlpha);
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalFire] Submit shot weapon=%s avatar=%s aim=%s charge=%.2f"),
+		*GetNameSafe(Weapon), *GetNameSafe(GetAvatarActorFromActorInfo()),
+		*AimLocation.ToString(), CurrentChargeAlpha);
 
 	FGameplayAbilityTargetDataHandle DataHandle;
 	DataHandle.Add(new FOceanAdventureNavalTargetData(FireData));
@@ -155,7 +311,8 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::OnTargetDataReadyCallback(
 			: nullptr;
 
 		// TryFire re-runs every check itself; the client's verdict is only a hint.
-		if (!Weapon || !Weapon->TryFire(GetAvatarActorFromActorInfo(), Data->AimLocation))
+		if (!Weapon || !Weapon->TryFire(
+			GetAvatarActorFromActorInfo(), Data->AimLocation, Data->GetChargeAlpha()))
 		{
 			UE_LOG(
 				LogOceanAdventure,
@@ -179,6 +336,15 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	if (ChargeTask)
+	{
+		ChargeTask->OnControlSample.RemoveAll(this);
+		ChargeTask->EndTask();
+		ChargeTask = nullptr;
+	}
+	DestroyTrajectoryPreview();
+	ChargingWeapon.Reset();
+
 	if (OnTargetDataReadyHandle.IsValid() && ActorInfo)
 	{
 		if (UAbilitySystemComponent* AbilitySystem = ActorInfo->AbilitySystemComponent.Get())
@@ -190,6 +356,15 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::EndAbility(
 	}
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
+}
+
+void UOceanAdventureGameplayAbility_FireHeavyWeapon::DestroyTrajectoryPreview()
+{
+	if (TrajectoryPreview)
+	{
+		TrajectoryPreview->Destroy();
+		TrajectoryPreview = nullptr;
+	}
 }
 
 void UOceanAdventureGameplayAbility_FireHeavyWeapon::BroadcastFailure(

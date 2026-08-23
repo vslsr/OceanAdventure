@@ -59,6 +59,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|HeavyWeapon")
 	void SetDesiredAimLocation(AActor* Source, const FVector& WorldAimLocation);
 
+	/** Immediate owning-client presentation; it never changes authoritative aim state. */
+	void SetLocalPredictedAimLocation(const AActor* Source, const FVector& WorldAimLocation);
+
 	/**
 	 * Everything that can refuse a shot, in one place so the client's preview and the
 	 * server's verdict cannot disagree: state, operator, reload, minimum range, and whether
@@ -68,13 +71,25 @@ public:
 	bool CanFire(const AActor* Requester, const FVector& AimLocation, FGameplayTag& OutFailReason) const;
 
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|HeavyWeapon")
-	bool TryFire(AActor* Requester, const FVector& AimLocation);
+	bool TryFire(AActor* Requester, const FVector& AimLocation, float ChargeAlpha = 1.0f);
+
+	/** Builds the exact low ballistic arc used by both the local preview and spawned shell. */
+	UFUNCTION(BlueprintCallable, Category = "Naval|HeavyWeapon")
+	bool BuildChargedTrajectory(
+		const FVector& AimLocation,
+		float ChargeAlpha,
+		FVector& OutInitialVelocity,
+		float& OutGravityZ,
+		float& OutRange) const;
 
 	UFUNCTION(BlueprintPure, Category = "Naval|HeavyWeapon")
 	FVector GetMuzzleLocation() const;
 
 	UFUNCTION(BlueprintPure, Category = "Naval|HeavyWeapon")
 	FVector GetMuzzleDirection() const;
+
+	UFUNCTION(BlueprintPure, Category = "Naval|HeavyWeapon")
+	FTransform GetOperatorTransform() const;
 
 	UFUNCTION(BlueprintPure, Category = "Naval|HeavyWeapon")
 	float GetReloadSecondsRemaining() const;
@@ -120,12 +135,20 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "0.0", Units = "cm"))
 	float MaxRange = 14000.0f;
 
+	/** Seconds from muzzle to the nominal end of the preview. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "0.25", Units = "s"))
+	float TrajectoryFlightSeconds = 4.0f;
+
+	/** The arc stays deliberately below ordinary walls; walls also block the horizontal fire line. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "0.0", Units = "cm"))
+	float MaxTrajectoryRise = 80.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon",
 		meta = (ClampMin = "5.0", ClampMax = "180.0", Units = "deg"))
-	float TraverseHalfAngleDegrees = 55.0f;
+	float TraverseHalfAngleDegrees = 180.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "1.0", Units = "deg"))
-	float TraverseSpeedDegreesPerSecond = 45.0f;
+	float TraverseSpeedDegreesPerSecond = 720.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "0.1", Units = "s"))
 	float ReloadSeconds = 3.2f;
@@ -156,6 +179,10 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon")
 	TObjectPtr<USceneComponent> MuzzlePoint;
 
+	/** Character snap point, adjustable on each cannon Blueprint. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon")
+	TObjectPtr<USceneComponent> OperatorPoint;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon")
 	TObjectPtr<UBoxComponent> WeaponCollision;
 
@@ -183,6 +210,9 @@ private:
 	void HandlePartStateChanged(UNavalPartComponent* Part);
 
 	float DesiredTurretYawLocal = 0.0f;
+	float LocalPredictedTurretYawLocal = 0.0f;
+	bool bHasLocalPredictedAim = false;
 	FVector PendingAimLocation = FVector::ZeroVector;
+	float PendingChargeAlpha = 1.0f;
 	FTimerHandle FireWindupTimerHandle;
 };

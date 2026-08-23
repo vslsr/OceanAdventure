@@ -60,20 +60,31 @@ game_feature_data = require(
     "Failed to create TopDownFeature GameFeatureData.",
 )
 
-click_action = require(
-    load_or_create_data_asset("IA_TopDownClick", INPUT_ROOT, unreal.InputAction),
-    "Failed to create IA_TopDownClick.",
-)
-click_action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+input_action_specs = [
+    ("IA_TopDownClick", unreal.InputActionValueType.BOOLEAN, "click_input_tag", "LeftMouseButton"),
+    ("IA_TopDownCameraZoom", unreal.InputActionValueType.AXIS1D, "camera_zoom_input_tag", "MouseWheelAxis"),
+    ("IA_TopDownCameraRotateHold", unreal.InputActionValueType.BOOLEAN, "camera_rotate_hold_input_tag", "RightMouseButton"),
+    ("IA_TopDownCameraRotate", unreal.InputActionValueType.AXIS2D, "camera_rotate_input_tag", "Mouse2D"),
+]
+
+input_actions = []
+for asset_name, value_type, _, _ in input_action_specs:
+    action = require(
+        load_or_create_data_asset(asset_name, INPUT_ROOT, unreal.InputAction),
+        f"Failed to create {asset_name}.",
+    )
+    action.set_editor_property("value_type", value_type)
+    input_actions.append(action)
 
 input_mapping = require(
     load_or_create_data_asset("IMC_TopDown", INPUT_ROOT, unreal.InputMappingContext),
     "Failed to create IMC_TopDown.",
 )
-input_mapping.unmap_all_keys_from_action(click_action)
-left_mouse_button = unreal.Key()
-left_mouse_button.set_editor_property("key_name", unreal.Name("LeftMouseButton"))
-input_mapping.map_key(click_action, left_mouse_button)
+for action, (_, _, _, key_name) in zip(input_actions, input_action_specs):
+    input_mapping.unmap_all_keys_from_action(action)
+    key = unreal.Key()
+    key.set_editor_property("key_name", unreal.Name(key_name))
+    input_mapping.map_key(action, key)
 
 input_config = require(
     load_or_duplicate(
@@ -82,26 +93,25 @@ input_config = require(
     ),
     "Failed to duplicate the base Lyra InputConfig.",
 )
-native_actions = [
-    action
-    for action in input_config.get_editor_property("native_input_actions")
-    if action.get_editor_property("input_action") != click_action
-]
 component_class = require(
     unreal.load_class(None, "/Script/TopDownFeatureRuntime.TopDownPawnComponent"),
     "Failed to load UTopDownPawnComponent.",
 )
 component_cdo = unreal.get_default_object(component_class)
-click_input_tag = require(
-    component_cdo.get_editor_property("click_input_tag"),
-    "UTopDownPawnComponent has no valid ClickInputTag.",
-)
-native_actions.append(
-    unreal.LyraInputAction(
-        input_action=click_action,
-        input_tag=click_input_tag,
+owned_tags = [
+    require(
+        component_cdo.get_editor_property(tag_property),
+        f"UTopDownPawnComponent has no valid {tag_property}.",
     )
-)
+    for _, _, tag_property, _ in input_action_specs
+]
+native_actions = [
+    action
+    for action in input_config.get_editor_property("native_input_actions")
+    if action.get_editor_property("input_tag") not in owned_tags
+]
+for action, input_tag in zip(input_actions, owned_tags):
+    native_actions.append(unreal.LyraInputAction(input_action=action, input_tag=input_tag))
 input_config.set_editor_property("native_input_actions", native_actions)
 
 pawn_data_class = require(
@@ -129,7 +139,7 @@ pawn_data.set_editor_property("ability_sets", [])
 pawn_data.set_editor_property("input_config", input_config)
 pawn_data.set_editor_property("default_camera_mode", camera_class)
 
-assets_to_save = [game_feature_data, click_action, input_mapping, input_config, pawn_data]
+assets_to_save = [game_feature_data, *input_actions, input_mapping, input_config, pawn_data]
 for asset in assets_to_save:
     save_asset(asset)
 

@@ -194,7 +194,8 @@ void UBuildStructureComponent::ForEachOccupiedKey(
 					Entry.Key.Coord.Y + DeltaY,
 					Entry.Key.Coord.Level),
 				Entry.Key.Slot,
-				Entry.Key.EdgeIndex));
+				Entry.Key.EdgeIndex,
+				Entry.Key.SubCell));
 		}
 	}
 }
@@ -239,7 +240,11 @@ void UBuildStructureComponent::RebuildIndex()
 					Entry.Key.Coord.Y + DeltaY,
 					Entry.Key.Coord.Level);
 				SlotToEntryIndex.Add(
-					FBuildSlotKey(OccupiedCoord, Entry.Key.Slot, Entry.Key.EdgeIndex),
+					FBuildSlotKey(
+						OccupiedCoord,
+						Entry.Key.Slot,
+						Entry.Key.EdgeIndex,
+						Entry.Key.SubCell),
 					EntryIndex);
 			}
 		}
@@ -282,7 +287,7 @@ bool UBuildStructureComponent::CanPlacePiece(
 				Key.Coord.X + DeltaX,
 				Key.Coord.Y + DeltaY,
 				Key.Coord.Level);
-			const FBuildSlotKey SubKey(Coord, Key.Slot, Key.EdgeIndex);
+			const FBuildSlotKey SubKey(Coord, Key.Slot, Key.EdgeIndex, Key.SubCell);
 			if (SlotToEntryIndex.Contains(SubKey)
 				|| (Key.Slot == EBuildSlotType::Foundation && IsAnchored(Coord)))
 			{
@@ -510,7 +515,7 @@ bool UBuildStructureComponent::IsPlacementBlockedByPawn(
 	const FTransform PieceWorldTransform = PieceRelativeTransform * StructureSpace;
 
 	// A raft section can intentionally be one large grid cell with walls on its edges and a
-	// 3x3 set of prop sub-cells. Testing the whole cell makes any pawn anywhere on the deck
+	// Dense prop snap grid. Testing the whole cell makes any pawn anywhere on the deck
 	// block every wall and prop. Use the authored mesh bounds at the snapped transform so only
 	// a pawn intersecting the actual proposed piece rejects placement.
 	FVector PieceExtent(25.0, 25.0, FMath::Max(25.0, GridSettings.LevelHeight * 0.25));
@@ -963,7 +968,7 @@ void UBuildStructureComponent::CollectDependentKeys(
 	case EBuildSlotType::Foundation:
 	case EBuildSlotType::Floor:
 		// Everything standing on this cell, plus its walls and their decorations.
-		for (uint8 SubCell = 0; SubCell < 9; ++SubCell)
+		for (uint8 SubCell = 0; SubCell < FBuildSlotKey::SubCellCount; ++SubCell)
 		{
 			AddIfPresent(FBuildSlotKey(Key.Coord, EBuildSlotType::Prop, 0, SubCell));
 		}

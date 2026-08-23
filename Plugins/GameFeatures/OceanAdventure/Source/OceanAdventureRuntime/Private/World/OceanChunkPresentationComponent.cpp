@@ -175,9 +175,13 @@ void UOceanChunkPresentationComponent::BuildTerrain(AOceanChunkActor& Chunk)
 	TerrainMeshComponent->SetupAttachment(Chunk.GetRootComponent());
 	TerrainMeshComponent->SetMobility(EComponentMobility::Movable);
 	TerrainMeshComponent->SetCollisionProfileName(UCollisionProfile::BlockAll_ProfileName);
+	// Ocean chunks are short-lived streaming geometry. UE 5.7's procedural-mesh ray tracing
+	// proxy can still be collected by a renderer worker while a chunk is being replaced,
+	// which makes FRayTracingInstanceCollector dereference a released proxy. The terrain
+	// remains fully visible through the raster path and still participates in collision.
+	TerrainMeshComponent->SetVisibleInRayTracing(false);
 	TerrainMeshComponent->bUseAsyncCooking = true;
 	Chunk.AddInstanceComponent(TerrainMeshComponent);
-	TerrainMeshComponent->RegisterComponent();
 
 	const UOceanGenerationSettings* GenerationSettings = Chunk.GetGenerationSettings();
 	const int32 QuadsPerSide = GenerationSettings
@@ -259,6 +263,9 @@ void UOceanChunkPresentationComponent::BuildTerrain(AOceanChunkActor& Chunk)
 	TerrainMeshComponent->CreateMeshSection(
 		0, Vertices, Triangles, Normals, UVs, VertexColors, Tangents, true);
 	TerrainMeshComponent->SetMaterial(0, Material);
+	// Register only after the complete mesh and material have been assigned. This creates a
+	// single finished scene proxy instead of publishing and immediately replacing an empty one.
+	TerrainMeshComponent->RegisterComponent();
 }
 
 void UOceanChunkPresentationComponent::BuildWater(AOceanChunkActor& Chunk)

@@ -11,6 +11,7 @@
 #include "Naval/NavalPartComponent.h"
 #include "Naval/NavalVesselComponent.h"
 #include "Net/UnrealNetwork.h"
+#include "UObject/ConstructorHelpers.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NavalProjectile)
 
@@ -30,6 +31,13 @@ ANavalProjectile::ANavalProjectile()
 	ProjectileMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ProjectileMesh->SetGenerateOverlapEvents(false);
 	ProjectileMesh->SetCanEverAffectNavigation(false);
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> DefaultProjectileMesh(
+		TEXT("/Engine/BasicShapes/Sphere.Sphere"));
+	if (DefaultProjectileMesh.Succeeded())
+	{
+		ProjectileMesh->SetStaticMesh(DefaultProjectileMesh.Object);
+		ProjectileMesh->SetRelativeScale3D(FVector(0.12f));
+	}
 }
 
 void ANavalProjectile::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -37,12 +45,14 @@ void ANavalProjectile::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& Out
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(ANavalProjectile, TeamId);
-	DOREPLIFETIME(ANavalProjectile, FlightDirection);
+	DOREPLIFETIME(ANavalProjectile, FlightVelocity);
+	DOREPLIFETIME(ANavalProjectile, GravityZ);
 }
 
 void ANavalProjectile::LaunchProjectile(const FNavalProjectileLaunchParams& Params)
 {
-	FlightDirection = Params.Direction.GetSafeNormal();
+	FlightVelocity = Params.InitialVelocity;
+	GravityZ = FMath::Min(0.0f, Params.GravityZ);
 	TeamId = Params.TeamId;
 	SourceWeapon = Params.SourceWeapon;
 	SourceOperator = Params.SourceOperator;
@@ -51,7 +61,7 @@ void ANavalProjectile::LaunchProjectile(const FNavalProjectileLaunchParams& Para
 	SpawnLocation = GetActorLocation();
 	ElapsedSeconds = 0.0f;
 
-	SetActorRotation(FlightDirection.Rotation());
+	SetActorRotation(FVector(FlightVelocity).Rotation());
 	ForceNetUpdate();
 }
 
@@ -62,8 +72,16 @@ void ANavalProjectile::Tick(float DeltaTime)
 	ElapsedSeconds += DeltaTime;
 
 	const FVector PreviousLocation = GetActorLocation();
-	const FVector NextLocation = PreviousLocation + FVector(FlightDirection) * (Speed * DeltaTime);
+	const FVector Velocity = FlightVelocity;
+	const FVector NextLocation = PreviousLocation
+		+ Velocity * DeltaTime
+		+ FVector(0.0f, 0.0f, 0.5f * GravityZ * FMath::Square(DeltaTime));
+	FlightVelocity.Z += GravityZ * DeltaTime;
 	SetActorLocation(NextLocation, /*bSweep=*/false, nullptr, ETeleportType::None);
+	if (!FlightVelocity.IsNearlyZero())
+	{
+		SetActorRotation(FVector(FlightVelocity).Rotation());
+	}
 
 	if (!HasAuthority())
 	{
