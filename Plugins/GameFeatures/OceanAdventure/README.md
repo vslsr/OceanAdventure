@@ -27,7 +27,7 @@ BP_Experience_Ocean  (LyraExperienceDefinition)
    │                        AddComponents: AOceanAdventurePawn ← UOceanChunkInvokerComponent
    │                        AddComponents: AOceanChunkActor    ← UOceanChunkPresentationComponent
    └─ "TopDownFeature"  ──► AddComponents: LyraCharacter       ← UTopDownPawnComponent
-                            AddInputMapping: IMC_TopDown
+                            AddInputMapping: IMC_OceanAdventure_Base (WASD + camera)
 ```
 
 Adding or dropping a capability is an edit to the experience, not to the pawn class.
@@ -85,7 +85,8 @@ therefore remains art-agnostic. WildOmission is MIT licensed. Its notice is reta
 
    It creates `BP_OceanAdventure_Pawn` and `DA_OceanAdventure_PawnData`, puts the
    AddComponents action on the GameFeatureData, sets the pawn Blueprint's
-   `MaxSwimSpeed` to `600`, and fills in the experience. PawnData `AbilitySets` remains
+   `MaxSwimSpeed` to `600`, configures the OceanAdventure-owned IMC/InputConfig for
+   mouse-facing W/A/S/D movement, and fills in the experience. PawnData `AbilitySets` remains
    intentionally empty until the mode has real Ocean-owned abilities. It is safe to re-run;
    it rewrites the GameFeatureData's `Actions`, PawnData `AbilitySets`, and the experience's
    `GameFeaturesToEnable` / `ActionSets` wholesale.

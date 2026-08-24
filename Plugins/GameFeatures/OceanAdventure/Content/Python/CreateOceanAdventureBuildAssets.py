@@ -16,7 +16,8 @@ GAME_FEATURE_DATA_PATH = f"{FEATURE_ROOT}/OceanAdventure"
 PAWN_DATA_PATH = f"{FEATURE_ROOT}/Character/DA_OceanAdventure_PawnData"
 BASE_INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanAdventure"
 
-# Key bindings. Confirm intentionally shares the left mouse button with click-to-move:
+# Key bindings. Confirm intentionally uses the left mouse button for build mode; movement
+# is now WASD and has no left-click binding to conflict with this action:
 # the placement ability only activates while Status.Build.Active is present. Every action is
 # configured with InputTriggerPressed because Lyra binds ability input to Triggered; without
 # an edge trigger, an instant ability reactivates once per frame while the key remains held.

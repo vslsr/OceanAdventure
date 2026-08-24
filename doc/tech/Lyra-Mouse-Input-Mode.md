@@ -29,14 +29,14 @@ APlayerController
 | `GameAndMenu` | All | 用 `GameMouseCaptureMode` | **TopDown / 建造模式**：既要点 UI，也要游戏输入 |
 | `Menu` | Menu | 强制 `NoCapture` | 全屏菜单、设置、背包 |
 
-关键点：`GameAndMenu + NoCapture` 就是"鼠标可见、可点 UI、同时 WASD 与点击仍进入游戏"，
-这正是 TopDown 生存建造需要的模式。
+关键点：`GameAndMenu + NoCapture` 就是"鼠标可见、可点 UI、同时 WASD 仍进入游戏"，
+这正是 TopDown 生存建造需要的模式。鼠标只负责角色朝向，不再触发点击移动。
 
 ---
 
 ## 2. 三种场景怎么配
 
-### 2.1 常驻鼠标（TopDown 点击移动）
+### 2.1 常驻鼠标（TopDown 鼠标朝向 + WASD）
 
 改**HUD 根 Layout widget**（本工程是 `Content/UI/HUD/W_HUDLayout`，由 Experience 的
 `LAS_Standard_HUD` ActionSet 推入 `UI.Layer.Game`）：
@@ -48,8 +48,8 @@ W_HUDLayout (ULyraActivatableWidget)
   bIgnoreLookInput     = false
 ```
 
-Lyra 原版是 `Game + CapturePermanently`（FPS 锁鼠标），TopDown 要改的就是这两项。
-**不需要写一行 C++。**
+Lyra 原版是 `Game + CapturePermanently`（FPS 锁鼠标），TopDown 要改的就是这两项；
+朝向和 WASD 输入由 `UTopDownPawnComponent` 的 Enhanced Input 绑定负责。
 
 ### 2.2 临时鼠标模式（建造模式）
 
@@ -92,19 +92,11 @@ W_BuildHUD (ULyraActivatableWidget)
 
 ## 3. 本工程需要修的一处
 
-`UTopDownPawnComponent::BindInput()` 目前直接操作 PlayerController：
-
-```cpp
-bPreviousShowMouseCursor = PlayerController->ShouldShowMouseCursor();
-PlayerController->SetShowMouseCursor(true);          // ← 与 CommonUI 抢控制权
-```
-
-问题：任何 `ULyraActivatableWidget` 激活或失活时，ActionRouter 会按栈顶声明重新应用一次
-输入配置，把这里设的值冲掉；`UnbindInput` 里恢复的 `bPreviousShowMouseCursor` 也可能是
-被别人改过的中间值。
-
-**迁移方案**：删掉组件里的光标代码，改由 `W_HUDLayout` 声明 `GameAndMenu + NoCapture`
-（见 2.1）。组件只保留点击射线与移动，职责更干净，也让"鼠标模式"这件事只有一个来源。
+`UTopDownPawnComponent::BindInput()` 不读写 `APlayerController::bShowMouseCursor`，而是绑定
+PawnData 的 `InputConfig`，并 push 一个声明 `GameAndMenu + NoCapture` 的 CommonUI widget。
+任何 `ULyraActivatableWidget` 激活或失活时，ActionRouter 都会按栈顶声明重新应用输入配置，
+因此鼠标状态不会被组件保存的中间值覆盖。组件只保留鼠标平面朝向、WASD 移动与镜头输入，
+而输入模式继续由 widget 栈统一管理。
 
 ---
 

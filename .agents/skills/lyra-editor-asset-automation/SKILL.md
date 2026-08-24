@@ -1,6 +1,6 @@
 ---
 name: lyra-editor-asset-automation
-description: 为 OceanAdventure 的 UE 5.7/Lyra 编辑器资产脚本配置 AbilitySet、InputConfig 或 GameFeatureData，并处理 Python USTRUCT 构造失败、EditDefaultsOnly 不可写和原生编辑器桥接编译错误。用户要求用 Python 创建或修复这些 Lyra 资产，或日志出现 `call() takes at most 0 arguments`、`cannot be edited on instances`、`SubclassOf.h` 未定义类型时使用；普通运行时玩法 C++、可直接编辑的 Python 资产属性和 Blender 脚本不使用本技能。
+description: 为 OceanAdventure 的 UE 5.7/Lyra 编辑器资产脚本配置 AbilitySet、InputConfig 或 GameFeatureData，并处理 Python USTRUCT 构造失败、EditDefaultsOnly 不可写、GameplayTag 读回误判和原生编辑器桥接编译错误。用户要求用 Python 创建或修复这些 Lyra 资产，或日志出现 `call() takes at most 0 arguments`、`cannot be edited on instances`、`InputConfig did not retain`、`SubclassOf.h` 未定义类型时使用；普通运行时玩法 C++、可直接编辑的 Python 资产属性和 Blender 脚本不使用本技能。
 ---
 
 # Lyra 编辑器资产自动化
@@ -42,6 +42,21 @@ Python 侧收集三个并行数组，调用桥接后检查布尔返回值，再�
 
 后续修改应检查这些锚点的现状，不要复制出第二套桥接。
 
+## UE 5.7 Python GameplayTag 读回陷阱
+
+`InputConfig did not retain IA_... -> <Struct 'GameplayTag' ... {}>` 不一定表示写入失败。UE 5.7 的 Python `FGameplayTag` 包装器可能让 `left == right` 比较包装器身份，而不是底层 Tag 值；即使 `LyraInputAction(input_action=..., input_tag=...)` 已正确写入，直接用 `entry_tag == input_tag` 仍会误报。
+
+配置 `ULyraInputConfig::NativeInputActions` 或 `AbilityInputActions` 时固定采用以下规则：
+
+1. 保留 `unreal.LyraInputAction(input_action=action, input_tag=input_tag)` 关键字构造，不要在实例上写 `EditDefaultsOnly` 字段。
+2. 从注册表取 Tag 时先尝试 `GameplayTagLibrary.request_gameplay_tag(unreal.Name(name), False)`；若 UE Python 暴露中不存在该函数（`AttributeError`），用 `unreal.GameplayTag().import_text(name)` 兼容读取，再用 `is_gameplay_tag_valid(tag)` 验证。不要读取不存在的 `tag_name`。
+3. 写入后读回比较优先调用 `GameplayTagLibrary.equal_equal_gameplay_tag(left, right)`；若当前 Python 暴露中没有该函数，比较两者 `export_text()` 结果，最后才退回 `==`。这是语义比较，不能把 `repr` 中的 `{}` 当作无效依据，也不能省略为直接 `==`。
+4. UObject 资产同样不要直接 `==`；用 `get_path_name()` 并去掉导出对象后缀（`.` 后内容）比较稳定包路径。
+
+首次创建资产时，先 `scan_paths_synchronous`，再以 `EditorAssetLibrary.does_asset_exist(package_path)` 守卫 `load_asset`。这样不会在资产确实不存在的首次运行中制造预期的 `LoadAsset failed` 噪声；找到后再读回验证并保存。
+
+本次复查证据：UE 5.7 Python commandlet 使用 `-DDC-ForceMemoryCache` 执行 `CreateOceanAdventureExperience.py`，日志包含 `Python script executed successfully`，并成功保存四个 WASD InputAction、三个相机 InputAction、IMC 与 InputConfig。命令进程仍可能因本机 DDC 无可写节点或 ONNX runtime 缺失返回非零；应以 `LogPythonScriptCommandlet` 的 Python 结果和资产保存记录区分脚本故障与环境告警。
+
 ## 故障速查
 
 | 现象 | 根因 | 修复 |
@@ -51,6 +66,9 @@ Python 侧收集三个并行数组，调用桥接后检查布尔返回值，再�
 | `SubclassOf.h`: 使用了未定义类型 `ULyraGameplayAbility` | `.cpp` 触发了 `TSubclassOf` 内联实例化但只有前置声明 | 在 `.cpp` 包含 `LyraGameplayAbility.h` |
 | 无法从 `uint8*` `static_cast` 到条目结构 | 反射数组返回原始字节指针，类型无继承关系 | 先核对 `FStructProperty::Struct`，再 `reinterpret_cast` |
 | Python 中没有新函数或仍调用旧签名 | 编辑器仍加载旧 DLL | 成功编译目标后完整重启编辑器，再运行脚本 |
+| `AttributeError: GameplayTagLibrary has no attribute request_gameplay_tag` | 当前 UE Python 暴露未提供注册表请求函数 | 用 `GameplayTag().import_text(name)` 兜底，并用 `is_gameplay_tag_valid` 验证 |
+| `RuntimeError: InputConfig did not retain IA_...`，但 Tag 已注册 | `FGameplayTag` Python 包装器的 `==` 可能只比较对象身份 | 用 `equal_equal_gameplay_tag` 或 `export_text()` 做语义比较；用 `is_gameplay_tag_valid` 判定有效性 |
+| 首次运行出现一串 `LoadAsset failed` | 脚本对尚未创建的资产直接调用 `load_asset` | `scan_paths_synchronous` 后先用 `does_asset_exist` 守卫加载 |
 
 ## 构建与验证门禁
 

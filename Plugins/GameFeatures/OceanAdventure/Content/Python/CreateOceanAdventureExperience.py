@@ -21,7 +21,7 @@ that turns it into the mode's player, and the wiring that injects everything els
       AddComponents        -> UTopDownPawnComponent
 
     OceanAdventure (GameFeatureData)
-      AddInputMapping      -> IMC_OceanAdventure_Base (owned top-down click action)
+      AddInputMapping      -> IMC_OceanAdventure_Base (owned WASD/camera actions)
 
 The chunk components live in OceanCore, a plain plugin. GameFeatureAction_AddComponents
 takes any TSubclassOf<UActorComponent>, so OceanCore does not have to be a game feature
@@ -64,7 +64,10 @@ INPUT_MAPPING_PATH = f"{INPUT_ROOT}/IMC_OceanAdventure_Base"
 MAX_SWIM_SPEED = 600.0
 
 TOP_DOWN_INPUT_SPECS = [
-    ("IA_OceanAdventure_TopDownClick", unreal.InputActionValueType.BOOLEAN, "click_input_tag", "LeftMouseButton"),
+    ("IA_OceanAdventure_MoveForward", unreal.InputActionValueType.AXIS1D, "move_forward_input_tag", "W"),
+    ("IA_OceanAdventure_MoveBackward", unreal.InputActionValueType.AXIS1D, "move_backward_input_tag", "S"),
+    ("IA_OceanAdventure_MoveRight", unreal.InputActionValueType.AXIS1D, "move_right_input_tag", "D"),
+    ("IA_OceanAdventure_MoveLeft", unreal.InputActionValueType.AXIS1D, "move_left_input_tag", "A"),
     ("IA_OceanAdventure_TopDownCameraZoom", unreal.InputActionValueType.AXIS1D, "camera_zoom_input_tag", "MouseWheelAxis"),
     ("IA_OceanAdventure_TopDownCameraRotateHold", unreal.InputActionValueType.BOOLEAN, "camera_rotate_hold_input_tag", "RightMouseButton"),
     ("IA_OceanAdventure_TopDownCameraRotate", unreal.InputActionValueType.AXIS2D, "camera_rotate_input_tag", "Mouse2D"),
@@ -105,8 +108,15 @@ def require_type(type_name, source):
 
 
 def load_existing(asset_path):
-    # GameFeature packages can exist on disk before the commandlet's cached AssetRegistry
-    # notices them. Loading by package path avoids a false "missing" result here.
+    # GameFeature packages can exist on disk before the editor's cached AssetRegistry
+    # notices them. Scan the owning package path before loading to avoid creating a
+    # duplicate asset on the first run after a plugin checkout or migration.
+    package_path, _, _ = asset_path.rpartition("/")
+    if package_path:
+        registry = unreal.AssetRegistryHelpers.get_asset_registry()
+        registry.scan_paths_synchronous([package_path], True, True)
+    if not unreal.EditorAssetLibrary.does_asset_exist(asset_path):
+        return None
     return unreal.EditorAssetLibrary.load_asset(asset_path)
 
 
@@ -180,8 +190,58 @@ def make_key(key_name):
     return key
 
 
+def gameplay_tag(tag_name):
+    """Resolve a registered tag across UE 5.7 Python wrapper variants."""
+    request_tag = getattr(unreal.GameplayTagLibrary, "request_gameplay_tag", None)
+    if request_tag is not None:
+        tag = request_tag(unreal.Name(tag_name), False)
+    else:
+        # Some UE 5.7 editor builds do not expose RequestGameplayTag to Python. Importing
+        # the struct text still routes through GameplayTagsManager and preserves invalid tags.
+        tag = unreal.GameplayTag()
+        tag.import_text(tag_name)
+
+    is_valid = getattr(unreal.GameplayTagLibrary, "is_gameplay_tag_valid", None)
+    if tag == unreal.GameplayTag() or (is_valid is not None and not is_valid(tag)):
+        raise RuntimeError(f"GameplayTag is not registered: {tag_name}")
+    return tag
+
+
+def asset_path(asset):
+    """Return a stable asset path for UE Python wrappers (object equality is unreliable)."""
+    if asset is None:
+        return ""
+    get_path_name = getattr(asset, "get_path_name", None)
+    if get_path_name is None:
+        return str(asset)
+    return str(get_path_name()).split(".", 1)[0]
+
+
+def gameplay_tags_equal(left, right):
+    """Compare FGameplayTag values; Python's generated ``==`` wrapper compares identity."""
+    equal_tag = getattr(unreal.GameplayTagLibrary, "equal_equal_gameplay_tag", None)
+    if equal_tag is not None:
+        return bool(equal_tag(left, right))
+
+    export_left = getattr(left, "export_text", None)
+    export_right = getattr(right, "export_text", None)
+    if export_left is not None and export_right is not None:
+        return str(export_left()) == str(export_right())
+    return left == right
+
+
+def has_native_input_action(entries, action, input_tag):
+    """Check a Lyra input entry without comparing wrapped UObject identity."""
+    expected_action_path = asset_path(action)
+    return any(
+        asset_path(entry.get_editor_property("input_action")) == expected_action_path
+        and gameplay_tags_equal(entry.get_editor_property("input_tag"), input_tag)
+        for entry in entries
+    )
+
+
 def configure_input_assets():
-    """Own the top-down actions used by this feature's PawnData."""
+    """Own the mouse-facing WASD and camera actions used by this feature's PawnData."""
     input_config = load_or_duplicate(BASE_INPUT_CONFIG_PATH, INPUT_CONFIG_PATH)
     input_actions = []
     for asset_name, value_type, _, _ in TOP_DOWN_INPUT_SPECS:
@@ -204,6 +264,12 @@ def configure_input_assets():
         input_mapping.unmap_all_keys_from_action(action)
         input_mapping.map_key(action, make_key(key_name))
 
+    # Remove the old click mapping if this script is upgrading an existing asset. The
+    # asset remains on disk for reference, but no click action is registered or mapped.
+    legacy_click_action = load_existing(f"{INPUT_ROOT}/IA_OceanAdventure_TopDownClick")
+    if legacy_click_action is not None:
+        input_mapping.unmap_all_keys_from_action(legacy_click_action)
+
     component_class = require_type("TopDownPawnComponent", "the TopDownFeature plugin")
     component_cdo = unreal.get_default_object(component_class)
     owned_tags = [
@@ -213,10 +279,12 @@ def configure_input_assets():
         )
         for _, _, tag_property, _ in TOP_DOWN_INPUT_SPECS
     ]
+    legacy_tags = [gameplay_tag("InputTag.TopDownClick"), gameplay_tag("InputTag.Move")]
     native_actions = [
         action
         for action in input_config.get_editor_property("native_input_actions")
         if action.get_editor_property("input_tag") not in owned_tags
+        and action.get_editor_property("input_tag") not in legacy_tags
     ]
     for action, input_tag in zip(input_actions, owned_tags):
         native_actions.append(
@@ -224,11 +292,18 @@ def configure_input_assets():
         )
     input_config.set_editor_property("native_input_actions", native_actions)
 
+    configured_native_actions = input_config.get_editor_property("native_input_actions")
+    for action, input_tag in zip(input_actions, owned_tags):
+        if not has_native_input_action(configured_native_actions, action, input_tag):
+            raise RuntimeError(
+                f"InputConfig did not retain {action.get_name()} -> {input_tag}"
+            )
+
     for asset_name, _, _, _ in TOP_DOWN_INPUT_SPECS:
         save(f"{INPUT_ROOT}/{asset_name}")
     save(INPUT_MAPPING_PATH)
     save(INPUT_CONFIG_PATH)
-    log("Configured OceanAdventure-owned top-down click and camera actions, mapping and InputConfig")
+    log("Configured OceanAdventure-owned mouse-facing WASD and camera actions, mapping and InputConfig")
     return input_config, input_mapping
 
 
@@ -378,7 +453,7 @@ def configure_game_feature_data(pawn_class, input_mapping):
     save(GAME_FEATURE_DATA_PATH)
     log(
         "GameFeatureData injects the ocean world manager, Lyra hero bridge, "
-        "chunk invoker, chunk presentation, and top-down click mapping"
+        "chunk invoker, chunk presentation, and mouse-facing WASD mapping"
     )
 
 

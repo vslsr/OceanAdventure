@@ -25,6 +25,10 @@ DEFINE_LOG_CATEGORY_STATIC(LogTopDownPawnComponent, Log, All);
 UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ClickInputTag(TopDownFeatureGameplayTags::InputTag_TopDownClick)
+	, MoveForwardInputTag(TopDownFeatureGameplayTags::InputTag_TopDownMoveForward)
+	, MoveBackwardInputTag(TopDownFeatureGameplayTags::InputTag_TopDownMoveBackward)
+	, MoveRightInputTag(TopDownFeatureGameplayTags::InputTag_TopDownMoveRight)
+	, MoveLeftInputTag(TopDownFeatureGameplayTags::InputTag_TopDownMoveLeft)
 	, CameraZoomInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraZoom)
 	, CameraRotateHoldInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraRotateHold)
 	, CameraRotateInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraRotate)
@@ -34,6 +38,7 @@ UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectIni
 	, GroundTraceChannel(ECC_Visibility)
 	, MaxGroundTraceDistance(100000.0f)
 	, bTraceComplex(false)
+	, FacingRotationInterpSpeed(0.0f)
 	, AcceptanceRadius(75.0f)
 	, InitialCameraDistance(1800.0f)
 	, MinCameraDistance(600.0f)
@@ -49,6 +54,8 @@ UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectIni
 	, bHasMoveTarget(false)
 	, bInputBound(false)
 	, bCameraRotateHeld(false)
+	, bOriginalUseControllerRotationYaw(true)
+	, bRotationPolicyOverridden(false)
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
@@ -65,6 +72,13 @@ void UTopDownPawnComponent::BeginPlay()
 	{
 		return;
 	}
+
+	// Lyra characters normally use the controller yaw for FPS-style aiming. In this
+	// feature the controller rotation remains the camera/movement frame, while the
+	// pawn's actor yaw follows the mouse-plane direction instead.
+	bOriginalUseControllerRotationYaw = Pawn->bUseControllerRotationYaw;
+	Pawn->bUseControllerRotationYaw = false;
+	bRotationPolicyOverridden = true;
 
 	if (UGameFrameworkComponentManager* ComponentManager = UGameFrameworkComponentManager::GetForActor(Pawn))
 	{
@@ -83,6 +97,15 @@ void UTopDownPawnComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	UnbindInput();
 	CancelMoveToTarget();
 
+	if (bRotationPolicyOverridden)
+	{
+		if (APawn* Pawn = GetPawn<APawn>())
+		{
+			Pawn->bUseControllerRotationYaw = bOriginalUseControllerRotationYaw;
+		}
+		bRotationPolicyOverridden = false;
+	}
+
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -91,9 +114,18 @@ void UTopDownPawnComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	APawn* Pawn = GetPawn<APawn>();
-	if (!bHasMoveTarget || !Pawn || !Pawn->IsLocallyControlled())
+	if (!Pawn || !Pawn->IsLocallyControlled())
 	{
 		CancelMoveToTarget();
+		return;
+	}
+
+	UpdateFacingFromMouse(DeltaTime);
+
+	// Keep the old programmatic target API functional for existing Blueprint callers,
+	// but no input action invokes it anymore.
+	if (!bHasMoveTarget)
+	{
 		return;
 	}
 
@@ -154,7 +186,12 @@ void UTopDownPawnComponent::SetMoveTarget(const FVector& TargetLocation)
 void UTopDownPawnComponent::CancelMoveToTarget()
 {
 	bHasMoveTarget = false;
-	SetComponentTickEnabled(false);
+	// The component tick also updates mouse-facing yaw. Keep it alive while the
+	// feature is bound; only tear it down when input has been unbound.
+	if (!bInputBound)
+	{
+		SetComponentTickEnabled(false);
+	}
 }
 
 void UTopDownPawnComponent::HandlePawnExtension(AActor* Actor, FName EventName)
@@ -202,7 +239,8 @@ void UTopDownPawnComponent::BindInputIfReady()
 	const ULyraPawnData* PawnData = PawnExtension ? PawnExtension->GetPawnData<ULyraPawnData>() : nullptr;
 	const ULyraInputConfig* InputConfig = PawnData ? PawnData->InputConfig : nullptr;
 	UEnhancedInputComponent* InputComponent = Pawn->FindComponentByClass<UEnhancedInputComponent>();
-	if (!InputConfig || !InputComponent || !ClickInputTag.IsValid() || !CameraZoomInputTag.IsValid() ||
+	if (!InputConfig || !InputComponent || !MoveForwardInputTag.IsValid() || !MoveBackwardInputTag.IsValid() ||
+		!MoveRightInputTag.IsValid() || !MoveLeftInputTag.IsValid() || !CameraZoomInputTag.IsValid() ||
 		!CameraRotateHoldInputTag.IsValid() || !CameraRotateInputTag.IsValid())
 	{
 		return;
@@ -222,11 +260,15 @@ void UTopDownPawnComponent::BindInputIfReady()
 		return nullptr;
 	};
 
-	const UInputAction* ClickAction = FindNativeAction(ClickInputTag);
+	const UInputAction* MoveForwardAction = FindNativeAction(MoveForwardInputTag);
+	const UInputAction* MoveBackwardAction = FindNativeAction(MoveBackwardInputTag);
+	const UInputAction* MoveRightAction = FindNativeAction(MoveRightInputTag);
+	const UInputAction* MoveLeftAction = FindNativeAction(MoveLeftInputTag);
 	const UInputAction* ZoomAction = FindNativeAction(CameraZoomInputTag);
 	const UInputAction* RotateHoldAction = FindNativeAction(CameraRotateHoldInputTag);
 	const UInputAction* RotateAction = FindNativeAction(CameraRotateInputTag);
-	if (!ClickAction || !ZoomAction || !RotateHoldAction || !RotateAction)
+	if (!MoveForwardAction || !MoveBackwardAction || !MoveRightAction || !MoveLeftAction ||
+		!ZoomAction || !RotateHoldAction || !RotateAction)
 	{
 		UE_LOG(LogTopDownPawnComponent, Warning,
 			TEXT("PawnData InputConfig '%s' is missing one or more top-down native actions; top-down input is disabled for '%s'."),
@@ -235,7 +277,13 @@ void UTopDownPawnComponent::BindInputIfReady()
 	}
 
 	InputBindingHandles.Add(
-		InputComponent->BindAction(ClickAction, ETriggerEvent::Started, this, &ThisClass::Input_TopDownClick).GetHandle());
+		InputComponent->BindAction(MoveForwardAction, ETriggerEvent::Triggered, this, &ThisClass::Input_MoveForward).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(MoveBackwardAction, ETriggerEvent::Triggered, this, &ThisClass::Input_MoveBackward).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(MoveRightAction, ETriggerEvent::Triggered, this, &ThisClass::Input_MoveRight).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(MoveLeftAction, ETriggerEvent::Triggered, this, &ThisClass::Input_MoveLeft).GetHandle());
 	InputBindingHandles.Add(
 		InputComponent->BindAction(ZoomAction, ETriggerEvent::Triggered, this, &ThisClass::Input_CameraZoom).GetHandle());
 	InputBindingHandles.Add(
@@ -248,6 +296,7 @@ void UTopDownPawnComponent::BindInputIfReady()
 		InputComponent->BindAction(RotateAction, ETriggerEvent::Triggered, this, &ThisClass::Input_CameraRotate).GetHandle());
 	BoundInputComponent = InputComponent;
 	bInputBound = true;
+	SetComponentTickEnabled(true);
 
 }
 
@@ -318,9 +367,60 @@ void UTopDownPawnComponent::PopCameraDragInputWidget()
 	}
 }
 
-void UTopDownPawnComponent::Input_TopDownClick(const FInputActionValue& InputActionValue)
+void UTopDownPawnComponent::Input_MoveForward(const FInputActionValue& InputActionValue)
 {
-	SetMoveTargetUnderCursor();
+	CancelMoveToTarget();
+	APawn* Pawn = GetPawn<APawn>();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+	if (!Pawn || !Controller)
+	{
+		return;
+	}
+
+	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::ForwardVector), InputActionValue.Get<float>());
+}
+
+void UTopDownPawnComponent::Input_MoveBackward(const FInputActionValue& InputActionValue)
+{
+	CancelMoveToTarget();
+	APawn* Pawn = GetPawn<APawn>();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+	if (!Pawn || !Controller)
+	{
+		return;
+	}
+
+	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::ForwardVector), -InputActionValue.Get<float>());
+}
+
+void UTopDownPawnComponent::Input_MoveRight(const FInputActionValue& InputActionValue)
+{
+	CancelMoveToTarget();
+	APawn* Pawn = GetPawn<APawn>();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+	if (!Pawn || !Controller)
+	{
+		return;
+	}
+
+	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::RightVector), InputActionValue.Get<float>());
+}
+
+void UTopDownPawnComponent::Input_MoveLeft(const FInputActionValue& InputActionValue)
+{
+	CancelMoveToTarget();
+	APawn* Pawn = GetPawn<APawn>();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+	if (!Pawn || !Controller)
+	{
+		return;
+	}
+
+	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::RightVector), -InputActionValue.Get<float>());
 }
 
 void UTopDownPawnComponent::Input_CameraZoom(const FInputActionValue& InputActionValue)
@@ -353,4 +453,57 @@ void UTopDownPawnComponent::Input_CameraRotate(const FInputActionValue& InputAct
 
 	const FVector2D PointerDelta = InputActionValue.Get<FVector2D>();
 	CameraYawOffset = FRotator::NormalizeAxis(CameraYawOffset + PointerDelta.X * RotationDegreesPerPixel);
+}
+
+void UTopDownPawnComponent::UpdateFacingFromMouse(float DeltaTime)
+{
+	if (bCameraRotateHeld)
+	{
+		return;
+	}
+
+	APawn* Pawn = GetPawn<APawn>();
+	APlayerController* PlayerController = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
+	// Station abilities attach the character to the operated weapon/helm. While attached, the
+	// cursor belongs to that station's control sample; do not rotate the character as a second
+	// consumer of the same mouse aim.
+	if (!Pawn || !PlayerController || !PlayerController->IsLocalController() || Pawn->GetAttachParentActor())
+	{
+		return;
+	}
+
+	FVector RayOrigin;
+	FVector RayDirection;
+	if (!PlayerController->DeprojectMousePositionToWorld(RayOrigin, RayDirection))
+	{
+		return;
+	}
+
+	RayDirection = RayDirection.GetSafeNormal();
+	if (FMath::IsNearlyZero(RayDirection.Z))
+	{
+		return;
+	}
+
+	const FVector PawnLocation = Pawn->GetActorLocation();
+	const float RayDistance = (PawnLocation.Z - RayOrigin.Z) / RayDirection.Z;
+	if (RayDistance <= 0.0f)
+	{
+		return;
+	}
+
+	FVector FacingDirection = RayOrigin + RayDirection * RayDistance - PawnLocation;
+	FacingDirection.Z = 0.0f;
+	if (FacingDirection.SizeSquared2D() <= KINDA_SMALL_NUMBER)
+	{
+		return;
+	}
+
+	const float DesiredYaw = FacingDirection.Rotation().Yaw;
+	const float CurrentYaw = Pawn->GetActorRotation().Yaw;
+	const float MaxYawStep = FacingRotationInterpSpeed > 0.0f
+		? FacingRotationInterpSpeed * DeltaTime
+		: 360.0f;
+	const float NewYaw = FMath::FixedTurn(CurrentYaw, DesiredYaw, MaxYawStep);
+	Pawn->SetActorRotation(FRotator(0.0f, NewYaw, 0.0f));
 }

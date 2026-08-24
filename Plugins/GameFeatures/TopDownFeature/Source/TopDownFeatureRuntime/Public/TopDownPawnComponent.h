@@ -14,7 +14,7 @@ class UEnhancedInputComponent;
 struct FComponentRequestHandle;
 struct FInputActionValue;
 
-/** Adds optional cursor click movement to an existing Lyra pawn and movement component. */
+/** Adds mouse-facing WASD movement and local camera input to an existing Lyra pawn. */
 UCLASS(Blueprintable, ClassGroup = (TopDown), meta = (BlueprintSpawnableComponent))
 class TOPDOWNFEATURERUNTIME_API UTopDownPawnComponent : public UPawnComponent
 {
@@ -23,11 +23,11 @@ class TOPDOWNFEATURERUNTIME_API UTopDownPawnComponent : public UPawnComponent
 public:
 	UTopDownPawnComponent(const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
-	/** Traces from the mouse cursor and starts moving toward the first blocking hit. */
+	/** Legacy Blueprint API; no input action invokes click-to-move after the WASD migration. */
 	UFUNCTION(BlueprintCallable, Category = "Top Down|Movement")
 	bool SetMoveTargetUnderCursor();
 
-	/** Starts direct movement toward a world-space target without pathfinding. */
+	/** Legacy direct movement API retained for existing Blueprint callers. */
 	UFUNCTION(BlueprintCallable, Category = "Top Down|Movement")
 	void SetMoveTarget(const FVector& TargetLocation);
 
@@ -52,7 +52,10 @@ private:
 	void HandlePawnExtension(AActor* Actor, FName EventName);
 	void BindInputIfReady();
 	void UnbindInput();
-	void Input_TopDownClick(const FInputActionValue& InputActionValue);
+	void Input_MoveForward(const FInputActionValue& InputActionValue);
+	void Input_MoveBackward(const FInputActionValue& InputActionValue);
+	void Input_MoveRight(const FInputActionValue& InputActionValue);
+	void Input_MoveLeft(const FInputActionValue& InputActionValue);
 	void Input_CameraZoom(const FInputActionValue& InputActionValue);
 	void Input_CameraRotateStarted(const FInputActionValue& InputActionValue);
 	void Input_CameraRotateCompleted(const FInputActionValue& InputActionValue);
@@ -61,10 +64,23 @@ private:
 	void RemoveInputWidget();
 	void PushCameraDragInputWidget(APlayerController* PlayerController);
 	void PopCameraDragInputWidget();
+	void UpdateFacingFromMouse(float DeltaTime);
 
-	/** Native action in the active PawnData InputConfig that represents a world click. */
+	/** Legacy tag retained for Blueprint/data compatibility; it is no longer bound to input. */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
 	FGameplayTag ClickInputTag;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
+	FGameplayTag MoveForwardInputTag;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
+	FGameplayTag MoveBackwardInputTag;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
+	FGameplayTag MoveRightInputTag;
+
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
+	FGameplayTag MoveLeftInputTag;
 
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
 	FGameplayTag CameraZoomInputTag;
@@ -94,6 +110,10 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Trace")
 	bool bTraceComplex;
+
+	/** Degrees per second used to turn the pawn toward the mouse-plane direction. Zero snaps. */
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Movement", meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float FacingRotationInterpSpeed;
 
 	/** Direct movement stops once the pawn is within this 2D distance of its target. */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Movement", meta = (ClampMin = "0.0", UIMin = "0.0"))
@@ -131,4 +151,6 @@ private:
 	bool bHasMoveTarget;
 	bool bInputBound;
 	bool bCameraRotateHeld;
+	bool bOriginalUseControllerRotationYaw;
+	bool bRotationPolicyOverridden;
 };
