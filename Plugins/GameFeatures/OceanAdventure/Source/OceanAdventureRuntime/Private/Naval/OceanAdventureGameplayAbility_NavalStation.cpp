@@ -8,6 +8,8 @@
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
+#include "Character/LyraCharacterMovementComponent.h"
+#include "Build/OceanAdventureBuildTags.h"
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalVesselComponent.h"
 #include "Naval/OceanAdventureAbilityTask_NavalControl.h"
@@ -24,6 +26,13 @@ UOceanAdventureGameplayAbility_NavalStation::UOceanAdventureGameplayAbility_Nava
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
+
+	// Only one cursor-owning station/building mode may run at a time.  These are activation
+	// requirements rather than ad-hoc checks so prediction and the server use the same gate.
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_Steering);
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_OperatingHeavyWeapon);
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_Repairing);
+	ActivationBlockedTags.AddTag(OceanAdventureBuildTags::Status_Build_Active);
 }
 
 void UOceanAdventureGameplayAbility_NavalStation::ActivateAbility(
@@ -88,6 +97,12 @@ void UOceanAdventureGameplayAbility_NavalStation::ActivateAbility(
 	OccupyData.StationActor = Station;
 	OccupyData.Request = ENavalStationRequest::Occupy;
 	SendStationRequest(OccupyData);
+	if (!IsActive())
+	{
+		// On a listen server the target-data callback can reject synchronously and end this
+		// ability before presentation starts.  Do not attach a pawn after that rejection.
+		return;
+	}
 
 	// Locally the character takes the station immediately. If the server refuses, it ends the
 	// ability and the attachment unwinds in EndAbility.
@@ -332,6 +347,7 @@ void UOceanAdventureGameplayAbility_NavalStation::EnterStationPresentation(AActo
 
 	if (UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo())
 	{
+		AbilitySystem->AddLooseGameplayTag(TAG_Gameplay_MovementStopped);
 		const FGameplayTag StatusTag = GetStationStatusTag();
 		if (StatusTag.IsValid())
 		{
@@ -369,6 +385,7 @@ void UOceanAdventureGameplayAbility_NavalStation::LeaveStationPresentation()
 		{
 			AbilitySystem->RemoveLooseGameplayTag(StatusTag);
 		}
+		AbilitySystem->RemoveLooseGameplayTag(TAG_Gameplay_MovementStopped);
 	}
 }
 

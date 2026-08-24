@@ -25,6 +25,8 @@ UOceanAdventureGameplayAbility_DeployHeavyWeapon::UOceanAdventureGameplayAbility
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_Steering);
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_OperatingHeavyWeapon);
 }
 
 FVector UOceanAdventureGameplayAbility_DeployHeavyWeapon::ComputeDeployLocation() const

@@ -2,7 +2,10 @@
 
 #include "TopDownPawnComponent.h"
 
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 #include "Character/LyraHeroComponent.h"
+#include "Character/LyraCharacterMovementComponent.h"
 #include "Character/LyraPawnData.h"
 #include "Character/LyraPawnExtensionComponent.h"
 #include "Components/GameFrameworkComponentManager.h"
@@ -57,6 +60,7 @@ UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectIni
 	, bOriginalUseControllerRotationYaw(true)
 	, bRotationPolicyOverridden(false)
 {
+	FacingBlockedTags.AddTag(TAG_Gameplay_MovementStopped);
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
 }
@@ -462,12 +466,20 @@ void UTopDownPawnComponent::UpdateFacingFromMouse(float DeltaTime)
 		return;
 	}
 
+	// The ASC is the explicit owner of station/building control state.  Attachment is only a
+	// presentation detail and can be transient while prediction or replication catches up.
+	if (const UAbilitySystemComponent* AbilitySystem =
+		UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner()))
+	{
+		if (AbilitySystem->HasAnyMatchingGameplayTags(FacingBlockedTags))
+		{
+			return;
+		}
+	}
+
 	APawn* Pawn = GetPawn<APawn>();
 	APlayerController* PlayerController = Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr;
-	// Station abilities attach the character to the operated weapon/helm. While attached, the
-	// cursor belongs to that station's control sample; do not rotate the character as a second
-	// consumer of the same mouse aim.
-	if (!Pawn || !PlayerController || !PlayerController->IsLocalController() || Pawn->GetAttachParentActor())
+	if (!Pawn || !PlayerController || !PlayerController->IsLocalController())
 	{
 		return;
 	}

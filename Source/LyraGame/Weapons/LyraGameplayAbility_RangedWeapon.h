@@ -107,7 +107,7 @@ protected:
 	void PerformLocalTargeting(OUT TArray<FHitResult>& OutHits);
 
 	FVector GetWeaponTargetingSourceLocation() const;
-	FTransform GetTargetingTransform(APawn* SourcePawn, ELyraAbilityTargetingSource Source) const;
+	virtual FTransform GetTargetingTransform(APawn* SourcePawn, ELyraAbilityTargetingSource Source) const;
 
 	void OnTargetDataReadyCallback(const FGameplayAbilityTargetDataHandle& InData, FGameplayTag ApplicationTag);
 

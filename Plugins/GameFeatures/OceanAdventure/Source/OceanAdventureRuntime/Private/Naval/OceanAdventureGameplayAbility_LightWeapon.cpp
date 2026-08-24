@@ -6,12 +6,12 @@
 #include "Engine/World.h"
 #include "Engine/OverlapResult.h"
 #include "GameFramework/Pawn.h"
-#include "GameFramework/PlayerController.h"
 #include "Naval/NavalFireWindowComponent.h"
 #include "Naval/NavalPartComponent.h"
 #include "Naval/NavalTeamStatics.h"
 #include "Naval/NavalVesselComponent.h"
 #include "Naval/OceanAdventureNavalSettings.h"
+#include "Naval/OceanAdventureNavalTags.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureGameplayAbility_LightWeapon)
 
@@ -19,6 +19,24 @@ UOceanAdventureGameplayAbility_LightWeapon::UOceanAdventureGameplayAbility_Light
 	const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_Steering);
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_OperatingHeavyWeapon);
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_StationExitLock);
+}
+
+FTransform UOceanAdventureGameplayAbility_LightWeapon::GetTargetingTransform(
+	APawn* SourcePawn,
+	ELyraAbilityTargetingSource Source) const
+{
+	if (SourcePawn && Source == ELyraAbilityTargetingSource::CameraTowardsFocus)
+	{
+		// ULyraCameraMode_TopDownFollow intentionally keeps the controller/camera rotation at
+		// a fixed -60 degree pitch.  The top-down gameplay aim is the pawn's horizontal actor
+		// yaw, which is already driven by the cursor when no station owns it.
+		return FTransform(SourcePawn->GetActorRotation(), GetWeaponTargetingSourceLocation());
+	}
+
+	return Super::GetTargetingTransform(SourcePawn, Source);
 }
 
 void UOceanAdventureGameplayAbility_LightWeapon::AddAdditionalTraceIgnoreActors(
@@ -34,13 +52,10 @@ void UOceanAdventureGameplayAbility_LightWeapon::AddAdditionalTraceIgnoreActors(
 	}
 
 	const FVector ShotStart = Avatar->GetActorLocation();
-	// Aim direction from the controller rather than the pawn: in top-down the character faces
-	// where the player is aiming, and this has to match the trace Lyra is about to run.
-	FVector ShotDirection = Avatar->GetActorForwardVector();
-	if (const AController* Controller = Avatar->GetController())
-	{
-		ShotDirection = Controller->GetControlRotation().Vector();
-	}
+	// Top-down camera control rotation is a fixed downward viewing angle.  The pawn's actor
+	// yaw is the gameplay aim direction, so use it for the window authorization query instead
+	// of the camera/controller rotation.
+	const FVector ShotDirection = Avatar->GetActorForwardVector();
 
 	const int32 ShooterTeam = NavalTeam::GetTeamId(Avatar);
 	if (!NavalTeam::IsValidTeam(ShooterTeam))

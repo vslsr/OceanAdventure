@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "LyraHeroComponent.h"
+#include "AbilitySystemComponent.h"
+#include "AbilitySystemGlobals.h"
 #include "Components/GameFrameworkComponentDelegates.h"
 #include "Logging/MessageLog.h"
 #include "LyraLogChannels.h"
@@ -11,6 +13,7 @@
 #include "Character/LyraPawnExtensionComponent.h"
 #include "Character/LyraPawnData.h"
 #include "Character/LyraCharacter.h"
+#include "Character/LyraCharacterMovementComponent.h"
 #include "AbilitySystem/LyraAbilitySystemComponent.h"
 #include "Input/LyraInputConfig.h"
 #include "Input/LyraInputComponent.h"
@@ -471,6 +474,19 @@ void ULyraHeroComponent::Input_LookMouse(const FInputActionValue& InputActionVal
 	if (!Pawn)
 	{
 		return;
+	}
+
+	// A station ability owns the cursor through the canonical Lyra movement-stopped state.
+	// Do not feed the same Mouse2D value into the pawn's controller rotation as well, otherwise
+	// the character turns while the station is being traversed.  The station still receives
+	// the cursor position from its GameplayAbility target-data path.
+	if (const UAbilitySystemComponent* AbilitySystem =
+		UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Pawn))
+	{
+		if (AbilitySystem->HasMatchingGameplayTag(TAG_Gameplay_MovementStopped))
+		{
+			return;
+		}
 	}
 	
 	const FVector2D Value = InputActionValue.Get<FVector2D>();

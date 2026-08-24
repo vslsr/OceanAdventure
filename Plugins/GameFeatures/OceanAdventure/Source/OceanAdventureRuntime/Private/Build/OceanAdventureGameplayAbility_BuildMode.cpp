@@ -10,6 +10,7 @@
 #include "CommonUIExtensions.h"
 #include "Engine/LocalPlayer.h"
 #include "GameFramework/PlayerController.h"
+#include "Naval/OceanAdventureNavalTags.h"
 #include "OceanAdventureRuntimeModule.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureGameplayAbility_BuildMode)
@@ -20,6 +21,8 @@ UOceanAdventureGameplayAbility_BuildMode::UOceanAdventureGameplayAbility_BuildMo
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_Steering);
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_OperatingHeavyWeapon);
 	BuildInputWidgetClass = UOceanAdventureBuildInputWidget::StaticClass();
 	UILayerTag = FGameplayTag::RequestGameplayTag(FName("UI.Layer.Game"), /*ErrorIfNotFound=*/false);
 }

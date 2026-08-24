@@ -43,6 +43,11 @@ public:
 	void ApplyNavalHitEffects(const FGameplayAbilityTargetDataHandle& TargetData);
 
 protected:
+	/** Top-down uses the pawn's cursor-facing actor yaw instead of Lyra's fixed camera pitch. */
+	virtual FTransform GetTargetingTransform(
+		APawn* SourcePawn,
+		ELyraAbilityTargetingSource Source) const override;
+
 	virtual void AddAdditionalTraceIgnoreActors(FCollisionQueryParams& TraceParams) const override;
 
 	/** Damage one light-weapon hit does to a character; scaled down for structure and hulls. */

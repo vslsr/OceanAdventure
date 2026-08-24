@@ -26,7 +26,8 @@ public class TopDownFeatureRuntime : ModuleRules
 			new string[]
 			{
 				"CommonGame",
-				"EnhancedInput"
+				"EnhancedInput",
+				"GameplayAbilities"
 			}
 		);
 	}

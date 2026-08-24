@@ -115,6 +115,13 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Movement", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float FacingRotationInterpSpeed;
 
+	/**
+	 * While any of these ASC tags is present, station/building input owns the cursor and the
+	 * pawn must not turn toward it.  Defaults to Lyra's canonical movement-stopped state.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Movement")
+	FGameplayTagContainer FacingBlockedTags;
+
 	/** Direct movement stops once the pawn is within this 2D distance of its target. */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Movement", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float AcceptanceRadius;

@@ -27,6 +27,8 @@ UOceanAdventureGameplayAbility_DeployLifeRaft::UOceanAdventureGameplayAbility_De
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_Steering);
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_OperatingHeavyWeapon);
 }
 
 UOceanAdventureNavalMatchComponent* UOceanAdventureGameplayAbility_DeployLifeRaft::FindMatchComponent() const

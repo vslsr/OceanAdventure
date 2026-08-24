@@ -23,6 +23,8 @@ UOceanAdventureGameplayAbility_EmergencyRepair::UOceanAdventureGameplayAbility_E
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_Steering);
+	ActivationBlockedTags.AddTag(OceanAdventureNavalTags::Status_Naval_OperatingHeavyWeapon);
 }
 
 UNavalVesselComponent* UOceanAdventureGameplayAbility_EmergencyRepair::FindRepairableVessel() const
