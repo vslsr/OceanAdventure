@@ -1,6 +1,6 @@
 ---
 name: lyra-editor-asset-automation
-description: 为 OceanAdventure 的 UE 5.7/Lyra 编辑器资产脚本配置 AbilitySet、InputConfig 或 GameFeatureData，并处理 Python USTRUCT 构造失败、EditDefaultsOnly 不可写、GameplayTag 读回误判和原生编辑器桥接编译错误。用户要求用 Python 创建或修复这些 Lyra 资产，或日志出现 `call() takes at most 0 arguments`、`cannot be edited on instances`、`InputConfig did not retain`、`SubclassOf.h` 未定义类型时使用；普通运行时玩法 C++、可直接编辑的 Python 资产属性和 Blender 脚本不使用本技能。
+description: 为 OceanAdventure 的 UE 5.7/Lyra 编辑器资产脚本配置 AbilitySet、InputConfig 或 GameFeatureData，并处理 Python USTRUCT 构造失败、EditDefaultsOnly 不可写、GameplayTag 读回误判和原生编辑器桥接编译错误。用户要求用 Python 创建或修复这些 Lyra 资产，或日志出现 `call() takes at most 0 arguments`、`cannot be edited on instances`、`InputConfig did not retain`、`SubclassOf.h` 未定义类型时使用；普通运行时玩法 C++、可直接编辑的 Python 资产属性和 Blender 原始模型导出改用 `blender-asset-workflow`，不使用本技能。
 ---
 
 # Lyra 编辑器资产自动化

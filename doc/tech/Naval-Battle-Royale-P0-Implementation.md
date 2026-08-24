@@ -37,7 +37,7 @@
 | 爆炸不穿墙 | `FNavalBallistics::IsExplosionOccluded` | 故意不复用 `ResolveShot`：总纲 7.7 第 6 条规定窗只放行弹丸，不放行爆炸 |
 | 轻武器可破墙但效率低 | `UOceanAdventureGameplayAbility_LightWeapon::ApplyNavalHitEffects` | 对结构 28%、对船壳 18%（可在项目设置里调） |
 | 轻武器从己方窗内向外射击 | 同类的 `AddAdditionalTraceIgnoreActors` | 开火前只把"这一发被授权穿过"的窗加入忽略列表，其余窗仍是实体 |
-| 重炮：架设前摇 + 施工态 + 慢弹道 + 最小射距 + 离炮动作 | `ANavalHeavyWeaponActor` / `ANavalProjectile` / 站位能力基类 | 施工态 20–30% 耐久且**不能开火**；弹丸无重力无制导；离炮 0.45 秒锁 |
+| 重炮：架设前摇 + 施工态 + 慢弹道 + 最小射距 + 离炮动作 | `ANavalHeavyWeaponActor` / `ANavalProjectile` / 站位能力基类 | 施工态 20–30% 耐久且**不能开火**；按 `E` 占用后临时授予通用开炮 Ability；离炮 0.45 秒锁 |
 | 地面重武器自带支架，不要地基/战旗 | `ANavalHeavyWeaponActor::IsGroundSuitable` | 五点接地 + 坡度 + 台阶差；只判稳定与占位，不检查任何建筑关系 |
 | 主舵台 = 交互点，舵芯座 = 受击体 | `ANavalHelmActor` | 舵轮 `NoCollision`，甲板下方较宽的加固座耐久 750（约普通墙 2.9 倍） |
 | 舵芯失能只丧失操控，不等于沉船 | `UNavalHelmComponent` + `UNavalVesselComponent` | 两条独立生命值；核心归零→漂航，船壳归零→沉没倒计时 |
@@ -53,6 +53,7 @@
 
 - 所有船只、部件、重武器状态由服务端写入并复制；客户端只做本地预览与表现。
 - 玩家请求一律走 GAS 的 TargetData 通道（`CallServerSetReplicatedTargetData` + `AbilityTargetDataSetDelegate`），**没有任何自造的 Server/Client RPC**。操舵是一个 20Hz 的连续 TargetData 采样流，服务端逐条校验"你是不是我认为在掌舵的那个人"。
+- 重炮交互成功后，服务端给玩家 ASC 临时授予 `UOceanAdventureGameplayAbility_FireHeavyWeapon`，以 HeavyWeapon Actor 作为 `SourceObject` 并绑定 `InputTag.Naval.Fire`；离炮或炮被销毁时回收该 Spec。
 - 反馈（失败原因、警报、载重变化、命中）全部通过 `UGameplayMessageSubsystem` 广播，UI/音效/埋点各自订阅。
 - 倒计时以**服务器时间戳**复制（`NavalTime::GetNetworkTimeSeconds`），而不是复制一个递减的秒数，中途加入或丢包的客户端读到的数字一致。
 - 角色伤害是唯一一处跨层：NavalCore 广播 `FNavalProjectileImpactMessage`，玩法层的 `UOceanAdventureNavalDamageRelay` 把它变成 GameplayEffect。这样框架层完全不碰 GAS。
@@ -60,7 +61,8 @@
 ## 4. 编辑器操作步骤
 
 1. **编译**：`NavalCoreRuntime`、`BuildingCoreRuntime`、`RaftRuntime`、`OceanAdventureRuntime`（顺序由 UBT 自行解析），然后重启编辑器，让新的 UCLASS 与原生 GameplayTag 注册进来。
-2. **按顺序运行编辑器 Python**（都幂等，可反复运行修复资产）：
+2. **在 Blender 的 Scripting 工作区运行** `blender/script/python/create_naval_cannonball.py`。脚本会把炮弹 FBX 输出到项目规范目录 `blender/models/`，不会改动无关集合。
+3. **按顺序运行编辑器 Python**（都幂等，可反复运行修复资产）：
    ```
    import CreateRaftNavalAssets;  CreateRaftNavalAssets.main()      # Raft：海战建造件、船体组件、救生筏
    import CreateNavalP0Assets;    CreateNavalP0Assets.main()        # OceanAdventure：输入、能力集、体验
@@ -68,10 +70,10 @@
    ```
    `CreateRaftNavalAssets` 依赖 `CreateRaftBuildPieceAssets` 已经建好基础模块与目录；
    `CreateNavalP0Assets` 依赖 `CreateOceanAdventureExperience` 已经建好 PawnData 与 GameFeatureData。
-3. **再次重启编辑器**，让 GameFeature 带着新的 Action 重新注册。
-4. **项目设置 → Game → Ocean Adventure Naval**：确认 `LifeRaftClass` / `GroundHeavyWeaponClass` 已指向脚本生成的蓝图，并把 `ProjectileDamageEffect` 指向一个带 `SetByCaller.Naval.Damage` 的 GameplayEffect（**未配置时重炮打不动角色，只会在日志里报警告**）。
-5. **World Settings**：`L_NavalP0` 的 GameMode 用 Lyra 的，Experience 选 `B_Experience_NavalP0`。
-6. **出生点必须是 `ALyraPlayerStart`**。体验现在会注入 `UOceanAdventureNavalSpawningComponent`，
+4. **再次重启编辑器**，让 GameFeature 带着新的 Action 重新注册。
+5. **项目设置 → Game → Ocean Adventure Naval**：确认 `LifeRaftClass` / `GroundHeavyWeaponClass` 已指向脚本生成的蓝图，并把 `ProjectileDamageEffect` 指向一个带 `SetByCaller.Naval.Damage` 的 GameplayEffect（**未配置时重炮打不动角色，只会在日志里报警告**）。
+6. **World Settings**：`L_NavalP0` 的 GameMode 用 Lyra 的，Experience 选 `B_Experience_NavalP0`。
+7. **出生点必须是 `ALyraPlayerStart`**。体验现在会注入 `UOceanAdventureNavalSpawningComponent`，
    `ALyraGameMode::ChoosePlayerStart` 从此走 `ULyraPlayerSpawningManagerComponent`，
    而它只认 `ALyraPlayerStart`。`BuildNavalP0Map.py` 生成的就是这个类；
    手工摆的普通 `APlayerStart` 会被忽略，玩家会掉到原点。
@@ -90,6 +92,7 @@
 | 打光船壳 | 进入 20 秒沉没倒计时，按 `R` 抢修一次可以拉回；第二次归零直接沉 |
 | 沉没后按 `G` | 部署救生筏；再按一次没有第二个 |
 | 按 `C` 在斜坡/悬崖边架炮 | 拒绝并给出单一原因；平地上可以架，施工态期间打不了炮 |
+| 走近重炮按 `E`，再按住/松开鼠标左键 | 交互后才出现开炮能力；轨迹预览随蓄力变化，松开生成 `BP_Naval_CannonballProjectile`；再次按 `E` 离炮后鼠标不再触发重炮 Ability |
 | 等到 5:30 | 信标启动；站进去 30 秒获胜；两队同时站着时进度冻结 |
 | 控制台 `NavalP0.RestartMatch` | 立刻回到同一张图重开 |
 
@@ -113,7 +116,7 @@
 
 ## 6. 明确没有做的部分
 
-- **美术与音效**：全部是引擎基础几何体。P0 只要求团队归属、窗内外、重炮预警、受损状态可读。
+- **美术与音效**：炮体与炮弹已有 Blender 生成脚本，其余仍以引擎基础几何体为主；音效尚未制作。
 - **HUD 控件本体**：C++ 提供了数据源（`UOceanAdventureNavalStatics::GetVesselHudState`）与全部消息频道，UMG 控件需要在编辑器里搭。
 - **受击打断抢修/建造**：目前抢修被"离开距离"和服务端复检拦住，还没有接 Lyra 的 `AbilityTagRelationshipMapping` 做"受伤即取消"。这是 P0 盲测前建议补的一条。
 - **施工件的半透明骨架表现**：施工态在数据上完全成立（低耐久、能挡弹、不能开火），但还没有专门的材质表现。

@@ -5,9 +5,9 @@ Run this file from Blender's Scripting workspace.  It creates:
 * SM_Raft           - the visible static mesh
 * UCX_SM_Raft_00    - a single stable simple collision box for Unreal Engine
 
-The generated .blend and .fbx files are written to the Raft GameFeature's
-ArtSource/Raft directory. This script intentionally does not create Unreal
-assets; import the FBX into /Raft/Vehicles/Raft.
+The generated .blend and .fbx files are written to the project-level
+``blender/models`` source directory. This script intentionally does not create
+Unreal assets; import the FBX into /Raft/Vehicles/Raft.
 """
 
 from pathlib import Path
@@ -47,15 +47,22 @@ DEFAULT_PROJECT_ROOT = Path(r"C:\EpicWkspc\OceanAdventure")
 
 
 def find_project_root() -> Path:
-    """Find the OceanAdventure root without depending on Blender's CWD."""
+    """Find OceanAdventure even when Blender is opened from LyraStarterGame."""
+
+    def is_ocean_adventure_root(candidate: Path) -> bool:
+        return (
+            candidate.is_dir()
+            and any(candidate.glob("*.uproject"))
+            and (candidate / "Plugins" / "GameFeatures" / "OceanAdventure").is_dir()
+        )
 
     override = os.environ.get("OCEAN_ADVENTURE_PROJECT_ROOT")
     if override:
         root = Path(override).expanduser().resolve()
-        if (root / "LyraTemplate.uproject").is_file():
+        if is_ocean_adventure_root(root):
             return root
         raise RuntimeError(
-            "OCEAN_ADVENTURE_PROJECT_ROOT does not contain LyraTemplate.uproject: "
+            "OCEAN_ADVENTURE_PROJECT_ROOT does not point to an OceanAdventure project: "
             f"{root}"
         )
 
@@ -67,20 +74,31 @@ def find_project_root() -> Path:
     starts.append(Path.cwd().resolve())
 
     visited = set()
+    search_roots = []
     for start in starts:
         for candidate in (start, *start.parents):
             if candidate in visited:
                 continue
             visited.add(candidate)
-            if (candidate / "LyraTemplate.uproject").is_file():
-                return candidate
+            search_roots.append(candidate)
 
-    if (DEFAULT_PROJECT_ROOT / "LyraTemplate.uproject").is_file():
-        return DEFAULT_PROJECT_ROOT
+    sibling_candidates = []
+    for candidate in search_roots:
+        try:
+            sibling_candidates.extend(
+                child for child in candidate.parent.iterdir() if child.is_dir()
+            )
+        except OSError:
+            continue
+
+    for candidate in (*search_roots, *sibling_candidates, DEFAULT_PROJECT_ROOT):
+        if is_ocean_adventure_root(candidate):
+            return candidate
 
     raise RuntimeError(
-        "Could not locate the OceanAdventure project root. Set the "
-        "OCEAN_ADVENTURE_PROJECT_ROOT environment variable and run again."
+        "Could not locate OceanAdventure (expected a .uproject plus "
+        "Plugins/GameFeatures/OceanAdventure). Set OCEAN_ADVENTURE_PROJECT_ROOT "
+        r"to C:\EpicWkspc\OceanAdventure before running this script."
     )
 
 
@@ -276,14 +294,7 @@ def build_raft():
 
 def save_and_export(raft, collision) -> tuple[Path, Path]:
     project_root = find_project_root()
-    output_dir = (
-        project_root
-        / "Plugins"
-        / "GameFeatures"
-        / "Raft"
-        / "ArtSource"
-        / "Raft"
-    )
+    output_dir = project_root / "blender" / "models"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     blend_path = output_dir / BLEND_NAME

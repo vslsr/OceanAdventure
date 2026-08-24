@@ -3,6 +3,9 @@
 ## Blender 脚本
 
 - 所有 Blender Python 脚本统一放置在项目根目录下的 `blender/script/python/` 目录中。
+- 新建或导出的 Blender 原始模型文件（如 `.blend`、`.fbx`、`.obj`、`.glb`）统一放置在项目根目录下的 `blender/models/` 目录中，禁止新增到 GameFeature 的 `ArtSource/`；历史文件可按需迁移。
+- Unreal 导入后的 `.uasset`、材质、Blueprint 等运行时资源仍归属对应的
+  `Plugins/GameFeatures/<GameFeatureName>/Content/`；编辑器脚本从 `blender/models/` 读取原始文件并导入到该 GameFeature 的 Content 路径。
 - 除非任务明确要求，否则只生成脚本，不启动、连接或操作 Blender。
 
 ## Lyra 参考项目

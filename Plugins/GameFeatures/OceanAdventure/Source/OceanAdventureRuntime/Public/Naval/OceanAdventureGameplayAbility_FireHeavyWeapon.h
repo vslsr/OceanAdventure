@@ -44,7 +44,11 @@ public:
 		bool bWasCancelled) override;
 
 protected:
-	/** The gun this pawn is currently standing at, found from its attachment. */
+	/** The HeavyWeapon Actor carried as this temporary ability spec's SourceObject. */
+	class ANavalHeavyWeaponActor* FindOperatedWeapon(
+		FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo) const;
+
 	class ANavalHeavyWeaponActor* FindOperatedWeapon() const;
 
 	void BroadcastFailure(FGameplayTag FailReason, AActor* Station) const;

@@ -2,8 +2,10 @@
 
 #include "Naval/OceanAdventureGameplayAbility_OperateHeavyWeapon.h"
 
+#include "AbilitySystemComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Naval/NavalHeavyWeaponActor.h"
+#include "Naval/OceanAdventureGameplayAbility_FireHeavyWeapon.h"
 #include "Naval/OceanAdventureNavalStatics.h"
 #include "Naval/OceanAdventureNavalTags.h"
 #include "OceanAdventureRuntimeModule.h"
@@ -17,6 +19,29 @@ UOceanAdventureGameplayAbility_OperateHeavyWeapon::UOceanAdventureGameplayAbilit
 	// Traverse is slow enough that a quarter-second of aim lag would be visible; this is one
 	// of the few places worth sampling at close to frame rate.
 	ControlSampleInterval = 0.05f;
+}
+
+void UOceanAdventureGameplayAbility_OperateHeavyWeapon::EndAbility(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo,
+	bool bReplicateEndAbility,
+	bool bWasCancelled)
+{
+	// ActiveStation is weak and may already be gone when a destroyed cannon ends the
+	// operation. Revoke independently of the station pointer so the mouse-fire spec cannot
+	// leak onto the player.
+	if (HasAuthority(&ActivationInfo))
+	{
+		RevokeFireAbility();
+	}
+
+	Super::EndAbility(
+		Handle,
+		ActorInfo,
+		ActivationInfo,
+		bReplicateEndAbility,
+		bWasCancelled);
 }
 
 AActor* UOceanAdventureGameplayAbility_OperateHeavyWeapon::FindStationInRange() const
@@ -47,15 +72,80 @@ bool UOceanAdventureGameplayAbility_OperateHeavyWeapon::ServerOccupyStation(AAct
 		*GetNameSafe(Weapon), *GetNameSafe(Avatar), bCanOperate, *FailReason.ToString(),
 		Weapon && Avatar ? FVector::Dist(Weapon->GetActorLocation(), Avatar->GetActorLocation()) : -1.0f,
 		*GetNameSafe(Weapon ? Weapon->GetWeaponOperator() : nullptr));
-	return bCanOperate && Weapon->TryOccupy(Avatar);
+	if (!bCanOperate || !Weapon->TryOccupy(Avatar))
+	{
+		return false;
+	}
+
+	// The interact ability is permanent, but firing only exists for the occupied gun. The
+	// replicated spec carries both InputTag.Naval.Fire and the weapon Actor as SourceObject,
+	// so the owning client receives a normal Lyra mouse binding without another RPC.
+	if (!GrantFireAbility(Weapon))
+	{
+		Weapon->ReleaseOperator(Avatar);
+		return false;
+	}
+
+	return true;
 }
 
 void UOceanAdventureGameplayAbility_OperateHeavyWeapon::ServerReleaseStation(AActor* Station)
 {
+	RevokeFireAbility();
+
 	if (ANavalHeavyWeaponActor* Weapon = Cast<ANavalHeavyWeaponActor>(Station))
 	{
 		Weapon->ReleaseOperator(GetAvatarActorFromActorInfo());
 	}
+}
+
+bool UOceanAdventureGameplayAbility_OperateHeavyWeapon::GrantFireAbility(
+	ANavalHeavyWeaponActor* Weapon)
+{
+	UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo();
+	if (!HasAuthority(&CurrentActivationInfo) || !AbilitySystem || !Weapon)
+	{
+		return false;
+	}
+
+	RevokeFireAbility();
+
+	UOceanAdventureGameplayAbility_FireHeavyWeapon* FireAbilityCDO =
+		UOceanAdventureGameplayAbility_FireHeavyWeapon::StaticClass()
+			->GetDefaultObject<UOceanAdventureGameplayAbility_FireHeavyWeapon>();
+	FGameplayAbilitySpec FireSpec(FireAbilityCDO, /*Level=*/1);
+	FireSpec.SourceObject = Weapon;
+	FireSpec.GetDynamicSpecSourceTags().AddTag(OceanAdventureNavalTags::InputTag_Naval_Fire);
+	GrantedFireAbilityHandle = AbilitySystem->GiveAbility(FireSpec);
+
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[HeavyWeaponOperate] Granted fire ability weapon=%s avatar=%s handle=%s"),
+		*GetNameSafe(Weapon),
+		*GetNameSafe(GetAvatarActorFromActorInfo()),
+		*GrantedFireAbilityHandle.ToString());
+	return GrantedFireAbilityHandle.IsValid();
+}
+
+void UOceanAdventureGameplayAbility_OperateHeavyWeapon::RevokeFireAbility()
+{
+	if (!GrantedFireAbilityHandle.IsValid())
+	{
+		return;
+	}
+
+	if (UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo())
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Display,
+			TEXT("[HeavyWeaponOperate] Revoked fire ability avatar=%s handle=%s"),
+			*GetNameSafe(GetAvatarActorFromActorInfo()),
+			*GrantedFireAbilityHandle.ToString());
+		AbilitySystem->ClearAbility(GrantedFireAbilityHandle);
+	}
+	GrantedFireAbilityHandle = FGameplayAbilitySpecHandle();
 }
 
 void UOceanAdventureGameplayAbility_OperateHeavyWeapon::ServerApplyControl(

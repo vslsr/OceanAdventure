@@ -1,9 +1,8 @@
 """Create and export a UE5-ready stylized cannon as an FBX static mesh.
 
-Run from Blender's Scripting workspace. The output is written into the owning
-OceanAdventure GameFeature under ArtSource/Naval/GroundCannon. Re-running
-replaces only the generated collection and output file, leaving unrelated
-scene objects untouched.
+Run from Blender's Scripting workspace. The raw FBX is written to the project
+source directory ``blender/models``. Re-running replaces only the generated
+collection and output file, leaving unrelated scene objects untouched.
 """
 
 import math
@@ -19,13 +18,21 @@ FBX_NAME = "SM_Naval_GroundCannon.fbx"
 
 def find_project_root():
     """Locate the project even when Blender runs the script from a text block."""
+
+    def is_ocean_adventure_root(candidate):
+        return (
+            candidate.is_dir()
+            and any(candidate.glob("*.uproject"))
+            and (candidate / "Plugins" / "GameFeatures" / "OceanAdventure").is_dir()
+        )
+
     override = os.environ.get("OCEAN_ADVENTURE_PROJECT_ROOT")
     if override:
         root = Path(override).expanduser().resolve()
-        if (root / "LyraTemplate.uproject").is_file():
+        if is_ocean_adventure_root(root):
             return root
         raise RuntimeError(
-            "OCEAN_ADVENTURE_PROJECT_ROOT does not contain LyraTemplate.uproject: "
+            "OCEAN_ADVENTURE_PROJECT_ROOT does not point to an OceanAdventure project: "
             f"{root}"
         )
 
@@ -36,17 +43,31 @@ def find_project_root():
         starts.insert(0, Path(bpy.data.filepath).resolve().parent)
 
     visited = set()
+    search_roots = []
     for start in starts:
         for candidate in (start, *start.parents):
             if candidate in visited:
                 continue
             visited.add(candidate)
-            if (candidate / "LyraTemplate.uproject").is_file():
-                return candidate
+            search_roots.append(candidate)
+
+    sibling_candidates = []
+    for candidate in search_roots:
+        try:
+            sibling_candidates.extend(
+                child for child in candidate.parent.iterdir() if child.is_dir()
+            )
+        except OSError:
+            continue
+
+    for candidate in (*search_roots, *sibling_candidates):
+        if is_ocean_adventure_root(candidate):
+            return candidate
 
     raise RuntimeError(
-        "Could not locate OceanAdventure. Set OCEAN_ADVENTURE_PROJECT_ROOT "
-        "to the project directory and run the script again."
+        "Could not locate OceanAdventure (expected a .uproject plus "
+        "Plugins/GameFeatures/OceanAdventure). Set OCEAN_ADVENTURE_PROJECT_ROOT "
+        r"to C:\EpicWkspc\OceanAdventure before running this script."
     )
 
 
@@ -319,15 +340,7 @@ def join_static_mesh(collection):
 
 
 def export_ue5_fbx(static_mesh):
-    output_dir = (
-        find_project_root()
-        / "Plugins"
-        / "GameFeatures"
-        / "OceanAdventure"
-        / "ArtSource"
-        / "Naval"
-        / "GroundCannon"
-    )
+    output_dir = find_project_root() / "blender" / "models"
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / FBX_NAME
 

@@ -3,8 +3,10 @@
 What this owns is everything that only means something once GAS and the match exist:
 
     IMC_OceanNaval / DA_InputConfig_OceanNaval   InputTag -> InputAction, no hard-coded keys
-    DA_AbilitySet_OceanNaval                     the six naval abilities, granted by PawnData
+    DA_AbilitySet_OceanNaval                     station/deploy abilities granted by PawnData
     BP_Naval_GroundCannon                        the field emplacement of the shared cannon
+    Models/SM_Naval_Cannonball                   the Blender-authored projectile mesh
+    Projectiles/BP_Naval_CannonballProjectile    the shared ANavalProjectile presentation
     BP_NavalP0_Beacon                            the sudden-death beacon
     B_Experience_NavalP0                         the P0 match, its match component, and the
                                                  reconnect anchor table + spawning manager
@@ -13,12 +15,15 @@ The raft's own naval layer -- shootable build pieces and the vessel components o
 ARaftActor -- is authored by the Raft feature's CreateRaftNavalAssets.py, because a
 GameFeature may not reference another GameFeature's classes or assets.
 
-Run after compiling NavalCoreRuntime and OceanAdventureRuntime, and after
+Run after exporting the cannonball with blender/script/python/create_naval_cannonball.py,
+after compiling NavalCoreRuntime and OceanAdventureRuntime, and after
 CreateOceanAdventureExperience.py, which owns PawnData and the GameFeatureData. Safe to re-run.
 
     import CreateNavalP0Assets
     CreateNavalP0Assets.main()
 """
+
+from pathlib import Path
 
 import unreal
 
@@ -37,7 +42,16 @@ INPUT_MAPPING_PATH = f"{INPUT_ROOT}/IMC_OceanNaval"
 INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanNaval"
 ABILITY_SET_PATH = f"{NAVAL_ROOT}/DA_AbilitySet_OceanNaval"
 GROUND_CANNON_PATH = f"{NAVAL_ROOT}/BP_Naval_GroundCannon"
+PROJECTILE_BLUEPRINT_PATH = f"{NAVAL_ROOT}/Projectiles/BP_Naval_CannonballProjectile"
+CANNONBALL_MESH_PATH = f"{NAVAL_ROOT}/Models/SM_Naval_Cannonball"
 BEACON_PATH = f"{NAVAL_ROOT}/BP_NavalP0_Beacon"
+PROJECT_ROOT = Path(unreal.Paths.project_dir()).resolve()
+CANNONBALL_SOURCE_FBX = (
+    PROJECT_ROOT
+    / "blender"
+    / "models"
+    / "SM_Naval_Cannonball.fbx"
+)
 
 GAME_FEATURES_TO_ENABLE = ["OceanAdventure", "TopDownFeature", "Raft"]
 ACTION_SET_PATHS = [
@@ -60,7 +74,8 @@ ACTIONS = (
 ABILITIES = (
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_OperateHelm", "InputTag.Naval.Interact"),
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_OperateHeavyWeapon", "InputTag.Naval.Interact"),
-    ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_FireHeavyWeapon", "InputTag.Naval.Fire"),
+    # FireHeavyWeapon is intentionally absent: successful E interaction grants that spec
+    # temporarily with the occupied HeavyWeapon Actor as its SourceObject.
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_EmergencyRepair", "InputTag.Naval.Repair"),
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_DeployHeavyWeapon", "InputTag.Naval.DeployHeavyWeapon"),
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_DeployLifeRaft", "InputTag.Naval.DeployLifeRaft"),
@@ -259,7 +274,88 @@ def configure_ability_set():
     return ability_set
 
 
-def configure_placeable_blueprints():
+def import_cannonball_mesh():
+    """Import Blender's FBX into OceanAdventure/Naval/Models.
+
+    Existing assets remain usable when the source FBX is not present on a packaged/content-
+    only checkout. When the FBX exists, every run reimports it so Blender revisions are not
+    silently ignored.
+    """
+    if not CANNONBALL_SOURCE_FBX.is_file():
+        existing = (
+            unreal.EditorAssetLibrary.load_asset(CANNONBALL_MESH_PATH)
+            if unreal.EditorAssetLibrary.does_asset_exist(CANNONBALL_MESH_PATH)
+            else None
+        )
+        return require(
+            existing,
+            (
+                f"Missing cannonball FBX: {CANNONBALL_SOURCE_FBX}. Run "
+                "blender/script/python/create_naval_cannonball.py in Blender first; "
+                "raw exports belong in blender/models."
+            ),
+        )
+
+    options = unreal.FbxImportUI()
+    options.set_editor_property("import_mesh", True)
+    options.set_editor_property("import_as_skeletal", False)
+    options.set_editor_property("import_materials", True)
+    options.set_editor_property("import_textures", False)
+    options.set_editor_property("mesh_type_to_import", unreal.FBXImportType.FBXIT_STATIC_MESH)
+    static_options = options.get_editor_property("static_mesh_import_data")
+    static_options.set_editor_property("combine_meshes", True)
+
+    destination_path, destination_name = split_path(CANNONBALL_MESH_PATH)
+    task = unreal.AssetImportTask()
+    task.set_editor_property("filename", str(CANNONBALL_SOURCE_FBX))
+    task.set_editor_property("destination_path", destination_path)
+    task.set_editor_property("destination_name", destination_name)
+    task.set_editor_property("automated", True)
+    task.set_editor_property("replace_existing", True)
+    task.set_editor_property("save", True)
+    task.set_editor_property("options", options)
+    unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+
+    mesh = require(
+        unreal.EditorAssetLibrary.load_asset(CANNONBALL_MESH_PATH),
+        f"Unable to import {CANNONBALL_MESH_PATH}",
+    )
+    log(f"Imported cannonball mesh into {CANNONBALL_MESH_PATH}")
+    return mesh
+
+
+def configure_projectile_blueprint(mesh):
+    projectile_parent = require(
+        unreal.load_class(None, "/Script/NavalCoreRuntime.NavalProjectile"),
+        "Failed to load ANavalProjectile; compile NavalCoreRuntime first",
+    )
+    projectile = get_or_create_blueprint(PROJECTILE_BLUEPRINT_PATH, projectile_parent)
+    unreal.BlueprintEditorLibrary.compile_blueprint(projectile)
+
+    defaults = unreal.get_default_object(blueprint_class(projectile, PROJECTILE_BLUEPRINT_PATH))
+    mesh_component = require(
+        defaults.get_editor_property("projectile_mesh"),
+        "ANavalProjectile has no ProjectileMesh component",
+    )
+    mesh_component.set_static_mesh(mesh)
+    mesh_component.set_relative_scale3d(unreal.Vector(1.0, 1.0, 1.0))
+
+    unreal.BlueprintEditorLibrary.compile_blueprint(projectile)
+    save(projectile)
+
+    configured_class = blueprint_class(projectile, PROJECTILE_BLUEPRINT_PATH)
+    configured_defaults = unreal.get_default_object(configured_class)
+    configured_mesh = configured_defaults.get_editor_property("projectile_mesh").get_editor_property(
+        "static_mesh"
+    )
+    require(
+        configured_mesh and configured_mesh.get_path_name().split(".", 1)[0] == CANNONBALL_MESH_PATH,
+        "Projectile Blueprint did not retain the cannonball static mesh",
+    )
+    return configured_class
+
+
+def configure_placeable_blueprints(projectile_class):
     """The field cannon and the beacon, as Blueprints designers can drop into a level."""
     weapon_class = require(
         unreal.load_class(None, "/Script/NavalCoreRuntime.NavalHeavyWeaponActor"),
@@ -267,7 +363,19 @@ def configure_placeable_blueprints():
     )
     cannon = get_or_create_blueprint(GROUND_CANNON_PATH, weapon_class)
     unreal.BlueprintEditorLibrary.compile_blueprint(cannon)
+    cannon_defaults = unreal.get_default_object(blueprint_class(cannon, GROUND_CANNON_PATH))
+    cannon_defaults.set_editor_property("projectile_class", projectile_class)
+    unreal.BlueprintEditorLibrary.compile_blueprint(cannon)
     save(cannon)
+
+    configured_cannon_defaults = unreal.get_default_object(blueprint_class(cannon, GROUND_CANNON_PATH))
+    configured_projectile_class = configured_cannon_defaults.get_editor_property("projectile_class")
+    require(
+        configured_projectile_class
+        and configured_projectile_class.get_path_name().split(".", 1)[0]
+        == projectile_class.get_path_name().split(".", 1)[0],
+        "Ground cannon did not retain BP_Naval_CannonballProjectile as ProjectileClass",
+    )
 
     beacon_class = require(
         unreal.load_class(None, "/Script/OceanAdventureRuntime.OceanAdventureNavalBeaconActor"),
@@ -441,9 +549,13 @@ def configure_experience(pawn_data):
 def main():
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([FEATURE_ROOT], True, True)
 
+    # Fail before rewriting input/ability assets when the Blender source (or an already
+    # imported fallback) is missing.
+    cannonball_mesh = import_cannonball_mesh()
     input_mapping, input_config = configure_input_assets()
     ability_set = configure_ability_set()
-    configure_placeable_blueprints()
+    projectile_class = configure_projectile_blueprint(cannonball_mesh)
+    configure_placeable_blueprints(projectile_class)
     configure_game_feature_data(input_mapping, input_config)
     pawn_data = configure_pawn_data(ability_set)
     configure_experience(pawn_data)

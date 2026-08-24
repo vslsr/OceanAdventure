@@ -46,18 +46,31 @@ bool UOceanAdventureGameplayAbility_FireHeavyWeapon::CanActivateAbility(
 	const UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	const bool bOperating = AbilitySystem
 		&& AbilitySystem->HasMatchingGameplayTag(OceanAdventureNavalTags::Status_Naval_OperatingHeavyWeapon);
+	const AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
+	const ANavalHeavyWeaponActor* Weapon = FindOperatedWeapon(Handle, ActorInfo);
+	const bool bAtGrantedWeapon = Avatar && Weapon && Avatar->GetAttachParentActor() == Weapon;
 	UE_LOG(LogOceanAdventure, Display,
-		TEXT("[NavalFire] CanActivate avatar=%s has_asc=%d operating_tag=%d"),
-		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr), AbilitySystem != nullptr, bOperating);
-	return bOperating;
+		TEXT("[NavalFire] CanActivate avatar=%s weapon=%s has_asc=%d operating_tag=%d at_source_weapon=%d"),
+		*GetNameSafe(Avatar), *GetNameSafe(Weapon), AbilitySystem != nullptr, bOperating, bAtGrantedWeapon);
+	return bOperating && bAtGrantedWeapon;
+}
+
+ANavalHeavyWeaponActor* UOceanAdventureGameplayAbility_FireHeavyWeapon::FindOperatedWeapon(
+	FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo) const
+{
+	UAbilitySystemComponent* AbilitySystem = ActorInfo
+		? ActorInfo->AbilitySystemComponent.Get()
+		: nullptr;
+	const FGameplayAbilitySpec* Spec = AbilitySystem
+		? AbilitySystem->FindAbilitySpecFromHandle(Handle)
+		: nullptr;
+	return Spec ? Cast<ANavalHeavyWeaponActor>(Spec->SourceObject.Get()) : nullptr;
 }
 
 ANavalHeavyWeaponActor* UOceanAdventureGameplayAbility_FireHeavyWeapon::FindOperatedWeapon() const
 {
-	// The operate ability attached the character to the gun, so the attachment is the truth
-	// about which gun this is -- no second search, and no way to fire a gun across the island.
-	const AActor* Avatar = GetAvatarActorFromActorInfo();
-	return Avatar ? Cast<ANavalHeavyWeaponActor>(Avatar->GetAttachParentActor()) : nullptr;
+	return FindOperatedWeapon(CurrentSpecHandle, CurrentActorInfo);
 }
 
 void UOceanAdventureGameplayAbility_FireHeavyWeapon::ActivateAbility(
@@ -309,16 +322,19 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::OnTargetDataReadyCallback(
 		ANavalHeavyWeaponActor* Weapon = Data
 			? Cast<ANavalHeavyWeaponActor>(Data->StationActor.Get())
 			: nullptr;
+		ANavalHeavyWeaponActor* GrantedWeapon = FindOperatedWeapon();
 
-		// TryFire re-runs every check itself; the client's verdict is only a hint.
-		if (!Weapon || !Weapon->TryFire(
+		// The client cannot substitute another station Actor into TargetData. TryFire then
+		// re-runs the full operator/range/reload/fire-line validation on that granted weapon.
+		if (!Weapon || Weapon != GrantedWeapon || !Weapon->TryFire(
 			GetAvatarActorFromActorInfo(), Data->AimLocation, Data->GetChargeAlpha()))
 		{
 			UE_LOG(
 				LogOceanAdventure,
 				Verbose,
-				TEXT("[NavalFire] Server refused weapon=%s avatar=%s"),
+				TEXT("[NavalFire] Server refused requested_weapon=%s granted_weapon=%s avatar=%s"),
 				*GetNameSafe(Weapon),
+				*GetNameSafe(GrantedWeapon),
 				*GetNameSafe(GetAvatarActorFromActorInfo()));
 		}
 	}

@@ -26,6 +26,13 @@ public:
 	UOceanAdventureGameplayAbility_OperateHeavyWeapon(
 		const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
 
+	virtual void EndAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo,
+		bool bReplicateEndAbility,
+		bool bWasCancelled) override;
+
 protected:
 	virtual AActor* FindStationInRange() const override;
 	virtual bool ServerOccupyStation(AActor* Station) override;
@@ -35,4 +42,13 @@ protected:
 	virtual FGameplayTag GetStationStatusTag() const override;
 	virtual bool IsStationStillValid(AActor* Station) const override;
 	virtual bool GetOperatorTransform(AActor* Station, FTransform& OutTransform) const override;
+
+private:
+	/** Server-only: grant one fire spec whose SourceObject is the occupied heavy weapon. */
+	bool GrantFireAbility(ANavalHeavyWeaponActor* Weapon);
+
+	/** Server-only: remove the temporary fire spec when the player leaves or the gun is lost. */
+	void RevokeFireAbility();
+
+	FGameplayAbilitySpecHandle GrantedFireAbilityHandle;
 };
