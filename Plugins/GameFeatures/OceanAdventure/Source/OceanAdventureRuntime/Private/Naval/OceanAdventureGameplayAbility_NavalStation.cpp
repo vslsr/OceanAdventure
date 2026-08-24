@@ -366,6 +366,20 @@ void UOceanAdventureGameplayAbility_NavalStation::LeaveStationPresentation()
 {
 	bStationEntered = false;
 
+	// The tags come off first and unconditionally. Lyra keeps the ability system on the
+	// PlayerState, so it outlives the pawn: an avatar that is already gone by the time the
+	// ability ends would otherwise leave Gameplay.MovementStopped behind, and the player would
+	// respawn unable to move or turn at all.
+	if (UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo())
+	{
+		const FGameplayTag StatusTag = GetStationStatusTag();
+		if (StatusTag.IsValid())
+		{
+			AbilitySystem->RemoveLooseGameplayTag(StatusTag);
+		}
+		AbilitySystem->RemoveLooseGameplayTag(TAG_Gameplay_MovementStopped);
+	}
+
 	ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo());
 	if (!Character)
 	{
@@ -376,16 +390,6 @@ void UOceanAdventureGameplayAbility_NavalStation::LeaveStationPresentation()
 	if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
 	{
 		Movement->SetMovementMode(MOVE_Walking);
-	}
-
-	if (UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo())
-	{
-		const FGameplayTag StatusTag = GetStationStatusTag();
-		if (StatusTag.IsValid())
-		{
-			AbilitySystem->RemoveLooseGameplayTag(StatusTag);
-		}
-		AbilitySystem->RemoveLooseGameplayTag(TAG_Gameplay_MovementStopped);
 	}
 }
 
