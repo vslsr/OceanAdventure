@@ -208,3 +208,73 @@ UI 收到的和玩家正常按 `E` 离开时一模一样：
 占用需要走完整的 `CanOperate` 校验（队伍、部件状态、距离），服务端单方面写就是绕过全部安全检查；
 而且能力激活带预测 key，服务端凭空"恢复"一个能力状态，客户端没有对应的 ability 实例，表现层和真值会直接脱节。
 正确做法是重连后照常在炮边出生，由客户端**发起一次正常的交互请求**，所有校验照跑，失败就是失败。
+
+## 9. 站位提示（NavalProximityComponent）
+
+走到炮/舵旁边之前没有任何反馈，玩家只能靠按 `E` 试错：要么进站，要么收一个 `Fail.TooFar`。
+这一节补的就是这半边。
+
+### 9.1 为什么不照搬 Lyra 的交互系统
+
+Lyra 的 `UAbilityTask_GrantNearbyInteraction` 是"靠近→授予能力"：扫描附近实现了
+`IInteractableTarget` 的 Actor，把它们的 `InteractionAbilityToGrant` 用 `GiveAbility` 发给玩家。
+那套解决的是**开放集合**——拾取物、门、按钮，种类事先不可知，交互逻辑天然属于物件。
+
+海战站位是**封闭集合**：舵 + 重武器，两种，在 PawnData 编写期就完全确定，
+出生时已经由 `DA_AbilitySet_OceanNaval` 全部授予。再动态授予一次买不到任何东西，
+只会多出 `GiveAbility` 抖动；而且 Lyra 那个任务**只授不撤**，走远了也收不回来。
+
+另有三条硬阻碍：占用是多秒的长时状态（挂载、20Hz 控制采样、退出锁），
+不是 `TriggerAbilityFromGameplayEvent` 那种一次性事件；`ANavalHeavyWeaponActor` 没有 ASC，
+走 `InteractionOption` 路线(2) 得给它挂一个，而占用归属正是刻意留在世界状态、不走 GAS 的东西；
+瞄准采样要沿 GAS TargetData 做客户端预测→服务端复验，交互系统没有这条通道。
+
+所以：**授予留在 PawnData，扫描只用来出提示。**
+这与 `UOceanAdventureBuildProximityComponent` 的判断一致（见该头文件注释）。
+
+### 9.2 NavalCore：站位注册表 + `INavalStationInterface`
+
+`UNavalRegistrySubsystem` 新增站位列表，炮与舵台在 `BeginPlay` 自行登记、`EndPlay` 注销。
+提示每 0.25s 每玩家问一次"附近有没有能用的东西"，用 sphere overlap 是纯浪费——
+站位集合很小、已知、而且自己会报到。
+
+`INavalStationInterface` 统一三个问题，消掉调用方按具体类型分支的老毛病：
+
+| | `ANavalHeavyWeaponActor` | `ANavalHelmActor` |
+|---|---|---|
+| `GetStationWorldLocation` | `GetActorLocation()` | 转发 `UNavalHelmComponent::GetHelmWorldLocation()` |
+| `GetStationInteractionRange` | `InteractionRange` | 转发组件的 `InteractionRange` |
+| `CanOperateStation` | `CanOperate()` | 转发 `CanOccupy()` |
+
+两个查询：`FindNearestStation`（显式半径，能力用的宽松预筛）、
+`FindReachableStation`（走站位自己的受理检查，提示用）。
+`UOceanAdventureNavalStatics::FindNearestStationActor` 也改走注册表，
+不再做 overlap——权威侧 `CanOperate` 本来就是原点距离判定，两边从此同一套度量。
+
+### 9.3 OceanAdventure：`UOceanAdventureNavalProximityComponent`
+
+挂在 `AOceanAdventurePawn` 上，**只在本地控制端运行**（提示是给看屏幕的人的，
+服务端每次请求都会重跑站位的受理检查，不需要这个 tag）。维护两样东西：
+
+- `Status.Naval.StationAvailable` 松散 tag
+- `Naval.Message.Station.Prompt` 消息（带 `StationActor`，HUD 直接绑）
+
+两点值得注意：
+
+1. **迟滞方向是反的**。Build 那个组件放宽*离开*半径，因为它的 tag 门控着能力，
+   迟滞是为了别在边界打断能力。这个 tag 只驱动提示，而在服务端会拒绝的距离上显示"按 E"
+   就是骗人——所以余量往内收：`EnterRangeScale = 0.9` 进、`1.0` 出，
+   提示在站位开始拒绝之前就已经消失。
+2. **提示走的是站位自己的 `CanOperateStation`**，不是距离近似。
+   敌方的炮、别人已经坐着的炮、还在建造中的炮都不会亮。
+
+已经在站上时组件让路（检测 `Status.Naval.OperatingHeavyWeapon` / `Status.Naval.Steering`），
+那时该显示的是"按 E 离开"，归站位能力管。
+
+### 9.4 编辑器步骤增量
+
+`CreateNavalP0Assets.py` 新增 `OceanNaval_AddProximityComponent`（GameFeatureData 上的
+AddComponents，client+server 都为 true——listen server 的主机也是本地玩家，
+实际过滤由组件的 `IsLocallyControlled()` 早退完成）。按第 4 节原流程重跑该脚本即可。
+
+HUD 侧尚未接线：tag 和消息都已经在了，**浮动提示 widget 还没做**。

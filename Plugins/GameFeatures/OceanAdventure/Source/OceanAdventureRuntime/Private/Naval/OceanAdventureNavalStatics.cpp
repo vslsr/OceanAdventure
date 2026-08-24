@@ -2,16 +2,14 @@
 
 #include "Naval/OceanAdventureNavalStatics.h"
 
-#include "CollisionShape.h"
-#include "Engine/Engine.h"
-#include "Engine/World.h"
-#include "Engine/OverlapResult.h"
+#include "Components/PrimitiveComponent.h"
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Naval/NavalHelmComponent.h"
 #include "Naval/NavalLoadComponent.h"
 #include "Naval/NavalMovementComponent.h"
 #include "Naval/NavalPartComponent.h"
+#include "Naval/NavalRegistrySubsystem.h"
 #include "Naval/NavalVesselComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureNavalStatics)
@@ -22,44 +20,13 @@ AActor* UOceanAdventureNavalStatics::FindNearestStationActor(
 	float Radius,
 	TSubclassOf<AActor> StationClass)
 {
-	const UWorld* World = GEngine
-		? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull)
-		: nullptr;
-	if (!World || !StationClass)
+	if (!StationClass)
 	{
 		return nullptr;
 	}
 
-	FCollisionObjectQueryParams ObjectQueryParams;
-	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
-
-	TArray<FOverlapResult> Overlaps;
-	World->OverlapMultiByObjectType(
-		Overlaps,
-		Origin,
-		FQuat::Identity,
-		ObjectQueryParams,
-		FCollisionShape::MakeSphere(FMath::Max(10.0f, Radius)));
-
-	AActor* Nearest = nullptr;
-	double NearestDistanceSquared = TNumericLimits<double>::Max();
-	for (const FOverlapResult& Overlap : Overlaps)
-	{
-		AActor* Candidate = Overlap.GetActor();
-		if (!Candidate || !Candidate->IsA(StationClass))
-		{
-			continue;
-		}
-
-		const double DistanceSquared = FVector::DistSquared(Origin, Candidate->GetActorLocation());
-		if (DistanceSquared < NearestDistanceSquared)
-		{
-			NearestDistanceSquared = DistanceSquared;
-			Nearest = Candidate;
-		}
-	}
-
-	return Nearest;
+	UNavalRegistrySubsystem* Registry = UNavalRegistrySubsystem::Get(WorldContextObject);
+	return Registry ? Registry->FindNearestStation(Origin, Radius, StationClass) : nullptr;
 }
 
 UNavalVesselComponent* UOceanAdventureNavalStatics::FindVesselForActor(AActor* Actor)

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "GameFramework/Actor.h"
+#include "Naval/NavalStationInterface.h"
 
 #include "NavalHelmActor.generated.h"
 
@@ -22,12 +23,22 @@ class UStaticMeshComponent;
  * to break through the hull's outer walls or board before they can touch it.
  */
 UCLASS(BlueprintType, Blueprintable)
-class NAVALCORERUNTIME_API ANavalHelmActor : public AActor
+class NAVALCORERUNTIME_API ANavalHelmActor : public AActor, public INavalStationInterface
 {
 	GENERATED_BODY()
 
 public:
 	ANavalHelmActor();
+
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	//~INavalStationInterface -- the console is only the visible half of the station; occupancy,
+	// reach and the accept check all live on the vessel's helm component, so these forward.
+	virtual FVector GetStationWorldLocation() const override;
+	virtual double GetStationInteractionRange() const override;
+	virtual bool CanOperateStation(const AActor* Candidate, FGameplayTag& OutFailReason) const override;
+	//~End INavalStationInterface
 
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
 	UNavalPartComponent* GetCorePart() const { return CorePart; }

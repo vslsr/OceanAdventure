@@ -14,6 +14,7 @@ namespace OceanAdventureNavalTags
 	UE_DEFINE_GAMEPLAY_TAG(Status_Naval_Steering, "Status.Naval.Steering");
 	UE_DEFINE_GAMEPLAY_TAG(Status_Naval_OperatingHeavyWeapon, "Status.Naval.OperatingHeavyWeapon");
 	UE_DEFINE_GAMEPLAY_TAG(Status_Naval_StationExitLock, "Status.Naval.StationExitLock");
+	UE_DEFINE_GAMEPLAY_TAG(Status_Naval_StationAvailable, "Status.Naval.StationAvailable");
 	UE_DEFINE_GAMEPLAY_TAG(Status_Naval_Repairing, "Status.Naval.Repairing");
 
 	UE_DEFINE_GAMEPLAY_TAG(Phase_NavalP0_Warmup, "GamePhase.NavalP0.Warmup");
@@ -24,6 +25,7 @@ namespace OceanAdventureNavalTags
 	UE_DEFINE_GAMEPLAY_TAG(Message_Naval_MatchState, "Naval.Message.Match.State");
 	UE_DEFINE_GAMEPLAY_TAG(Message_Naval_Beacon, "Naval.Message.Match.Beacon");
 	UE_DEFINE_GAMEPLAY_TAG(Message_Naval_StationFailed, "Naval.Message.Station.Failed");
+	UE_DEFINE_GAMEPLAY_TAG(Message_Naval_StationPrompt, "Naval.Message.Station.Prompt");
 
 	UE_DEFINE_GAMEPLAY_TAG(SetByCaller_Naval_Damage, "SetByCaller.Naval.Damage");
 }

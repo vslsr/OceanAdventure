@@ -15,6 +15,7 @@
 #include "Naval/NavalMessages.h"
 #include "Naval/NavalPartComponent.h"
 #include "Naval/NavalProjectile.h"
+#include "Naval/NavalRegistrySubsystem.h"
 #include "Naval/NavalTeamStatics.h"
 #include "Naval/NavalTimeStatics.h"
 #include "Naval/NavalVesselComponent.h"
@@ -91,6 +92,12 @@ void ANavalHeavyWeaponActor::BeginPlay()
 		PartComponent->OnPartStateChanged.AddUObject(this, &ANavalHeavyWeaponActor::HandlePartStateChanged);
 	}
 
+	// Both sides: the client's proximity prompt reads the same list the server does.
+	if (UNavalRegistrySubsystem* Registry = UNavalRegistrySubsystem::Get(this))
+	{
+		Registry->RegisterStation(this);
+	}
+
 	if (HasAuthority() && OrphanCheckInterval > 0.0f)
 	{
 		if (UWorld* World = GetWorld())
@@ -113,6 +120,10 @@ void ANavalHeavyWeaponActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	if (UWorld* World = GetWorld())
 	{
 		World->GetTimerManager().ClearTimer(OrphanCheckTimerHandle);
+	}
+	if (UNavalRegistrySubsystem* Registry = UNavalRegistrySubsystem::Get(this))
+	{
+		Registry->UnregisterStation(this);
 	}
 
 	Super::EndPlay(EndPlayReason);

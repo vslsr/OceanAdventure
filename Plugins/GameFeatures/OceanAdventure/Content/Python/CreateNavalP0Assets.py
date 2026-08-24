@@ -4,6 +4,7 @@ What this owns is everything that only means something once GAS and the match ex
 
     IMC_OceanNaval / DA_InputConfig_OceanNaval   InputTag -> InputAction, no hard-coded keys
     DA_AbilitySet_OceanNaval                     the six naval abilities, granted by PawnData
+    OceanNaval_AddProximityComponent             the station prompt, added to the pawn
     BP_Naval_GroundCannon                        the field emplacement of the shared cannon
     BP_NavalP0_Beacon                            the sudden-death beacon
     B_Experience_NavalP0                         the P0 match, its match component, and the
@@ -69,7 +70,9 @@ ABILITIES = (
 OWNED_ACTION_CLASSES = {
     "OceanNaval_AddInputMapping": "GameFeatureAction_AddInputContextMapping",
     "OceanNaval_AddInputBinding": "GameFeatureAction_AddInputBinding",
+    "OceanNaval_AddProximityComponent": "GameFeatureAction_AddComponents",
 }
+PAWN_CLASS_PATH = "/Script/OceanAdventureRuntime.OceanAdventurePawn"
 EXPERIENCE_ACTION_NAME = "NavalP0_AddMatchComponent"
 # The reconnect anchor table and the spawning manager that reads it. Server-only: nothing
 # here is replicated, and the client learns where it came back by being put there.
@@ -305,6 +308,29 @@ def configure_game_feature_data(input_mapping, input_config):
                 game_feature_data, [input_config], unreal.Name("OceanNaval_AddInputBinding")
             ),
             "Failed to create the naval Add Input Binding action",
+        )
+    )
+
+    # Keeps Status.Naval.StationAvailable and the prompt message up to date, so a player can
+    # see that a gun is in reach instead of discovering it by pressing E and being refused.
+    # Client and server are both true because a listen server's host is a local player too;
+    # the component itself returns early unless its pawn is locally controlled.
+    proximity_class = require_type("OceanAdventureNavalProximityComponent", "OceanAdventureRuntime")
+    pawn_class = require(
+        unreal.load_class(None, PAWN_CLASS_PATH),
+        f"Failed to load {PAWN_CLASS_PATH}",
+    )
+    actions.append(
+        require(
+            unreal.OceanAdventureAssetLibrary.create_add_components_action(
+                game_feature_data,
+                [pawn_class],
+                [proximity_class],
+                True,
+                True,
+                unreal.Name("OceanNaval_AddProximityComponent"),
+            ),
+            "Failed to create the naval proximity AddComponents action",
         )
     )
     game_feature_data.set_editor_property("actions", actions)

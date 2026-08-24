@@ -33,6 +33,14 @@ namespace OceanAdventureNavalTags
 	/** Short commitment after leaving a station before light weapons come back up. */
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Status_Naval_StationExitLock);
 
+	/**
+	 * Present on the local player while a station within reach would accept them.
+	 *
+	 * Presentation only. It exists so the HUD can offer the prompt; it is never the gate on
+	 * taking a station, which stays where it belongs -- the station's own server-side check.
+	 */
+	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Status_Naval_StationAvailable);
+
 	/** Present while the emergency repair is being channelled. */
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Status_Naval_Repairing);
 
@@ -46,6 +54,9 @@ namespace OceanAdventureNavalTags
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Message_Naval_MatchState);
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Message_Naval_Beacon);
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Message_Naval_StationFailed);
+
+	/** Local-only channel carrying the "press E" prompt as the nearest station changes. */
+	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Message_Naval_StationPrompt);
 
 	/** Payload tag on the damage GameplayEffect the projectile relay applies. */
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(SetByCaller_Naval_Damage);

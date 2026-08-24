@@ -4,6 +4,7 @@
 
 #include "GameFramework/Actor.h"
 #include "GameplayTagContainer.h"
+#include "Naval/NavalStationInterface.h"
 #include "Templates/SubclassOf.h"
 
 #include "NavalHeavyWeaponActor.generated.h"
@@ -28,7 +29,7 @@ class UStaticMeshComponent;
  * weapon that circles inside the minimum range or shoots the exposed gunner should win it.
  */
 UCLASS(BlueprintType, Blueprintable)
-class NAVALCORERUNTIME_API ANavalHeavyWeaponActor : public AActor
+class NAVALCORERUNTIME_API ANavalHeavyWeaponActor : public AActor, public INavalStationInterface
 {
 	GENERATED_BODY()
 
@@ -39,6 +40,15 @@ public:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
+
+	//~INavalStationInterface -- the gun is its own seat, so all three answer from here.
+	virtual FVector GetStationWorldLocation() const override { return GetActorLocation(); }
+	virtual double GetStationInteractionRange() const override { return InteractionRange; }
+	virtual bool CanOperateStation(const AActor* Candidate, FGameplayTag& OutFailReason) const override
+	{
+		return CanOperate(Candidate, OutFailReason);
+	}
+	//~End INavalStationInterface
 
 	/** Starts the deploy windup and construction ramp. Server side. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|HeavyWeapon")

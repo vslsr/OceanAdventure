@@ -111,6 +111,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
 	FVector GetHelmWorldLocation() const;
 
+	/** The reach CanOccupy enforces. Exposed so a prompt can use the same number, not a guess. */
+	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
+	float GetInteractionRange() const { return InteractionRange; }
+
 	FOnNavalHelmChanged OnHelmChanged;
 
 protected:

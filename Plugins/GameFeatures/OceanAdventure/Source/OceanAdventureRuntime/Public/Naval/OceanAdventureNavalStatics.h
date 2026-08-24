@@ -70,10 +70,12 @@ class OCEANADVENTURERUNTIME_API UOceanAdventureNavalStatics : public UBlueprintF
 
 public:
 	/**
-	 * Nearest station of a class within radius, via a single overlap.
+	 * Nearest station of a class within radius, from the naval registry.
 	 *
-	 * An overlap on a key press rather than a per-frame scan: this runs when a player asks to
-	 * use something, not every tick.
+	 * The registry rather than a sphere overlap: the stations already announce themselves at
+	 * BeginPlay, so this costs a walk over a handful of entries and no scene query at all.
+	 * Distance is measured to the seat, which is what the station's own accept check uses --
+	 * the wheel is not at its vessel's origin.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "OceanAdventure|Naval", meta = (WorldContext = "WorldContextObject"))
 	static AActor* FindNearestStationActor(

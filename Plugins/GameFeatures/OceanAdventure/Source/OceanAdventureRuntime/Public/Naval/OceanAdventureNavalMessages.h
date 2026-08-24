@@ -40,6 +40,26 @@ struct FOceanAdventureNavalStationFailedMessage
 	TObjectPtr<AActor> Instigator = nullptr;
 };
 
+/**
+ * Broadcast on OceanAdventureNavalTags::Message_Naval_StationPrompt when the station the local
+ * player could take changes -- including to none.
+ *
+ * Local only: the proximity component that sends this runs on the owning client, so the HUD
+ * can bind to it directly without any of it crossing the wire.
+ */
+USTRUCT(BlueprintType)
+struct FOceanAdventureNavalStationPromptMessage
+{
+	GENERATED_BODY()
+
+	/** The station now offered, or null when the prompt should be cleared. */
+	UPROPERTY(BlueprintReadWrite, Category = "OceanAdventure|Naval")
+	TObjectPtr<AActor> StationActor = nullptr;
+
+	UPROPERTY(BlueprintReadWrite, Category = "OceanAdventure|Naval")
+	bool bAvailable = false;
+};
+
 /** Broadcast on OceanAdventureNavalTags::Message_Naval_MatchState whenever the script advances. */
 USTRUCT(BlueprintType)
 struct FOceanAdventureNavalMatchStateMessage
