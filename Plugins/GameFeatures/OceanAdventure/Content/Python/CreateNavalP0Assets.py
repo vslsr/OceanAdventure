@@ -6,7 +6,8 @@ What this owns is everything that only means something once GAS and the match ex
     DA_AbilitySet_OceanNaval                     the six naval abilities, granted by PawnData
     BP_Naval_GroundCannon                        the field emplacement of the shared cannon
     BP_NavalP0_Beacon                            the sudden-death beacon
-    B_Experience_NavalP0                         the P0 match, with its own match component
+    B_Experience_NavalP0                         the P0 match, its match component, and the
+                                                 reconnect anchor table + spawning manager
 
 The raft's own naval layer -- shootable build pieces and the vessel components on
 ARaftActor -- is authored by the Raft feature's CreateRaftNavalAssets.py, because a
@@ -70,6 +71,13 @@ OWNED_ACTION_CLASSES = {
     "OceanNaval_AddInputBinding": "GameFeatureAction_AddInputBinding",
 }
 EXPERIENCE_ACTION_NAME = "NavalP0_AddMatchComponent"
+# The reconnect anchor table and the spawning manager that reads it. Server-only: nothing
+# here is replicated, and the client learns where it came back by being put there.
+RECONNECT_ACTION_NAME = "NavalP0_AddReconnectComponents"
+RECONNECT_COMPONENTS = (
+    "OceanAdventureNavalReconnectComponent",
+    "OceanAdventureNavalSpawningComponent",
+)
 
 
 def log(message):
@@ -365,10 +373,11 @@ def configure_experience(pawn_data):
         unreal.load_class(None, "/Script/LyraGame.LyraGameState"),
         "Failed to load ALyraGameState",
     )
+    owned_action_names = {EXPERIENCE_ACTION_NAME, RECONNECT_ACTION_NAME}
     actions = [
         action
         for action in experience.get_editor_property("actions")
-        if action is not None and str(action.get_name()) != EXPERIENCE_ACTION_NAME
+        if action is not None and str(action.get_name()) not in owned_action_names
     ]
     actions.append(
         require(
@@ -383,6 +392,28 @@ def configure_experience(pawn_data):
             "Failed to create the match component AddComponents action",
         )
     )
+
+    # A dropped player's seat is freed by the station itself (NavalCore), but "come back where
+    # you were" needs somewhere that outlives the player state to remember the position, and
+    # Lyra's spawning hook to use it. Both are game state components, injected here rather
+    # than by the feature: the build sandbox experience shares the same features and has no
+    # match to reconnect into.
+    reconnect_component_classes = [
+        require_type(name, "OceanAdventureRuntime") for name in RECONNECT_COMPONENTS
+    ]
+    actions.append(
+        require(
+            unreal.NavalCoreAssetLibrary.create_add_components_action(
+                experience,
+                [game_state_class] * len(reconnect_component_classes),
+                reconnect_component_classes,
+                False,
+                True,
+                unreal.Name(RECONNECT_ACTION_NAME),
+            ),
+            "Failed to create the reconnect AddComponents action",
+        )
+    )
     experience.set_editor_property("actions", actions)
 
     # Blueprint defaults only persist through a compile, and compilation can replace the
@@ -393,13 +424,16 @@ def configure_experience(pawn_data):
         list(configured.get_editor_property("game_features_to_enable")) == GAME_FEATURES_TO_ENABLE,
         "Experience GameFeaturesToEnable did not persist after compilation",
     )
-    require(
-        any(
-            action is not None and str(action.get_name()) == EXPERIENCE_ACTION_NAME
-            for action in configured.get_editor_property("actions")
-        ),
-        "Experience did not retain the match component action",
-    )
+    configured_action_names = {
+        str(action.get_name())
+        for action in configured.get_editor_property("actions")
+        if action is not None
+    }
+    for action_name in (EXPERIENCE_ACTION_NAME, RECONNECT_ACTION_NAME):
+        require(
+            action_name in configured_action_names,
+            f"Experience did not retain the {action_name} action",
+        )
     save(blueprint)
     return blueprint
 

@@ -14,6 +14,7 @@
 #include "Naval/NavalTimeStatics.h"
 #include "Naval/NavalVesselComponent.h"
 #include "Naval/OceanAdventureNavalBeaconActor.h"
+#include "Naval/OceanAdventureNavalReconnectComponent.h"
 #include "Naval/OceanAdventureNavalTags.h"
 #include "Net/UnrealNetwork.h"
 #include "OceanAdventureRuntimeModule.h"
@@ -371,6 +372,18 @@ void UOceanAdventureNavalMatchComponent::RestartMatch()
 	if (!World || !GetOwner() || !GetOwner()->HasAuthority())
 	{
 		return;
+	}
+
+	// Reconnect anchors belong to the match that recorded them. Travel replaces the game
+	// state and takes the table with it, but clearing here keeps that from being a silent
+	// dependency on how the restart happens to be implemented.
+	if (AGameStateBase* GameState = GetGameState<AGameStateBase>())
+	{
+		if (UOceanAdventureNavalReconnectComponent* Reconnect =
+				GameState->FindComponentByClass<UOceanAdventureNavalReconnectComponent>())
+		{
+			Reconnect->ClearAllAnchors();
+		}
 	}
 
 	// Back into the same map. P0 measures "would you play again", so getting there has to be

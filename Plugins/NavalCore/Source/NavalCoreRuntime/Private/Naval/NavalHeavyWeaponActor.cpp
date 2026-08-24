@@ -90,7 +90,32 @@ void ANavalHeavyWeaponActor::BeginPlay()
 	{
 		PartComponent->OnPartStateChanged.AddUObject(this, &ANavalHeavyWeaponActor::HandlePartStateChanged);
 	}
+
+	if (HasAuthority() && OrphanCheckInterval > 0.0f)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimer(
+				OrphanCheckTimerHandle,
+				this,
+				&ANavalHeavyWeaponActor::CheckOperatorStillControlled,
+				OrphanCheckInterval,
+				/*bLoop=*/true);
+		}
+	}
+
 	BroadcastWeaponState();
+}
+
+void ANavalHeavyWeaponActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	UnbindOperatorDestroyed();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(OrphanCheckTimerHandle);
+	}
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void ANavalHeavyWeaponActor::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -197,7 +222,10 @@ bool ANavalHeavyWeaponActor::TryOccupy(AActor* NewOperator)
 		return false;
 	}
 
+	UnbindOperatorDestroyed();
 	WeaponOperator = NewOperator;
+	OperatorLostControllerTime = 0.0;
+	BindOperatorDestroyed(NewOperator);
 	ForceNetUpdate();
 	BroadcastWeaponState();
 	return true;
@@ -214,11 +242,87 @@ void ANavalHeavyWeaponActor::ReleaseOperator(AActor* LeavingOperator)
 		return;
 	}
 
+	UnbindOperatorDestroyed();
 	WeaponOperator = nullptr;
+	OperatorLostControllerTime = 0.0;
 	// A shot already in its windup is not cancelled by stepping away; committing to the shot
 	// is part of what makes the gun risky to use.
 	ForceNetUpdate();
 	BroadcastWeaponState();
+}
+
+void ANavalHeavyWeaponActor::BindOperatorDestroyed(AActor* NewOperator)
+{
+	if (HasAuthority() && IsValid(NewOperator))
+	{
+		NewOperator->OnDestroyed.AddDynamic(this, &ANavalHeavyWeaponActor::HandleOperatorDestroyed);
+	}
+}
+
+void ANavalHeavyWeaponActor::UnbindOperatorDestroyed()
+{
+	AActor* CurrentOperator = WeaponOperator.Get();
+	if (IsValid(CurrentOperator))
+	{
+		CurrentOperator->OnDestroyed.RemoveDynamic(this, &ANavalHeavyWeaponActor::HandleOperatorDestroyed);
+	}
+}
+
+void ANavalHeavyWeaponActor::HandleOperatorDestroyed(AActor* DestroyedActor)
+{
+	// Deliberately the same exit as pressing the interact key again: ReleaseOperator is what
+	// carries ForceNetUpdate and the state broadcast, so the HUD, audio and anything else
+	// subscribed to the weapon message learns the seat is free without a second code path.
+	UE_LOG(
+		LogNavalCore,
+		Display,
+		TEXT("[HeavyWeapon] Operator destroyed weapon=%s operator=%s"),
+		*GetNameSafe(this),
+		*GetNameSafe(DestroyedActor));
+	ReleaseOperator(DestroyedActor);
+}
+
+void ANavalHeavyWeaponActor::CheckOperatorStillControlled()
+{
+	AActor* CurrentOperator = WeaponOperator.Get();
+	if (!HasAuthority() || CurrentOperator == nullptr)
+	{
+		OperatorLostControllerTime = 0.0;
+		return;
+	}
+
+	// Torn down but not yet collected: there is no hand-off to wait for.
+	if (!IsValid(CurrentOperator))
+	{
+		ReleaseOperator(CurrentOperator);
+		return;
+	}
+
+	// Only a pawn can lose a controller. Anything else holding the seat is released by its
+	// own destruction or by an explicit call.
+	const APawn* OperatorPawn = Cast<APawn>(CurrentOperator);
+	if (!OperatorPawn || OperatorPawn->GetController() != nullptr)
+	{
+		OperatorLostControllerTime = 0.0;
+		return;
+	}
+
+	const double Now = NavalTime::GetNetworkTimeSeconds(this);
+	if (OperatorLostControllerTime <= 0.0)
+	{
+		OperatorLostControllerTime = Now;
+		return;
+	}
+	if (Now - OperatorLostControllerTime >= static_cast<double>(OrphanGraceSeconds))
+	{
+		UE_LOG(
+			LogNavalCore,
+			Display,
+			TEXT("[HeavyWeapon] Operator lost its controller, freeing seat weapon=%s operator=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(CurrentOperator));
+		ReleaseOperator(CurrentOperator);
+	}
 }
 
 void ANavalHeavyWeaponActor::SetDesiredAimLocation(AActor* Source, const FVector& WorldAimLocation)

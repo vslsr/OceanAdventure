@@ -36,6 +36,7 @@ public:
 	ANavalHeavyWeaponActor();
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
@@ -49,6 +50,10 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|HeavyWeapon")
 	bool TryOccupy(AActor* NewOperator);
 
+	/**
+	 * Frees the seat. Passing null releases whoever holds it, which is what the orphan sweep
+	 * and any cheat or restore path needs.
+	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|HeavyWeapon")
 	void ReleaseOperator(AActor* LeavingOperator);
 
@@ -160,6 +165,19 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "50.0", Units = "cm"))
 	float InteractionRange = 260.0f;
 
+	/**
+	 * How long an operator may hold the gun with no controller before the seat is freed.
+	 *
+	 * Possession hand-off and Lyra's death path both leave a pawn controllerless for a moment
+	 * on purpose, so the sweep waits this long rather than reacting to the first frame.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "0.0", Units = "s"))
+	float OrphanGraceSeconds = 1.5f;
+
+	/** Sweep cadence. This is a seat lock, not a gameplay clock; it does not need the tick. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "0.1", Units = "s"))
+	float OrphanCheckInterval = 1.0f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon")
 	TEnumAsByte<ECollisionChannel> TraceChannel = ECC_Visibility;
 
@@ -204,6 +222,20 @@ protected:
 	int32 GroundTeamId = INDEX_NONE;
 
 private:
+	/**
+	 * A disconnect never routes through the ability that took the gun: the controller, the
+	 * player state and the ability system component all die together, so EndAbility -- the
+	 * only caller of ReleaseOperator -- never runs. The seat has to free itself.
+	 */
+	UFUNCTION()
+	void HandleOperatorDestroyed(AActor* DestroyedActor);
+
+	/** Second line, for the case where the pawn outlives its controller instead of dying. */
+	void CheckOperatorStillControlled();
+
+	void BindOperatorDestroyed(AActor* NewOperator);
+	void UnbindOperatorDestroyed();
+
 	void HandleFireWindupElapsed();
 	void SpawnProjectile();
 	void BroadcastWeaponState() const;
@@ -214,5 +246,10 @@ private:
 	bool bHasLocalPredictedAim = false;
 	FVector PendingAimLocation = FVector::ZeroVector;
 	float PendingChargeAlpha = 1.0f;
+
+	/** Server clock reading of the first sweep that saw the operator without a controller. */
+	double OperatorLostControllerTime = 0.0;
+
 	FTimerHandle FireWindupTimerHandle;
+	FTimerHandle OrphanCheckTimerHandle;
 };

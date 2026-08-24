@@ -5,14 +5,17 @@
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
+#include "GameFramework/Pawn.h"
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalHelmActor.h"
 #include "Naval/NavalMessages.h"
 #include "Naval/NavalPartComponent.h"
 #include "Naval/NavalTeamStatics.h"
+#include "Naval/NavalTimeStatics.h"
 #include "Naval/NavalVesselComponent.h"
 #include "NavalCoreRuntimeModule.h"
 #include "Net/UnrealNetwork.h"
+#include "TimerManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NavalHelmComponent)
 
@@ -35,6 +38,16 @@ void UNavalHelmComponent::BeginPlay()
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
 		SpawnHelmActor();
+
+		if (UWorld* World = GetWorld(); World && OrphanCheckInterval > 0.0f)
+		{
+			World->GetTimerManager().SetTimer(
+				OrphanCheckTimerHandle,
+				this,
+				&UNavalHelmComponent::CheckOperatorStillControlled,
+				OrphanCheckInterval,
+				/*bLoop=*/true);
+		}
 	}
 
 	BroadcastHelmState();
@@ -42,6 +55,12 @@ void UNavalHelmComponent::BeginPlay()
 
 void UNavalHelmComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	UnbindOperatorDestroyed();
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().ClearTimer(OrphanCheckTimerHandle);
+	}
+
 	if (GetOwner() && GetOwner()->HasAuthority() && HelmActor)
 	{
 		HelmActor->Destroy();
@@ -152,7 +171,10 @@ bool UNavalHelmComponent::TryOccupy(AActor* NewOperator)
 		return false;
 	}
 
+	UnbindOperatorDestroyed();
 	Operator = NewOperator;
+	OperatorLostControllerTime = 0.0;
+	BindOperatorDestroyed(NewOperator);
 	ThrottleIntent = 0.0f;
 	SteerIntent = 0.0f;
 	GetOwner()->ForceNetUpdate();
@@ -172,13 +194,86 @@ void UNavalHelmComponent::ReleaseHelm(AActor* LeavingOperator)
 		return;
 	}
 
+	UnbindOperatorDestroyed();
 	Operator = nullptr;
+	OperatorLostControllerTime = 0.0;
 	// Design 8.3.1: the ship keeps its heading and coasts down. No autopilot, no snap to zero.
 	ThrottleIntent = 0.0f;
 	SteerIntent = 0.0f;
 	GetOwner()->ForceNetUpdate();
 	OnHelmChanged.Broadcast(this);
 	BroadcastHelmState();
+}
+
+void UNavalHelmComponent::BindOperatorDestroyed(AActor* NewOperator)
+{
+	if (IsValid(NewOperator))
+	{
+		NewOperator->OnDestroyed.AddDynamic(this, &UNavalHelmComponent::HandleOperatorDestroyed);
+	}
+}
+
+void UNavalHelmComponent::UnbindOperatorDestroyed()
+{
+	AActor* CurrentOperator = Operator.Get();
+	if (IsValid(CurrentOperator))
+	{
+		CurrentOperator->OnDestroyed.RemoveDynamic(this, &UNavalHelmComponent::HandleOperatorDestroyed);
+	}
+}
+
+void UNavalHelmComponent::HandleOperatorDestroyed(AActor* DestroyedActor)
+{
+	// The same exit the ability uses, so ForceNetUpdate, OnHelmChanged and the helm message
+	// all fire exactly as they would if the player had stepped off the wheel themselves.
+	UE_LOG(
+		LogNavalCore,
+		Display,
+		TEXT("[Helm] Operator destroyed vessel=%s operator=%s"),
+		*GetNameSafe(GetOwner()),
+		*GetNameSafe(DestroyedActor));
+	ReleaseHelm(DestroyedActor);
+}
+
+void UNavalHelmComponent::CheckOperatorStillControlled()
+{
+	const AActor* OwnerActor = GetOwner();
+	AActor* CurrentOperator = Operator.Get();
+	if (!OwnerActor || !OwnerActor->HasAuthority() || CurrentOperator == nullptr)
+	{
+		OperatorLostControllerTime = 0.0;
+		return;
+	}
+
+	if (!IsValid(CurrentOperator))
+	{
+		ReleaseHelm(CurrentOperator);
+		return;
+	}
+
+	const APawn* OperatorPawn = Cast<APawn>(CurrentOperator);
+	if (!OperatorPawn || OperatorPawn->GetController() != nullptr)
+	{
+		OperatorLostControllerTime = 0.0;
+		return;
+	}
+
+	const double Now = NavalTime::GetNetworkTimeSeconds(this);
+	if (OperatorLostControllerTime <= 0.0)
+	{
+		OperatorLostControllerTime = Now;
+		return;
+	}
+	if (Now - OperatorLostControllerTime >= static_cast<double>(OrphanGraceSeconds))
+	{
+		UE_LOG(
+			LogNavalCore,
+			Display,
+			TEXT("[Helm] Operator lost its controller, freeing the wheel vessel=%s operator=%s"),
+			*GetNameSafe(OwnerActor),
+			*GetNameSafe(CurrentOperator));
+		ReleaseHelm(CurrentOperator);
+	}
 }
 
 void UNavalHelmComponent::SetControlIntent(AActor* Source, float InThrottle, float InSteer)

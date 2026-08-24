@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Components/ActorComponent.h"
+#include "Engine/TimerHandle.h"
 #include "GameplayTagContainer.h"
 #include "Naval/NavalCoreTypes.h"
 #include "Templates/SubclassOf.h"
@@ -51,6 +52,7 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
 	bool TryOccupy(AActor* NewOperator);
 
+	/** Frees the wheel. Passing null releases whoever holds it. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
 	void ReleaseHelm(AActor* LeavingOperator);
 
@@ -141,6 +143,18 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (ClampMin = "0.0"))
 	float CaptureDecayPerSecond = 0.08f;
 
+	/**
+	 * How long an operator may hold the wheel with no controller before it is freed.
+	 *
+	 * Same reasoning as the heavy weapon: possession hand-off and Lyra's death path both
+	 * leave a pawn controllerless on purpose for a moment.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (ClampMin = "0.0", Units = "s"))
+	float OrphanGraceSeconds = 1.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (ClampMin = "0.1", Units = "s"))
+	float OrphanCheckInterval = 1.0f;
+
 	/** Below this core durability fraction the helm reports Damaged. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm",
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
@@ -159,6 +173,21 @@ protected:
 	int32 CapturingTeamId = INDEX_NONE;
 
 private:
+	/**
+	 * A disconnect kills the controller, the player state and the ability system component
+	 * together, so the ability that took the wheel never reaches EndAbility and never sends
+	 * its release. A ship whose wheel is locked by a departed player cannot be steered by
+	 * anybody, so the helm has to free itself.
+	 */
+	UFUNCTION()
+	void HandleOperatorDestroyed(AActor* DestroyedActor);
+
+	/** Second line, for the case where the pawn outlives its controller instead of dying. */
+	void CheckOperatorStillControlled();
+
+	void BindOperatorDestroyed(AActor* NewOperator);
+	void UnbindOperatorDestroyed();
+
 	void SpawnHelmActor();
 	void UpdateCapture(float DeltaTime);
 	void CompleteCapture();
@@ -173,4 +202,9 @@ private:
 
 	float ThrottleIntent = 0.0f;
 	float SteerIntent = 0.0f;
+
+	/** Server clock reading of the first sweep that saw the operator without a controller. */
+	double OperatorLostControllerTime = 0.0;
+
+	FTimerHandle OrphanCheckTimerHandle;
 };
