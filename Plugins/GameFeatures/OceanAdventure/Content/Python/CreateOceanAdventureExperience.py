@@ -280,11 +280,19 @@ def configure_input_assets():
         for _, _, tag_property, _ in TOP_DOWN_INPUT_SPECS
     ]
     legacy_tags = [gameplay_tag("InputTag.TopDownClick"), gameplay_tag("InputTag.Move")]
+    # Every tag this script is responsible for: the ones it re-adds below, plus the
+    # superseded ones it must strip. ``in`` would compare the wrapped structs by
+    # identity, which silently keeps InputTag.Move alive alongside the top-down
+    # actions -- and then both ULyraHeroComponent::Input_Move and
+    # UTopDownPawnComponent feed AddMovementInput on the same key press.
+    replaced_tags = list(owned_tags) + legacy_tags
     native_actions = [
         action
         for action in input_config.get_editor_property("native_input_actions")
-        if action.get_editor_property("input_tag") not in owned_tags
-        and action.get_editor_property("input_tag") not in legacy_tags
+        if not any(
+            gameplay_tags_equal(action.get_editor_property("input_tag"), replaced_tag)
+            for replaced_tag in replaced_tags
+        )
     ]
     for action, input_tag in zip(input_actions, owned_tags):
         native_actions.append(

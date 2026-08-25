@@ -169,11 +169,17 @@ owned_tags = [
     for _, _, tag_property, _ in input_action_specs
 ]
 legacy_tags = [gameplay_tag("InputTag.TopDownClick"), gameplay_tag("InputTag.Move")]
+# Every tag this script owns, plus the superseded ones it must strip. ``in`` would
+# compare the wrapped structs by identity, so nothing matched and each run appended
+# a fresh copy of the owned actions on top of the previous ones.
+replaced_tags = list(owned_tags) + legacy_tags
 native_actions = [
     action
     for action in input_config.get_editor_property("native_input_actions")
-    if action.get_editor_property("input_tag") not in owned_tags
-    and action.get_editor_property("input_tag") not in legacy_tags
+    if not any(
+        gameplay_tags_equal(action.get_editor_property("input_tag"), replaced_tag)
+        for replaced_tag in replaced_tags
+    )
 ]
 for action, input_tag in zip(input_actions, owned_tags):
     native_actions.append(unreal.LyraInputAction(input_action=action, input_tag=input_tag))
