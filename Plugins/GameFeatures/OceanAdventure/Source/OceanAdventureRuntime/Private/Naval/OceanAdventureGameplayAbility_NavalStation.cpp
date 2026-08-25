@@ -186,6 +186,16 @@ void UOceanAdventureGameplayAbility_NavalStation::EndAbility(
 
 void UOceanAdventureGameplayAbility_NavalStation::SendStationRequest(const FOceanAdventureNavalTargetData& Data)
 {
+	if (Data.Request != ENavalStationRequest::Control)
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Display,
+			TEXT("[NavalStation] Local request request=%d station=%s avatar=%s local=%d authority=%d world=%.3f"),
+			static_cast<int32>(Data.Request), *GetNameSafe(Data.StationActor.Get()),
+			*GetNameSafe(GetAvatarActorFromActorInfo()), CurrentActorInfo && CurrentActorInfo->IsLocallyControlled(),
+			HasAuthority(&CurrentActivationInfo), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
+	}
 	UAbilitySystemComponent* AbilitySystem = CurrentActorInfo
 		? CurrentActorInfo->AbilitySystemComponent.Get()
 		: nullptr;

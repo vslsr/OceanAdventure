@@ -31,6 +31,38 @@ UOceanAdventureGameplayAbility_FireHeavyWeapon::UOceanAdventureGameplayAbility_F
 	ActivationPolicy = ELyraAbilityActivationPolicy::OnInputTriggered;
 }
 
+void UOceanAdventureGameplayAbility_FireHeavyWeapon::OnGiveAbility(
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilitySpec& Spec)
+{
+	Super::OnGiveAbility(ActorInfo, Spec);
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[NavalFire] OnGiveAbility ability=%s spec=%s source=%s tags=%s avatar=%s local=%d authority=%d input_pressed=%d active=%d world=%.3f"),
+		*GetNameSafe(this), *Spec.Handle.ToString(), *GetNameSafe(Spec.SourceObject.Get()),
+		*Spec.GetDynamicSpecSourceTags().ToStringSimple(),
+		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+		ActorInfo && ActorInfo->IsLocallyControlled(), ActorInfo && ActorInfo->IsNetAuthority(),
+		Spec.InputPressed, Spec.IsActive(), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
+}
+
+void UOceanAdventureGameplayAbility_FireHeavyWeapon::OnRemoveAbility(
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilitySpec& Spec)
+{
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[NavalFire] OnRemoveAbility ability=%s spec=%s source=%s tags=%s avatar=%s local=%d authority=%d input_pressed=%d active=%d world=%.3f"),
+		*GetNameSafe(this), *Spec.Handle.ToString(), *GetNameSafe(Spec.SourceObject.Get()),
+		*Spec.GetDynamicSpecSourceTags().ToStringSimple(),
+		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+		ActorInfo && ActorInfo->IsLocallyControlled(), ActorInfo && ActorInfo->IsNetAuthority(),
+		Spec.InputPressed, Spec.IsActive(), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
+	Super::OnRemoveAbility(ActorInfo, Spec);
+}
+
 bool UOceanAdventureGameplayAbility_FireHeavyWeapon::CanActivateAbility(
 	const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo,
@@ -40,9 +72,16 @@ bool UOceanAdventureGameplayAbility_FireHeavyWeapon::CanActivateAbility(
 {
 	if (!Super::CanActivateAbility(Handle, ActorInfo, SourceTags, TargetTags, OptionalRelevantTags))
 	{
+		const UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
+		const FGameplayAbilitySpec* Spec = AbilitySystem ? AbilitySystem->FindAbilitySpecFromHandle(Handle) : nullptr;
 		UE_LOG(LogOceanAdventure, Display,
-			TEXT("[NavalFire] CanActivate rejected by Super avatar=%s"),
-			*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr));
+			TEXT("[NavalFire] CanActivate rejected by Super handle=%s avatar=%s source=%s tags=%s active=%d input_pressed=%d local=%d authority=%d world=%.3f"),
+			*Handle.ToString(), *GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+			*GetNameSafe(Spec ? Spec->SourceObject.Get() : nullptr),
+			Spec ? *Spec->GetDynamicSpecSourceTags().ToStringSimple() : TEXT(""),
+			Spec ? Spec->IsActive() : false, Spec ? Spec->InputPressed : false,
+			ActorInfo && ActorInfo->IsLocallyControlled(), ActorInfo && ActorInfo->IsNetAuthority(),
+			GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 		return false;
 	}
 
@@ -53,9 +92,14 @@ bool UOceanAdventureGameplayAbility_FireHeavyWeapon::CanActivateAbility(
 	const AActor* Avatar = ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr;
 	const ANavalHeavyWeaponActor* Weapon = FindOperatedWeapon(Handle, ActorInfo);
 	const bool bAtGrantedWeapon = Avatar && Weapon && Avatar->GetAttachParentActor() == Weapon;
+	const FGameplayAbilitySpec* Spec = AbilitySystem ? AbilitySystem->FindAbilitySpecFromHandle(Handle) : nullptr;
 	UE_LOG(LogOceanAdventure, Display,
-		TEXT("[NavalFire] CanActivate avatar=%s weapon=%s has_asc=%d operating_tag=%d at_source_weapon=%d"),
-		*GetNameSafe(Avatar), *GetNameSafe(Weapon), AbilitySystem != nullptr, bOperating, bAtGrantedWeapon);
+		TEXT("[NavalFire] CanActivate handle=%s avatar=%s weapon=%s has_asc=%d operating_tag=%d at_source_weapon=%d source=%s tags=%s input_pressed=%d active=%d local=%d authority=%d world=%.3f"),
+		*Handle.ToString(), *GetNameSafe(Avatar), *GetNameSafe(Weapon), AbilitySystem != nullptr, bOperating, bAtGrantedWeapon,
+		*GetNameSafe(Spec ? Spec->SourceObject.Get() : nullptr),
+		Spec ? *Spec->GetDynamicSpecSourceTags().ToStringSimple() : TEXT(""), Spec ? Spec->InputPressed : false,
+		Spec ? Spec->IsActive() : false, ActorInfo && ActorInfo->IsLocallyControlled(),
+		ActorInfo && ActorInfo->IsNetAuthority(), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 	return bOperating && bAtGrantedWeapon;
 }
 
@@ -86,6 +130,7 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::ActivateAbility(
 	bFireResolved = false;
 	ChargeElapsedSeconds = 0.0f;
 	CurrentChargeAlpha = MinimumChargeAlpha;
+	LastLoggedChargeBucket = INDEX_NONE;
 	ChargingWeapon.Reset();
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 	UE_LOG(LogOceanAdventure, Display,
@@ -97,6 +142,10 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::ActivateAbility(
 	UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	if (!AbilitySystem)
 	{
+		UE_LOG(LogOceanAdventure, Error,
+			TEXT("[NavalFire] Activate aborted: no ASC avatar=%s local=%d authority=%d world=%.3f"),
+			*GetNameSafe(GetAvatarActorFromActorInfo()), ActorInfo && ActorInfo->IsLocallyControlled(),
+			HasAuthority(&ActivationInfo), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -107,6 +156,10 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::ActivateAbility(
 
 	if (!ActorInfo->IsLocallyControlled())
 	{
+		UE_LOG(LogOceanAdventure, Display,
+			TEXT("[NavalFire] Activate non-local waiting for replicated target data spec=%s prediction=%d avatar=%s world=%.3f"),
+			*Handle.ToString(), ActivationInfo.GetActivationPredictionKey().Current,
+			*GetNameSafe(GetAvatarActorFromActorInfo()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 		AbilitySystem->CallReplicatedTargetDataDelegatesIfSet(
 			Handle, ActivationInfo.GetActivationPredictionKey());
 		return;
@@ -151,6 +204,12 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::ActivateAbility(
 		ReleaseTask->OnRelease.AddDynamic(this, &ThisClass::OnInputReleased);
 		ReleaseTask->ReadyForActivation();
 	}
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalFire] Charge setup spec=%s weapon=%s min_charge_alpha=%.3f min_range=%.0f max_range=%.0f release_task=%d charge_task=%d preview=%d input_pressed=%d world=%.3f"),
+		*Handle.ToString(), *GetNameSafe(Weapon), MinimumChargeAlpha, Weapon->GetMinimumRange(), Weapon->GetMaxRange(),
+		ReleaseTask != nullptr, ChargeTask != nullptr,
+		TrajectoryPreview != nullptr, GetCurrentAbilitySpec() ? GetCurrentAbilitySpec()->InputPressed : false,
+		GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 	UpdateTrajectoryPreview();
 }
 
@@ -162,6 +221,20 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::UpdateCharge(float DeltaTim
 		MinimumChargeAlpha,
 		1.0f);
 	UpdateTrajectoryPreview();
+	const int32 ChargeBucket = FMath::Clamp(FMath::FloorToInt(CurrentChargeAlpha * 10.0f), 0, 10);
+	if (ChargeBucket != LastLoggedChargeBucket)
+	{
+		LastLoggedChargeBucket = ChargeBucket;
+		const FGameplayAbilitySpec* Spec = GetCurrentAbilitySpec();
+		UE_LOG(
+			LogOceanAdventure,
+			Display,
+			TEXT("[NavalFire] Charge sample spec=%s weapon=%s dt=%.3f elapsed=%.3f alpha=%.3f bucket=%d input_pressed=%d active=%d local=%d world=%.3f"),
+			Spec ? *Spec->Handle.ToString() : TEXT("invalid"), *GetNameSafe(ChargingWeapon.Get()), DeltaTime,
+			ChargeElapsedSeconds, CurrentChargeAlpha, ChargeBucket, Spec ? Spec->InputPressed : false,
+			Spec ? Spec->IsActive() : false, CurrentActorInfo && CurrentActorInfo->IsLocallyControlled(),
+			GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
+	}
 
 	// The release arrives as a one-shot generic event, and anything that keeps it from being
 	// dispatched -- an inactive spec on the release frame, a swallowed Completed -- leaves the
@@ -263,8 +336,10 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::UpdateTrajectoryPreview()
 void UOceanAdventureGameplayAbility_FireHeavyWeapon::OnInputReleased(float /*TimeHeld*/)
 {
 	UE_LOG(LogOceanAdventure, Display,
-		TEXT("[NavalFire] Input released avatar=%s charge=%.2f elapsed=%.2f"),
-		*GetNameSafe(GetAvatarActorFromActorInfo()), CurrentChargeAlpha, ChargeElapsedSeconds);
+		TEXT("[NavalFire] Input released task callback avatar=%s charge=%.2f elapsed=%.2f spec_input_pressed=%d world=%.3f"),
+		*GetNameSafe(GetAvatarActorFromActorInfo()), CurrentChargeAlpha, ChargeElapsedSeconds,
+		GetCurrentAbilitySpec() ? GetCurrentAbilitySpec()->InputPressed : false,
+		GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 	CommitChargedShot();
 }
 
@@ -273,6 +348,11 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::CommitChargedShot()
 	ANavalHeavyWeaponActor* Weapon = ChargingWeapon.Get();
 	if (!Weapon || bFireResolved)
 	{
+		UE_LOG(LogOceanAdventure, Warning,
+			TEXT("[NavalFire] Commit ignored weapon=%s fire_resolved=%d spec=%s avatar=%s charge=%.3f world=%.3f"),
+			*GetNameSafe(Weapon), bFireResolved, *CurrentSpecHandle.ToString(),
+			*GetNameSafe(GetAvatarActorFromActorInfo()), CurrentChargeAlpha,
+			GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 		EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
 		return;
 	}
@@ -315,8 +395,26 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::OnTargetDataReadyCallback(
 		: nullptr;
 	if (!AbilitySystem)
 	{
+		UE_LOG(LogOceanAdventure, Error,
+			TEXT("[NavalFire] TargetData callback ignored: no ASC spec=%s avatar=%s world=%.3f"),
+			*CurrentSpecHandle.ToString(), *GetNameSafe(GetAvatarActorFromActorInfo()),
+			GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 		return;
 	}
+	const FOceanAdventureNavalTargetData* IncomingData = InData.Num() > 0
+		? static_cast<const FOceanAdventureNavalTargetData*>(InData.Get(0))
+		: nullptr;
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[NavalFire] TargetData callback spec=%s data_num=%d request=%d weapon=%s charge=%.3f local=%d authority=%d resolved=%d prediction=%d world=%.3f"),
+		*CurrentSpecHandle.ToString(), InData.Num(),
+		IncomingData ? static_cast<int32>(IncomingData->Request) : -1,
+		*GetNameSafe(IncomingData ? IncomingData->StationActor.Get() : nullptr),
+		IncomingData ? IncomingData->GetChargeAlpha() : -1.0f,
+		CurrentActorInfo->IsLocallyControlled(), HasAuthority(&CurrentActivationInfo), bFireResolved,
+		CurrentActivationInfo.GetActivationPredictionKey().Current,
+		GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 
 	if (bFireResolved)
 	{
@@ -334,6 +432,10 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::OnTargetDataReadyCallback(
 
 	if (CurrentActorInfo->IsLocallyControlled() && !CurrentActorInfo->IsNetAuthority())
 	{
+		UE_LOG(LogOceanAdventure, Display,
+			TEXT("[NavalFire] TargetData sent client_to_server spec=%s data_num=%d avatar=%s world=%.3f"),
+			*CurrentSpecHandle.ToString(), LocalData.Num(), *GetNameSafe(GetAvatarActorFromActorInfo()),
+			GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 		AbilitySystem->CallServerSetReplicatedTargetData(
 			CurrentSpecHandle,
 			CurrentActivationInfo.GetActivationPredictionKey(),
@@ -350,6 +452,10 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::OnTargetDataReadyCallback(
 			? Cast<ANavalHeavyWeaponActor>(Data->StationActor.Get())
 			: nullptr;
 		ANavalHeavyWeaponActor* GrantedWeapon = FindOperatedWeapon();
+		UE_LOG(LogOceanAdventure, Display,
+			TEXT("[NavalFire] Server validating shot requested_weapon=%s granted_weapon=%s avatar=%s charge=%.3f world=%.3f"),
+			*GetNameSafe(Weapon), *GetNameSafe(GrantedWeapon), *GetNameSafe(GetAvatarActorFromActorInfo()),
+			Data ? Data->GetChargeAlpha() : -1.0f, GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 
 		// The client cannot substitute another station Actor into TargetData. TryFire then
 		// re-runs the full operator/range/reload/fire-line validation on that granted weapon.
@@ -379,6 +485,16 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	const FGameplayAbilitySpec* CurrentSpec = CurrentActorInfo ? GetCurrentAbilitySpec() : nullptr;
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[NavalFire] End ability spec=%s avatar=%s local=%d authority=%d cancelled=%d resolved=%d input_pressed=%d charge=%.3f weapon=%s task=%d target_delegate=%d world=%.3f"),
+		*Handle.ToString(), *GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+		ActorInfo && ActorInfo->IsLocallyControlled(), HasAuthority(&ActivationInfo), bWasCancelled,
+		bFireResolved, CurrentSpec ? CurrentSpec->InputPressed : false, CurrentChargeAlpha,
+		*GetNameSafe(ChargingWeapon.Get()), ChargeTask != nullptr, OnTargetDataReadyHandle.IsValid(),
+		GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 	if (ChargeTask)
 	{
 		ChargeTask->OnControlSample.RemoveAll(this);

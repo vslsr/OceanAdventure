@@ -118,6 +118,14 @@ bool UOceanAdventureGameplayAbility_OperateHeavyWeapon::GrantFireAbility(
 	FGameplayAbilitySpec FireSpec(FireAbilityCDO, /*Level=*/1);
 	FireSpec.SourceObject = Weapon;
 	FireSpec.GetDynamicSpecSourceTags().AddTag(OceanAdventureNavalTags::InputTag_Naval_Fire);
+	UE_LOG(
+		LogOceanAdventure,
+		Display,
+		TEXT("[HeavyWeaponOperate] Grant fire spec begin weapon=%s avatar=%s asc_owner=%s owner_role=%d avatar_role=%d tags=%s world=%.3f"),
+		*GetNameSafe(Weapon), *GetNameSafe(GetAvatarActorFromActorInfo()),
+		*GetNameSafe(AbilitySystem->GetOwner()), AbilitySystem->GetOwner() ? AbilitySystem->GetOwner()->GetLocalRole() : ROLE_None,
+		GetAvatarActorFromActorInfo() ? GetAvatarActorFromActorInfo()->GetLocalRole() : ROLE_None,
+		*FireSpec.GetDynamicSpecSourceTags().ToStringSimple(), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 	GrantedFireAbilityHandle = AbilitySystem->GiveAbility(FireSpec);
 
 	UE_LOG(
@@ -127,6 +135,17 @@ bool UOceanAdventureGameplayAbility_OperateHeavyWeapon::GrantFireAbility(
 		*GetNameSafe(Weapon),
 		*GetNameSafe(GetAvatarActorFromActorInfo()),
 		*GrantedFireAbilityHandle.ToString());
+	if (const FGameplayAbilitySpec* GrantedSpec = AbilitySystem->FindAbilitySpecFromHandle(GrantedFireAbilityHandle))
+	{
+		UE_LOG(
+			LogOceanAdventure,
+			Display,
+			TEXT("[HeavyWeaponOperate] Grant fire spec complete handle=%s ability=%s source=%s tags=%s active=%d input_pressed=%d world=%.3f"),
+			*GrantedSpec->Handle.ToString(), *GetNameSafe(GrantedSpec->Ability.Get()),
+			*GetNameSafe(GrantedSpec->SourceObject.Get()),
+			*GrantedSpec->GetDynamicSpecSourceTags().ToStringSimple(), GrantedSpec->IsActive(),
+			GrantedSpec->InputPressed, GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
+	}
 	return GrantedFireAbilityHandle.IsValid();
 }
 
@@ -146,6 +165,13 @@ void UOceanAdventureGameplayAbility_OperateHeavyWeapon::RevokeFireAbility()
 			*GetNameSafe(GetAvatarActorFromActorInfo()),
 			*GrantedFireAbilityHandle.ToString());
 		AbilitySystem->ClearAbility(GrantedFireAbilityHandle);
+		UE_LOG(
+			LogOceanAdventure,
+			Display,
+			TEXT("[HeavyWeaponOperate] Revoke fire spec complete handle=%s still_present=%d avatar=%s world=%.3f"),
+			*GrantedFireAbilityHandle.ToString(),
+			AbilitySystem->FindAbilitySpecFromHandle(GrantedFireAbilityHandle) != nullptr,
+			*GetNameSafe(GetAvatarActorFromActorInfo()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 	}
 	GrantedFireAbilityHandle = FGameplayAbilitySpecHandle();
 }

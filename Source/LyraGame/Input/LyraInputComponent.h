@@ -4,6 +4,7 @@
 
 #include "EnhancedInputComponent.h"
 #include "LyraInputConfig.h"
+#include "LyraLogChannels.h"
 
 #include "LyraInputComponent.generated.h"
 
@@ -58,6 +59,14 @@ void ULyraInputComponent::BindAbilityActions(const ULyraInputConfig* InputConfig
 	{
 		if (Action.InputAction && Action.InputTag.IsValid())
 		{
+			if (Action.InputTag.ToString().StartsWith(TEXT("InputTag.Naval")))
+			{
+				UE_LOG(
+					LogLyra,
+					Display,
+					TEXT("[AbilityInput] BindAbilityActions naval tag=%s action=%s events=Triggered+Completed"),
+					*Action.InputTag.ToString(), *GetNameSafe(Action.InputAction));
+			}
 			if (PressedFunc)
 			{
 				BindHandles.Add(BindAction(Action.InputAction, ETriggerEvent::Triggered, Object, PressedFunc, Action.InputTag).GetHandle());

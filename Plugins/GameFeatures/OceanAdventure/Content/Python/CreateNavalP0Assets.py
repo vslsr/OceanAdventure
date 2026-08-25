@@ -58,7 +58,9 @@ CANNONBALL_SOURCE_FBX = (
 # Tuning exposed on BP_Naval_GroundCannon. Edit these values and rerun this script, or
 # change the same properties directly in the Blueprint after the asset has been generated.
 CANNON_TRAJECTORY_DEFAULTS = {
-    "minimum_range": 1200.0,
+    # Keep the initial preview and the shortest shot close to the cannon, while leaving
+    # enough clearance for the muzzle/occupant collision volume.
+    "minimum_range": 400.0,
     "max_range": 7000.0,
     "trajectory_flight_seconds": 2.4,
     "max_trajectory_rise": 600.0,

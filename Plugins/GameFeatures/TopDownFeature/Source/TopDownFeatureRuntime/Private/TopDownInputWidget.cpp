@@ -12,17 +12,22 @@ TOptional<FUIInputConfig> UTopDownInputWidget::GetDesiredInputConfig() const
 {
 	// CommonUI owns cursor visibility and restores the previous policy when this widget pops.
 	//
-	// All + NoCapture is deliberate and verified: the naval fire logs show a single left
-	// click reaching the ability system intact, so mouse buttons are not being held back
-	// here. Do not switch this to Game or to a capturing mode to chase an input bug --
-	// capturing the viewport is what stops the right-drag camera rotation from working.
+	// All + CaptureDuringMouseDown is required for a game viewport with a visible cursor:
+	// FSceneViewport only forwards an ordinary mouse-down to PlayerInput when it is already
+	// captured or the capture mode requests a temporary capture. With NoCapture, the release
+	// is forwarded but the press is dropped; that is exactly the single-click/double-click
+	// symptom seen in the naval fire logs. Keep the cursor visible during the temporary capture
+	// so this policy does not turn a top-down pointer into a hidden FPS cursor.
 	//
 	// Pushing this widget and CommonUI actually asking it for a config are two different
 	// events, and only the second one changes how the pointer behaves. Logging the query
 	// makes the difference readable instead of assumed.
 	UE_LOG(LogTopDownInputWidget, Display,
-		TEXT("[TopDownInput] Input config queried by CommonUI: mode=All capture=NoCapture activated=%d widget=%s"),
+		TEXT("[TopDownInput] Input config queried by CommonUI: mode=All capture=CaptureDuringMouseDown hide_cursor=0 activated=%d widget=%s"),
 		IsActivated(), *GetName());
 
-	return FUIInputConfig(ECommonInputMode::All, EMouseCaptureMode::NoCapture);
+	return FUIInputConfig(
+		ECommonInputMode::All,
+		EMouseCaptureMode::CaptureDuringMouseDown,
+		/*bHideCursorDuringViewportCapture=*/false);
 }
