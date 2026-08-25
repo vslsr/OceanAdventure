@@ -11,10 +11,11 @@ class UNavalHelmComponent;
 /**
  * 操作主舵台.
  *
- * While this runs, the character's movement input becomes throttle and steering instead of
- * footsteps -- the design's "移动输入转换为油门与转向". Pressing the same key again steps off,
- * and the ship then holds its heading and coasts down rather than stopping dead or steering
- * itself, so a lone player can leave the wheel to fire or repair and pay for it in drift.
+ * While this runs, a priority-2 IMC_OceanHelm consumes W/A/S/D and the dedicated helm input
+ * component captures signed throttle/steer values instead of footsteps. Pressing E again steps
+ * off, pops the context, and the ship then holds its heading and coasts down rather than
+ * stopping dead or steering itself, so a lone player can leave the wheel to fire or repair and
+ * pay for it in drift.
  */
 UCLASS()
 class OCEANADVENTURERUNTIME_API UOceanAdventureGameplayAbility_OperateHelm
@@ -25,6 +26,19 @@ class OCEANADVENTURERUNTIME_API UOceanAdventureGameplayAbility_OperateHelm
 public:
 	UOceanAdventureGameplayAbility_OperateHelm(
 		const FObjectInitializer& ObjectInitializer = FObjectInitializer::Get());
+
+	virtual void ActivateAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo,
+		const FGameplayEventData* TriggerEventData) override;
+
+	virtual void EndAbility(
+		const FGameplayAbilitySpecHandle Handle,
+		const FGameplayAbilityActorInfo* ActorInfo,
+		const FGameplayAbilityActivationInfo ActivationInfo,
+		bool bReplicateEndAbility,
+		bool bWasCancelled) override;
 
 protected:
 	virtual AActor* FindStationInRange() const override;

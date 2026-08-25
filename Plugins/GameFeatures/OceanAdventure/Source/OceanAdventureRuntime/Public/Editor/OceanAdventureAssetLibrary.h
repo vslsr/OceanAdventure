@@ -12,6 +12,7 @@ class AActor;
 class UActorComponent;
 class UGameFeatureAction;
 class UInputMappingContext;
+class UInputAction;
 class ULyraAbilitySet;
 class ULyraGameplayAbility;
 class ULyraInputConfig;
@@ -49,6 +50,18 @@ public:
 		UInputMappingContext* InputMapping,
 		int32 Priority = 0,
 		FName ActionName = NAME_None);
+
+	/**
+	 * Rebuilds the helm mapping with signed Axis1D bindings (W/S throttle and D/A steer).
+	 * Enhanced Input's negate modifier is an inline struct/object detail that is not reliably
+	 * writable through the UE 5.7 Python wrapper, so this narrow bridge keeps asset authoring
+	 * deterministic without moving input handling into runtime code.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Ocean Adventure|Assets")
+	static bool ConfigureHelmInputMapping(
+		UInputMappingContext* InputMapping,
+		UInputAction* ThrottleAction,
+		UInputAction* SteerAction);
 
 	/** Creates an Add Input Binding action owned by Outer. */
 	UFUNCTION(BlueprintCallable, Category = "Ocean Adventure|Assets")

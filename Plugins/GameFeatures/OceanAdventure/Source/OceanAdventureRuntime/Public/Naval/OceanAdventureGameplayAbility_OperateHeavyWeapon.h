@@ -44,7 +44,7 @@ protected:
 	virtual bool GetOperatorTransform(AActor* Station, FTransform& OutTransform) const override;
 
 private:
-	/** Server-only: grant one fire spec whose SourceObject is the occupied heavy weapon. */
+	/** Server-only: grant one fire spec to the player's ASC; SourceObject is the occupied gun. */
 	bool GrantFireAbility(ANavalHeavyWeaponActor* Weapon);
 
 	/** Server-only: remove the temporary fire spec when the player leaves or the gun is lost. */

@@ -2,7 +2,7 @@
 
 #include "Naval/OceanAdventureGameplayAbility_OperateHeavyWeapon.h"
 
-#include "AbilitySystemComponent.h"
+#include "AbilitySystem/LyraAbilitySystemComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Naval/NavalHeavyWeaponActor.h"
 #include "Naval/OceanAdventureGameplayAbility_FireHeavyWeapon.h"
@@ -102,7 +102,9 @@ void UOceanAdventureGameplayAbility_OperateHeavyWeapon::ServerReleaseStation(AAc
 bool UOceanAdventureGameplayAbility_OperateHeavyWeapon::GrantFireAbility(
 	ANavalHeavyWeaponActor* Weapon)
 {
-	UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo();
+	// This ability is instantiated from the player's ASC.  The cannon is deliberately not
+	// given an ASC: it is only the world-owned target carried by the player's fire spec.
+	ULyraAbilitySystemComponent* AbilitySystem = GetLyraAbilitySystemComponentFromActorInfo();
 	if (!HasAuthority(&CurrentActivationInfo) || !AbilitySystem || !Weapon)
 	{
 		return false;
@@ -135,7 +137,7 @@ void UOceanAdventureGameplayAbility_OperateHeavyWeapon::RevokeFireAbility()
 		return;
 	}
 
-	if (UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo())
+	if (ULyraAbilitySystemComponent* AbilitySystem = GetLyraAbilitySystemComponentFromActorInfo())
 	{
 		UE_LOG(
 			LogOceanAdventure,

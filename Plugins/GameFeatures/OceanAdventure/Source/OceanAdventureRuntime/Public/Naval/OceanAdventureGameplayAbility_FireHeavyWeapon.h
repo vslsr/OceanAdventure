@@ -8,7 +8,10 @@
 #include "OceanAdventureGameplayAbility_FireHeavyWeapon.generated.h"
 
 /**
- * Hold to charge one shell, release to fire.
+ * Player-owned hold-to-charge action: hold to charge one shell, release to fire.
+ *
+ * This ability is granted to the player's Lyra ASC. The HeavyWeapon Actor is only a
+ * SourceObject/validated world target; it does not host this ability or its input.
  *
  * Split from the operate ability so that holding the trigger cannot become a stream and so
  * that every refusal -- reloading, minimum range, a wall in front of the muzzle -- is a
@@ -44,7 +47,7 @@ public:
 		bool bWasCancelled) override;
 
 protected:
-	/** The HeavyWeapon Actor carried as this temporary ability spec's SourceObject. */
+	/** The HeavyWeapon Actor carried as this player-owned ability spec's SourceObject. */
 	class ANavalHeavyWeaponActor* FindOperatedWeapon(
 		FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo) const;

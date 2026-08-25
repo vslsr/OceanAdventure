@@ -71,8 +71,20 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "1.0"))
 	float DriftDeceleration = 70.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "1.0", Units = "deg"))
+	/** Lateral water drag makes the velocity direction settle toward the hull heading. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "1.0"))
+	float LateralDrag = 180.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "1.0", Units = "deg/s"))
 	float MaxYawRateDegrees = 26.0f;
+
+	/** AD is a torque input: angular velocity ramps up instead of snapping to a yaw rate. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "1.0"))
+	float YawAccelerationDegrees = 90.0f;
+
+	/** Angular drag returns the hull to a stable heading when AD is released. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "0.0"))
+	float YawDamping = 5.0f;
 
 	/**
 	 * Turn authority left when every rudder is gone. Design 8.3.1: a very weak emergency
@@ -92,7 +104,7 @@ protected:
 		meta = (ClampMin = "0.1", ClampMax = "1.0"))
 	float DamagedCoreSpeedScale = 0.8f;
 
-	/** Turn rate scales in with speed: a stopped raft cannot pivot on the spot. */
+	/** Retained as a tuning floor for content that wants a reduced stationary torque response. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement",
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float MinSpeedFractionForTurn = 0.12f;
@@ -109,4 +121,8 @@ private:
 	TWeakObjectPtr<UNavalHelmComponent> Helm;
 	TWeakObjectPtr<UNavalLoadComponent> Load;
 	TWeakObjectPtr<UNavalVesselComponent> Vessel;
+
+	/** Server-only world-space planar velocity; the actor transform is the replicated truth. */
+	FVector PlanarVelocity = FVector::ZeroVector;
+	float YawRateDegrees = 0.0f;
 };

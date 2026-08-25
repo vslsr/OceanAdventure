@@ -30,6 +30,8 @@ namespace
 
 #include "GameFeatures/GameFeatureAction_AddInputBinding.h"
 #include "GameFeatures/GameFeatureAction_AddInputContextMapping.h"
+#include "InputAction.h"
+#include "InputModifiers.h"
 #include "Input/LyraInputConfig.h"
 #include "InputMappingContext.h"
 #include "OceanAdventureRuntimeModule.h"
@@ -121,6 +123,69 @@ UGameFeatureAction* UOceanAdventureAssetLibrary::CreateAddInputBindingAction(
 		}
 	}
 	return Action;
+}
+
+bool UOceanAdventureAssetLibrary::ConfigureHelmInputMapping(
+	UInputMappingContext* InputMapping,
+	UInputAction* ThrottleAction,
+	UInputAction* SteerAction)
+{
+	if (!IsValid(InputMapping) || !IsValid(ThrottleAction) || !IsValid(SteerAction))
+	{
+		UE_LOG(LogOceanAdventure, Error, TEXT("Cannot configure helm mapping with null assets"));
+		return false;
+	}
+
+	InputMapping->Modify();
+	InputMapping->UnmapAllKeysFromAction(ThrottleAction);
+	InputMapping->UnmapAllKeysFromAction(SteerAction);
+
+	// Use FKey names instead of runtime EKeys checks. This function only authors the asset;
+	// the runtime component receives Enhanced Input values and never reads physical keys.
+	InputMapping->MapKey(ThrottleAction, FKey(FName(TEXT("W"))));
+	FEnhancedActionKeyMapping& ThrottleReverse =
+		InputMapping->MapKey(ThrottleAction, FKey(FName(TEXT("S"))));
+	ThrottleReverse.Modifiers.Add(NewObject<UInputModifierNegate>(InputMapping));
+
+	InputMapping->MapKey(SteerAction, FKey(FName(TEXT("D"))));
+	FEnhancedActionKeyMapping& SteerLeft =
+		InputMapping->MapKey(SteerAction, FKey(FName(TEXT("A"))));
+	SteerLeft.Modifiers.Add(NewObject<UInputModifierNegate>(InputMapping));
+
+	const TArray<FEnhancedActionKeyMapping>& Mappings = InputMapping->GetMappings();
+	const bool bHasThrottleForward = Mappings.ContainsByPredicate(
+		[ThrottleAction](const FEnhancedActionKeyMapping& Mapping)
+		{
+			return Mapping.Action == ThrottleAction && Mapping.Key == FKey(FName(TEXT("W")));
+		});
+	const bool bHasThrottleReverse = Mappings.ContainsByPredicate(
+		[ThrottleAction](const FEnhancedActionKeyMapping& Mapping)
+		{
+			return Mapping.Action == ThrottleAction && Mapping.Key == FKey(FName(TEXT("S")))
+				&& Mapping.Modifiers.Num() == 1
+				&& Mapping.Modifiers[0] && Mapping.Modifiers[0]->IsA<UInputModifierNegate>();
+		});
+	const bool bHasSteerRight = Mappings.ContainsByPredicate(
+		[SteerAction](const FEnhancedActionKeyMapping& Mapping)
+		{
+			return Mapping.Action == SteerAction && Mapping.Key == FKey(FName(TEXT("D")));
+		});
+	const bool bHasSteerLeft = Mappings.ContainsByPredicate(
+		[SteerAction](const FEnhancedActionKeyMapping& Mapping)
+		{
+			return Mapping.Action == SteerAction && Mapping.Key == FKey(FName(TEXT("A")))
+				&& Mapping.Modifiers.Num() == 1
+				&& Mapping.Modifiers[0] && Mapping.Modifiers[0]->IsA<UInputModifierNegate>();
+		});
+
+	if (!bHasThrottleForward || !bHasThrottleReverse || !bHasSteerRight || !bHasSteerLeft)
+	{
+		UE_LOG(LogOceanAdventure, Error, TEXT("Helm input mapping did not retain W/S/D/A signed bindings"));
+		return false;
+	}
+
+	InputMapping->MarkPackageDirty();
+	return true;
 }
 
 bool UOceanAdventureAssetLibrary::ConfigureAbilitySetGameplayAbilities(

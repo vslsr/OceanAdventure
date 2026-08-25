@@ -10,6 +10,8 @@ namespace OceanAdventureNavalTags
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Naval_Repair, "InputTag.Naval.Repair");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Naval_DeployHeavyWeapon, "InputTag.Naval.DeployHeavyWeapon");
 	UE_DEFINE_GAMEPLAY_TAG(InputTag_Naval_DeployLifeRaft, "InputTag.Naval.DeployLifeRaft");
+	UE_DEFINE_GAMEPLAY_TAG(InputTag_Naval_Helm_Throttle, "InputTag.Naval.Helm.Throttle");
+	UE_DEFINE_GAMEPLAY_TAG(InputTag_Naval_Helm_Steer, "InputTag.Naval.Helm.Steer");
 
 	UE_DEFINE_GAMEPLAY_TAG(Status_Naval_Steering, "Status.Naval.Steering");
 	UE_DEFINE_GAMEPLAY_TAG(Status_Naval_OperatingHeavyWeapon, "Status.Naval.OperatingHeavyWeapon");

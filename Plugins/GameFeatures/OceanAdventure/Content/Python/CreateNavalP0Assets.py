@@ -3,6 +3,7 @@
 What this owns is everything that only means something once GAS and the match exist:
 
     IMC_OceanNaval / DA_InputConfig_OceanNaval   InputTag -> InputAction, no hard-coded keys
+    IMC_OceanHelm                                W/S -> signed throttle, A/D -> signed steer
     DA_AbilitySet_OceanNaval                     station/deploy abilities granted by PawnData
     BP_Naval_GroundCannon                        the field emplacement of the shared cannon
     Models/SM_Naval_Cannonball                   the Blender-authored projectile mesh
@@ -40,6 +41,7 @@ BASE_EXPERIENCE_PATH = f"{EXPERIENCE_ROOT}/BP_Experience_Ocean"
 
 INPUT_MAPPING_PATH = f"{INPUT_ROOT}/IMC_OceanNaval"
 INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanNaval"
+HELM_MAPPING_PATH = f"{INPUT_ROOT}/IMC_OceanHelm"
 ABILITY_SET_PATH = f"{NAVAL_ROOT}/DA_AbilitySet_OceanNaval"
 GROUND_CANNON_PATH = f"{NAVAL_ROOT}/BP_Naval_GroundCannon"
 PROJECTILE_BLUEPRINT_PATH = f"{NAVAL_ROOT}/Projectiles/BP_Naval_CannonballProjectile"
@@ -71,6 +73,11 @@ ACTIONS = (
     ("IA_Naval_DeployLifeRaft", "InputTag.Naval.DeployLifeRaft", "G"),
 )
 
+HELM_ACTION_SPECS = (
+    ("IA_Ocean_Helm_Throttle", "W/S"),
+    ("IA_Ocean_Helm_Steer", "A/D"),
+)
+
 ABILITIES = (
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_OperateHelm", "InputTag.Naval.Interact"),
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_OperateHeavyWeapon", "InputTag.Naval.Interact"),
@@ -84,6 +91,7 @@ ABILITIES = (
 OWNED_ACTION_CLASSES = {
     "OceanNaval_AddInputMapping": "GameFeatureAction_AddInputContextMapping",
     "OceanNaval_AddInputBinding": "GameFeatureAction_AddInputBinding",
+    "OceanNaval_AddHelmInputComponent": "GameFeatureAction_AddComponents",
 }
 EXPERIENCE_ACTION_NAME = "NavalP0_AddMatchComponent"
 # The reconnect anchor table and the spawning manager that reads it. Server-only: nothing
@@ -129,9 +137,28 @@ def gameplay_tag(tag_name):
     return tag
 
 
+def gameplay_tags_equal(left, right):
+    """Compare tag values, not UE Python wrapper identity."""
+    equal_tag = getattr(unreal.GameplayTagLibrary, "equal_equal_gameplay_tag", None)
+    if equal_tag is not None:
+        return bool(equal_tag(left, right))
+    export_left = getattr(left, "export_text", None)
+    export_right = getattr(right, "export_text", None)
+    if export_left is not None and export_right is not None:
+        return str(export_left()) == str(export_right())
+    return left == right
+
+
 def split_path(asset_path):
     package_path, _, asset_name = asset_path.rpartition("/")
     return package_path, asset_name
+
+
+def asset_path(asset):
+    """Stable UObject package path comparison across UE Python wrapper instances."""
+    if asset is None:
+        return ""
+    return str(asset.get_path_name()).split(".", 1)[0]
 
 
 def save(asset):
@@ -246,7 +273,77 @@ def configure_input_assets():
     # Dispatched by ULyraHeroComponent through the InputTag, so no key is ever read directly.
     input_config.set_editor_property("ability_input_actions", ability_actions)
     save(input_config)
-    return input_mapping, input_config
+
+    # The helm controls are continuous Axis1D actions, not ability activators. They are bound
+    # by UOceanAdventureHelmInputComponent only while the helm ability owns IMC_OceanHelm.
+    helm_actions = []
+    for action_name, _ in HELM_ACTION_SPECS:
+        action = load_or_create(
+            f"{INPUT_ROOT}/{action_name}",
+            unreal.InputAction,
+            unreal.InputActionFactory() if hasattr(unreal, "InputActionFactory") else None,
+        )
+        action.set_editor_property("value_type", unreal.InputActionValueType.AXIS1D)
+        action.set_editor_property("triggers", [])
+        save(action)
+        helm_actions.append(action)
+
+    # Lyra's native input path owns the action lookup. The helm actions are not ability
+    # activators, but they still live in PawnData's InputConfig and are selected by explicit
+    # InputTags rather than by physical keys or asset paths at runtime.
+    base_input_config = require(
+        unreal.EditorAssetLibrary.load_asset(BASE_INPUT_CONFIG_PATH),
+        f"Missing {BASE_INPUT_CONFIG_PATH}; run CreateOceanAdventureExperience.py first",
+    )
+    helm_input_tags = [
+        gameplay_tag("InputTag.Naval.Helm.Throttle"),
+        gameplay_tag("InputTag.Naval.Helm.Steer"),
+    ]
+    replaced_tags = list(helm_input_tags)
+    native_actions = [
+        entry
+        for entry in base_input_config.get_editor_property("native_input_actions")
+        if not any(
+            gameplay_tags_equal(entry.get_editor_property("input_tag"), replaced_tag)
+            for replaced_tag in replaced_tags
+        )
+    ]
+    preserved_native_count = len(native_actions)
+    for action, input_tag in zip(helm_actions, helm_input_tags):
+        native_actions.append(unreal.LyraInputAction(input_action=action, input_tag=input_tag))
+    base_input_config.set_editor_property("native_input_actions", native_actions)
+    configured_native_actions = base_input_config.get_editor_property("native_input_actions")
+    require(
+        len(configured_native_actions) == preserved_native_count + len(helm_actions),
+        "Base InputConfig native actions changed by an unexpected amount while adding helm actions",
+    )
+    for action, input_tag in zip(helm_actions, helm_input_tags):
+        require(
+            any(
+                asset_path(entry.get_editor_property("input_action")) == asset_path(action)
+                and gameplay_tags_equal(entry.get_editor_property("input_tag"), input_tag)
+                for entry in configured_native_actions
+            ),
+            f"InputConfig did not retain {action.get_name()} -> {input_tag}",
+        )
+    save(base_input_config)
+
+    helm_mapping = load_or_create(
+        HELM_MAPPING_PATH,
+        unreal.InputMappingContext,
+        unreal.InputMappingContext_Factory()
+        if hasattr(unreal, "InputMappingContext_Factory")
+        else None,
+    )
+    require(
+        unreal.OceanAdventureAssetLibrary.configure_helm_input_mapping(
+            helm_mapping, helm_actions[0], helm_actions[1]
+        ),
+        "Failed to configure signed IMC_OceanHelm W/S/D/A mappings",
+    )
+    save(helm_mapping)
+    log("Configured IMC_OceanHelm with signed W/S throttle and A/D steer actions")
+    return input_mapping, input_config, helm_mapping
 
 
 def configure_ability_set():
@@ -272,6 +369,38 @@ def configure_ability_set():
     )
     save(ability_set)
     return ability_set
+
+
+def configure_helm_input_component(helm_mapping):
+    """Set/validate editor-session CDO defaults; the native class also has a path fallback."""
+    component_class = require_type(
+        "OceanAdventureHelmInputComponent", "the OceanAdventureRuntime module"
+    )
+    component_cdo = unreal.get_default_object(component_class)
+    throttle_tag = gameplay_tag("InputTag.Naval.Helm.Throttle")
+    steer_tag = gameplay_tag("InputTag.Naval.Helm.Steer")
+    component_cdo.set_editor_property("throttle_input_tag", throttle_tag)
+    component_cdo.set_editor_property("steer_input_tag", steer_tag)
+    component_cdo.set_editor_property("helm_mapping_priority", 2)
+
+    configured_throttle = component_cdo.get_editor_property("throttle_input_tag")
+    configured_steer = component_cdo.get_editor_property("steer_input_tag")
+    configured_priority = int(component_cdo.get_editor_property("helm_mapping_priority"))
+    require(
+        gameplay_tags_equal(configured_throttle, throttle_tag),
+        "Helm input component did not retain InputTag.Naval.Helm.Throttle",
+    )
+    require(
+        gameplay_tags_equal(configured_steer, steer_tag),
+        "Helm input component did not retain InputTag.Naval.Helm.Steer",
+    )
+    require(
+        asset_path(helm_mapping) == f"{FEATURE_ROOT}/Input/IMC_OceanHelm",
+        "Helm mapping asset path changed; native component fallback would not resolve it",
+    )
+    require(configured_priority == 2, "Helm input component did not retain mapping priority 2")
+    log("Configured OceanAdventureHelmInputComponent with IMC_OceanHelm and both actions")
+    return component_class
 
 
 def import_cannonball_mesh():
@@ -387,7 +516,7 @@ def configure_placeable_blueprints(projectile_class):
     return cannon, beacon
 
 
-def configure_game_feature_data(input_mapping, input_config):
+def configure_game_feature_data(input_mapping, input_config, helm_component_class):
     game_feature_data = require(
         unreal.EditorAssetLibrary.load_asset(GAME_FEATURE_DATA_PATH),
         f"Missing {GAME_FEATURE_DATA_PATH}; run CreateGameFeatureData.py first",
@@ -413,6 +542,23 @@ def configure_game_feature_data(input_mapping, input_config):
                 game_feature_data, [input_config], unreal.Name("OceanNaval_AddInputBinding")
             ),
             "Failed to create the naval Add Input Binding action",
+        )
+    )
+    pawn_class = require(
+        unreal.load_class(None, "/Script/OceanAdventureRuntime.OceanAdventurePawn"),
+        "Failed to load AOceanAdventurePawn for helm input component injection",
+    )
+    actions.append(
+        require(
+            unreal.OceanAdventureAssetLibrary.create_add_components_action(
+                game_feature_data,
+                [pawn_class],
+                [helm_component_class],
+                True,
+                True,
+                unreal.Name("OceanNaval_AddHelmInputComponent"),
+            ),
+            "Failed to create the helm input component Add Components action",
         )
     )
     game_feature_data.set_editor_property("actions", actions)
@@ -552,11 +698,12 @@ def main():
     # Fail before rewriting input/ability assets when the Blender source (or an already
     # imported fallback) is missing.
     cannonball_mesh = import_cannonball_mesh()
-    input_mapping, input_config = configure_input_assets()
+    input_mapping, input_config, helm_mapping = configure_input_assets()
     ability_set = configure_ability_set()
+    helm_component_class = configure_helm_input_component(helm_mapping)
     projectile_class = configure_projectile_blueprint(cannonball_mesh)
     configure_placeable_blueprints(projectile_class)
-    configure_game_feature_data(input_mapping, input_config)
+    configure_game_feature_data(input_mapping, input_config, helm_component_class)
     pawn_data = configure_pawn_data(ability_set)
     configure_experience(pawn_data)
 

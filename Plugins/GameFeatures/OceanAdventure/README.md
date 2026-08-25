@@ -17,7 +17,7 @@ BP_Experience_Ocean  (LyraExperienceDefinition)
 │                            PawnClass         ──► BP_OceanAdventure_Pawn (AOceanAdventurePawn)
 │                            AbilitySets       ──► empty until the mode has real Ocean-owned abilities
 │                            DefaultCameraMode ──► ULyraCameraMode_TopDownFollow
-│                            InputConfig       ──► /Game/Input/DA_InputConfig_Base
+│                            InputConfig       ──► /OceanAdventure/Input/DA_InputConfig_OceanAdventure
 │
 ├─ ActionSets ───────────► LSA_Standard_Components / LSA_Shared_Input / LAS_Standard_HUD
 │
@@ -28,6 +28,11 @@ BP_Experience_Ocean  (LyraExperienceDefinition)
    │                        AddComponents: AOceanChunkActor    ← UOceanChunkPresentationComponent
    └─ "TopDownFeature"  ──► AddComponents: LyraCharacter       ← UTopDownPawnComponent
                             AddInputMapping: IMC_OceanAdventure_Base (WASD + camera)
+
+The naval P0 wiring adds `UOceanAdventureHelmInputComponent` to the pawn. Pressing E
+activates `OperateHelm`, which temporarily pushes `IMC_OceanHelm` at priority 2. Its signed
+Axis1D actions (`IA_Ocean_Helm_Throttle` = W/S and `IA_Ocean_Helm_Steer` = A/D) override the
+top-down movement mappings until the ability ends; E then pops the context and walking resumes.
 ```
 
 Adding or dropping a capability is an edit to the experience, not to the pawn class.
@@ -94,6 +99,11 @@ therefore remains art-agnostic. WildOmission is MIT licensed. Its notice is reta
 5. Open the mode's map and set World Settings → `Default Gameplay Experience` to
    `BP_Experience_Ocean`.
 
+For the naval P0 assets, run `CreateNavalP0Assets` after compiling both runtime modules and
+after the experience wiring above. It creates the signed helm mapping, adds the two actions to
+the PawnData `NativeInputActions`, configures the injected input component, and rewrites the
+named naval GameFeature actions idempotently.
+
 To install the WildOmission environment assets, close the editor and run:
 
 ```powershell
@@ -113,7 +123,7 @@ tune its remaining CharacterMovement settings for the water.
 log LogOceanAdventure Verbose
 ```
 
-On spawn the pawn logs every component attached to it. `UOceanChunkInvokerComponent` and
-`UTopDownPawnComponent` in that list means both features activated and their pawn actions
-ran. Each initialized chunk also logs `Built terrain and water presentation for chunk`
+On spawn the pawn logs every component attached to it. `UOceanChunkInvokerComponent`,
+`UTopDownPawnComponent`, and `UOceanAdventureHelmInputComponent` in that list means both
+features and the naval input adapter activated. Each initialized chunk also logs `Built terrain and water presentation for chunk`
 when `UOceanChunkPresentationComponent` creates its local meshes.

@@ -3,6 +3,7 @@
 #include "Naval/OceanAdventureGameplayAbility_FireHeavyWeapon.h"
 
 #include "AbilitySystemComponent.h"
+#include "AbilitySystem/LyraAbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_WaitInputRelease.h"
 #include "Engine/World.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
@@ -25,6 +26,9 @@ UOceanAdventureGameplayAbility_FireHeavyWeapon::UOceanAdventureGameplayAbility_F
 {
 	InstancingPolicy = EGameplayAbilityInstancingPolicy::InstancedPerActor;
 	NetExecutionPolicy = EGameplayAbilityNetExecutionPolicy::LocalPredicted;
+	// The input edge activates one instance on the player's ASC.  Holding that instance
+	// only updates charge; the release task submits exactly one TargetData request.
+	ActivationPolicy = ELyraAbilityActivationPolicy::OnInputTriggered;
 }
 
 bool UOceanAdventureGameplayAbility_FireHeavyWeapon::CanActivateAbility(
@@ -59,8 +63,8 @@ ANavalHeavyWeaponActor* UOceanAdventureGameplayAbility_FireHeavyWeapon::FindOper
 	FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo) const
 {
-	UAbilitySystemComponent* AbilitySystem = ActorInfo
-		? ActorInfo->AbilitySystemComponent.Get()
+	ULyraAbilitySystemComponent* AbilitySystem = ActorInfo
+		? Cast<ULyraAbilitySystemComponent>(ActorInfo->AbilitySystemComponent.Get())
 		: nullptr;
 	const FGameplayAbilitySpec* Spec = AbilitySystem
 		? AbilitySystem->FindAbilitySpecFromHandle(Handle)
