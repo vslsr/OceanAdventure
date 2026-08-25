@@ -400,12 +400,21 @@ void UTopDownPawnComponent::PushCameraDragInputWidget(APlayerController* PlayerC
 
 	// The drag widget is what asks for a captured viewport. If it never lands on the layer,
 	// the pointer keeps behaving the way it did before the button went down.
-	UE_LOG(
-		LogTopDownPawnComponent,
-		PushedCameraDragInputWidget ? ELogVerbosity::Display : ELogVerbosity::Warning,
-		TEXT("[TopDownInput] Drag widget push %s layer=%s cursor_shown=%d player=%s"),
-		PushedCameraDragInputWidget ? TEXT("succeeded") : TEXT("FAILED"),
-		*UILayerTag.ToString(), PlayerController->bShowMouseCursor, *GetNameSafe(PlayerController));
+	// UE_LOG needs its verbosity at compile time, so the two outcomes are two statements.
+	if (PushedCameraDragInputWidget)
+	{
+		UE_LOG(LogTopDownPawnComponent, Display,
+			TEXT("[TopDownInput] Drag widget push succeeded widget=%s layer=%s cursor_shown=%d player=%s"),
+			*GetNameSafe(PushedCameraDragInputWidget), *UILayerTag.ToString(),
+			PlayerController->bShowMouseCursor, *GetNameSafe(PlayerController));
+	}
+	else
+	{
+		UE_LOG(LogTopDownPawnComponent, Warning,
+			TEXT("[TopDownInput] Drag widget push FAILED class=%s layer=%s cursor_shown=%d player=%s"),
+			*GetNameSafe(CameraDragInputWidgetClass), *UILayerTag.ToString(),
+			PlayerController->bShowMouseCursor, *GetNameSafe(PlayerController));
+	}
 }
 
 void UTopDownPawnComponent::PopCameraDragInputWidget()
