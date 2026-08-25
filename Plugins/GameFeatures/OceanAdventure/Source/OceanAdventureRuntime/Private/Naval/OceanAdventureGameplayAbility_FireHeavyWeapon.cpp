@@ -162,6 +162,25 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::UpdateCharge(float DeltaTim
 		MinimumChargeAlpha,
 		1.0f);
 	UpdateTrajectoryPreview();
+
+	// The release arrives as a one-shot generic event, and anything that keeps it from being
+	// dispatched -- an inactive spec on the release frame, a swallowed Completed -- leaves the
+	// shell charging forever and makes the gun look like it only answers a second click. The
+	// spec's own input flag is state rather than an event, so poll it as the authority on
+	// "the gunner let go" and treat the task purely as the fast path.
+	if (bFireResolved || !CurrentActorInfo || !CurrentActorInfo->IsLocallyControlled())
+	{
+		return;
+	}
+
+	const FGameplayAbilitySpec* Spec = GetCurrentAbilitySpec();
+	if (Spec && !Spec->InputPressed)
+	{
+		UE_LOG(LogOceanAdventure, Display,
+			TEXT("[NavalFire] Release seen on the spec rather than the task avatar=%s charge=%.2f"),
+			*GetNameSafe(GetAvatarActorFromActorInfo()), CurrentChargeAlpha);
+		CommitChargedShot();
+	}
 }
 
 void UOceanAdventureGameplayAbility_FireHeavyWeapon::UpdateTrajectoryPreview()
