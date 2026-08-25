@@ -500,13 +500,44 @@ bool ANavalHeavyWeaponActor::BuildChargedTrajectory(
 		PlanarDirection = GetActorForwardVector().GetSafeNormal2D();
 	}
 
-	const float FlightSeconds = FMath::Max(0.25f, TrajectoryFlightSeconds);
-	OutRange = FMath::Lerp(MinimumRange, MaxRange, FMath::Clamp(ChargeAlpha, 0.0f, 1.0f));
-	OutGravityZ = MaxTrajectoryRise > 0.0f
-		? -(8.0f * MaxTrajectoryRise) / FMath::Square(FlightSeconds)
-		: 0.0f;
-	const float VerticalSpeed = -0.5f * OutGravityZ * FlightSeconds;
-	OutInitialVelocity = PlanarDirection * (OutRange / FlightSeconds) + FVector::UpVector * VerticalSpeed;
+	// An emplacement configured with MinimumRange above MaxRange would walk the impact point
+	// inwards as the gunner charges, which reads as the charge doing the opposite of its job.
+	const float NearRange = FMath::Min(MinimumRange, MaxRange);
+	const float FarRange = FMath::Max(MinimumRange, MaxRange);
+	if (MinimumRange > MaxRange)
+	{
+		UE_LOG(
+			LogNavalCore,
+			Warning,
+			TEXT("[HeavyWeapon] %s has MinimumRange=%.0f above MaxRange=%.0f; charging would pull the shot in. Swapping for this shot."),
+			*GetName(),
+			MinimumRange,
+			MaxRange);
+	}
+
+	OutRange = FMath::Lerp(NearRange, FarRange, FMath::Clamp(ChargeAlpha, 0.0f, 1.0f));
+
+	// One ballistic family for every charge level: the launch pitch is fixed, so a short shot
+	// is a small arc and a full charge is that same arc scaled up. Apex = Range * tan(Pitch)/4,
+	// which makes MaxTrajectoryRise the apex reached at full charge and lets every shorter
+	// shot rise proportionally less.
+	//
+	// The previous form held both the apex and the flight time constant across the whole
+	// charge range, so a minimum-charge shell lobbed to the same height as a full-charge one
+	// and every shot hung in the air for TrajectoryFlightSeconds regardless of distance.
+	const float ApexAtFullCharge = FMath::Max(0.0f, MaxTrajectoryRise);
+	const float TanLaunchPitch = (4.0f * ApexAtFullCharge) / FMath::Max(1.0f, FarRange);
+
+	// Flight time grows with the square root of range, as it does for a real arc, so the
+	// preview and the shell stay in step and short shots arrive quickly instead of crawling.
+	const float RangeFraction = FMath::Sqrt(FMath::Clamp(OutRange / FMath::Max(1.0f, FarRange), 0.0f, 1.0f));
+	const float FlightSeconds = FMath::Max(0.05f, TrajectoryFlightSeconds * RangeFraction);
+
+	const float HorizontalSpeed = OutRange / FlightSeconds;
+	const float VerticalSpeed = HorizontalSpeed * TanLaunchPitch;
+	// Solved from the arc rather than assumed, so the shell lands exactly at OutRange.
+	OutGravityZ = FlightSeconds > 0.0f ? (-2.0f * VerticalSpeed) / FlightSeconds : 0.0f;
+	OutInitialVelocity = PlanarDirection * HorizontalSpeed + FVector::UpVector * VerticalSpeed;
 	return true;
 }
 

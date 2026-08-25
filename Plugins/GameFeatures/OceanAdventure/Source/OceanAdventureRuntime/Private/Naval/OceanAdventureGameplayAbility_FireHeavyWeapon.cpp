@@ -140,8 +140,12 @@ void UOceanAdventureGameplayAbility_FireHeavyWeapon::ActivateAbility(
 		ChargeTask->ReadyForActivation();
 	}
 
+	// Test the already-released state: activation lands a frame after the press edge, so a
+	// quick click can release the button before this task subscribes. Waiting only for a
+	// future event would drop that release, leave the instance charging, and make the next
+	// click's release fire the previous shot -- the gun would only answer to a double click.
 	UAbilityTask_WaitInputRelease* ReleaseTask = UAbilityTask_WaitInputRelease::WaitInputRelease(
-		this, /*bTestAlreadyReleased=*/false);
+		this, /*bTestAlreadyReleased=*/true);
 	if (ReleaseTask)
 	{
 		ReleaseTask->OnRelease.AddDynamic(this, &ThisClass::OnInputReleased);
