@@ -184,9 +184,30 @@ void UOceanAdventureNavalMatchComponent::EvaluateMatch()
 	TArray<int32> LivingTeams;
 	CollectLivingTeams(LivingTeams);
 
+	if (LivingTeams.Num() >= 2)
+	{
+		bMatchWasContested = true;
+	}
+	else if (!bMatchWasContested && !bWarnedAboutMissingTeams)
+	{
+		// Zero living teams with players still standing means nobody carries a valid naval
+		// team, which is a setup problem rather than a finished match. Say it once: without
+		// this the symptom is a match that quietly ends a couple of seconds in and takes the
+		// pawns, their granted abilities, and any occupied station down with it.
+		bWarnedAboutMissingTeams = true;
+		UE_LOG(
+			LogOceanAdventure,
+			Warning,
+			TEXT("[NavalMatch] No contested teams yet (living_teams=%d elapsed=%.1f). Elimination stays disarmed; the hard time limit still guarantees a result."),
+			LivingTeams.Num(),
+			Elapsed);
+	}
+
 	// A team can look eliminated for a moment while a player is between pawns, so the
-	// condition has to hold before it decides the match.
-	if (LivingTeams.Num() <= 1)
+	// condition has to hold before it decides the match. Elimination only applies to a match
+	// that was contested in the first place -- a session that never had two teams alive has
+	// nothing to eliminate, and ending it as a draw would be wrong rather than early.
+	if (bMatchWasContested && LivingTeams.Num() <= 1)
 	{
 		EliminationHeldSeconds += EvaluationInterval;
 		if (EliminationHeldSeconds >= EliminationConfirmSeconds)

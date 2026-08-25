@@ -137,4 +137,15 @@ private:
 	FTimerHandle EvaluationTimerHandle;
 	float EliminationHeldSeconds = 0.0f;
 	bool bBeaconActivated = false;
+
+	/**
+	 * Set once two teams have been alive at the same time. Elimination may only decide a
+	 * match that was actually contested; without this a solo session -- or any level where
+	 * nobody carries a naval team yet -- reports "at most one team left" from the very first
+	 * evaluation and hands itself a result seconds after start.
+	 */
+	bool bMatchWasContested = false;
+
+	/** One-shot so the "nobody has a team" diagnosis is stated once, not every second. */
+	bool bWarnedAboutMissingTeams = false;
 };

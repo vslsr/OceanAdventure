@@ -125,9 +125,15 @@ void UOceanAdventureGameplayAbility_NavalStation::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	// asc_avatar is read straight off the ASC while avatar comes from this instance's actor
+	// info. They disagree exactly when the instance is being torn down under a live pawn --
+	// a spec cleared out from under it -- which reads identically to a pawn that went away.
+	const UAbilitySystemComponent* LoggingAbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	UE_LOG(LogOceanAdventure, Display,
-		TEXT("[NavalStation] End ability=%s avatar=%s station=%s entered=%d cancelled=%d local=%d authority=%d"),
-		*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(ActiveStation.Get()),
+		TEXT("[NavalStation] End ability=%s avatar=%s asc_avatar=%s actor_info=%d station=%s entered=%d cancelled=%d local=%d authority=%d"),
+		*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()),
+		*GetNameSafe(LoggingAbilitySystem ? LoggingAbilitySystem->GetAvatarActor() : nullptr),
+		ActorInfo != nullptr, *GetNameSafe(ActiveStation.Get()),
 		bStationEntered, bWasCancelled, ActorInfo && ActorInfo->IsLocallyControlled(), HasAuthority(&ActivationInfo));
 	if (OnTargetDataReadyHandle.IsValid() && ActorInfo)
 	{
