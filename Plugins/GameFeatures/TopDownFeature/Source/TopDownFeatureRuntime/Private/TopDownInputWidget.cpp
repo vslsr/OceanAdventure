@@ -10,16 +10,9 @@ TOptional<FUIInputConfig> UTopDownInputWidget::GetDesiredInputConfig() const
 {
 	// CommonUI owns cursor visibility and restores the previous policy when this widget pops.
 	//
-	// Game rather than All, and a capture mode that spells out IncludingInitialMouseDown:
-	// under All + NoCapture the player controller runs in Game-and-UI with an uncaptured
-	// viewport, so mouse buttons are hit-tested against Slate before the game ever sees them
-	// while keyboard keys still reach it. That asymmetry shows up as gameplay that answers
-	// the keyboard immediately but needs a second click before a mouse button registers --
-	// the first click only goes to restoring viewport focus.
-	//
-	// The cursor stays visible because top-down aiming reads it; only the routing changes.
-	return FUIInputConfig(
-		ECommonInputMode::Game,
-		EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown,
-		/*bHideCursorDuringViewportCapture=*/false);
+	// All + NoCapture is deliberate and verified: the naval fire logs show a single left
+	// click reaching the ability system intact, so mouse buttons are not being held back
+	// here. Do not switch this to Game or to a capturing mode to chase an input bug --
+	// capturing the viewport is what stops the right-drag camera rotation from working.
+	return FUIInputConfig(ECommonInputMode::All, EMouseCaptureMode::NoCapture);
 }

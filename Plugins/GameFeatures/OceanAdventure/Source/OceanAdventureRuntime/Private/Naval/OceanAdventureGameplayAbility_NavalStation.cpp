@@ -125,15 +125,22 @@ void UOceanAdventureGameplayAbility_NavalStation::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
-	// asc_avatar is read straight off the ASC while avatar comes from this instance's actor
-	// info. They disagree exactly when the instance is being torn down under a live pawn --
-	// a spec cleared out from under it -- which reads identically to a pawn that went away.
+	// Every "None" below has to say which None it is. A null ASC pointer, an ASC whose avatar
+	// weak pointer is empty, and a null CurrentActorInfo on this instance all used to print
+	// the same word, and reading them as "the pawn was destroyed" is a wrong conclusion the
+	// log itself invited. has_asc/asc_avatar/cur_actor_info separate the three.
 	const UAbilitySystemComponent* LoggingAbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	UE_LOG(LogOceanAdventure, Display,
-		TEXT("[NavalStation] End ability=%s avatar=%s asc_avatar=%s actor_info=%d station=%s entered=%d cancelled=%d local=%d authority=%d"),
-		*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()),
+		TEXT("[NavalStation] End ability=%s avatar=%s cur_actor_info=%d actor_info=%d has_asc=%d asc_avatar=%s ")
+		TEXT("info_avatar=%s station=%s entered=%d cancelled=%d local=%d authority=%d"),
+		*GetNameSafe(this),
+		*GetNameSafe(GetAvatarActorFromActorInfo()),
+		CurrentActorInfo != nullptr,
+		ActorInfo != nullptr,
+		LoggingAbilitySystem != nullptr,
 		*GetNameSafe(LoggingAbilitySystem ? LoggingAbilitySystem->GetAvatarActor() : nullptr),
-		ActorInfo != nullptr, *GetNameSafe(ActiveStation.Get()),
+		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
+		*GetNameSafe(ActiveStation.Get()),
 		bStationEntered, bWasCancelled, ActorInfo && ActorInfo->IsLocallyControlled(), HasAuthority(&ActivationInfo));
 	if (OnTargetDataReadyHandle.IsValid() && ActorInfo)
 	{

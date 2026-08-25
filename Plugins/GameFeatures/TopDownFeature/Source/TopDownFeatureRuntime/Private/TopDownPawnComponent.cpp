@@ -302,6 +302,18 @@ void UTopDownPawnComponent::BindInputIfReady()
 	bInputBound = true;
 	SetComponentTickEnabled(true);
 
+	// Which asset each top-down action resolved to, by name. A rotate that never fires is
+	// either bound to the wrong asset or bound to an asset no mapping context reaches, and
+	// those two look identical from inside the callbacks.
+	UE_LOG(
+		LogTopDownPawnComponent,
+		Display,
+		TEXT("[TopDownInput] Bound handles=%d config=%s pawn=%s | rotate_hold=%s rotate=%s zoom=%s ")
+		TEXT("move(F/B/R/L)=%s/%s/%s/%s"),
+		InputBindingHandles.Num(), *GetNameSafe(InputConfig), *GetNameSafe(Pawn),
+		*GetNameSafe(RotateHoldAction), *GetNameSafe(RotateAction), *GetNameSafe(ZoomAction),
+		*GetNameSafe(MoveForwardAction), *GetNameSafe(MoveBackwardAction),
+		*GetNameSafe(MoveRightAction), *GetNameSafe(MoveLeftAction));
 }
 
 void UTopDownPawnComponent::UnbindInput()
@@ -385,12 +397,23 @@ void UTopDownPawnComponent::PushCameraDragInputWidget(APlayerController* PlayerC
 		PushedCameraDragInputWidget = UCommonUIExtensions::PushContentToLayer_ForPlayer(
 			LocalPlayer, UILayerTag, CameraDragInputWidgetClass);
 	}
+
+	// The drag widget is what asks for a captured viewport. If it never lands on the layer,
+	// the pointer keeps behaving the way it did before the button went down.
+	UE_LOG(
+		LogTopDownPawnComponent,
+		PushedCameraDragInputWidget ? ELogVerbosity::Display : ELogVerbosity::Warning,
+		TEXT("[TopDownInput] Drag widget push %s layer=%s cursor_shown=%d player=%s"),
+		PushedCameraDragInputWidget ? TEXT("succeeded") : TEXT("FAILED"),
+		*UILayerTag.ToString(), PlayerController->bShowMouseCursor, *GetNameSafe(PlayerController));
 }
 
 void UTopDownPawnComponent::PopCameraDragInputWidget()
 {
 	if (PushedCameraDragInputWidget)
 	{
+		UE_LOG(LogTopDownPawnComponent, Display,
+			TEXT("[TopDownInput] Drag widget popped widget=%s"), *GetNameSafe(PushedCameraDragInputWidget));
 		UCommonUIExtensions::PopContentFromLayer(PushedCameraDragInputWidget);
 		PushedCameraDragInputWidget = nullptr;
 	}
@@ -464,24 +487,41 @@ void UTopDownPawnComponent::Input_CameraRotateStarted(const FInputActionValue& I
 {
 	bCameraRotateHeld = true;
 	APawn* Pawn = GetPawn<APawn>();
+	UE_LOG(LogTopDownPawnComponent, Display,
+		TEXT("[TopDownInput] RotateHold Started value=%.2f pawn=%s"),
+		InputActionValue.Get<float>(), *GetNameSafe(Pawn));
 	PushCameraDragInputWidget(Pawn ? Cast<APlayerController>(Pawn->GetController()) : nullptr);
 }
 
 void UTopDownPawnComponent::Input_CameraRotateCompleted(const FInputActionValue& InputActionValue)
 {
+	UE_LOG(LogTopDownPawnComponent, Display,
+		TEXT("[TopDownInput] RotateHold Completed/Canceled was_held=%d pawn=%s"),
+		bCameraRotateHeld, *GetNameSafe(GetPawn<APawn>()));
 	bCameraRotateHeld = false;
 	PopCameraDragInputWidget();
 }
 
 void UTopDownPawnComponent::Input_CameraRotate(const FInputActionValue& InputActionValue)
 {
+	const FVector2D PointerDelta = InputActionValue.Get<FVector2D>();
+
+	// Three separate reasons a right-drag can do nothing, and only a log tells them apart:
+	// the axis action never fires at all, it fires while the hold flag is false, or it fires
+	// with a zero delta because the mouse is captured and the pointer is not moving.
 	if (!bCameraRotateHeld)
 	{
+		UE_LOG(LogTopDownPawnComponent, Verbose,
+			TEXT("[TopDownInput] Rotate axis ignored, hold not active delta=(%.2f, %.2f)"),
+			PointerDelta.X, PointerDelta.Y);
 		return;
 	}
 
-	const FVector2D PointerDelta = InputActionValue.Get<FVector2D>();
+	const float PreviousYawOffset = CameraYawOffset;
 	CameraYawOffset = FRotator::NormalizeAxis(CameraYawOffset + PointerDelta.X * RotationDegreesPerPixel);
+	UE_LOG(LogTopDownPawnComponent, Verbose,
+		TEXT("[TopDownInput] Rotate axis delta=(%.2f, %.2f) yaw %.2f -> %.2f"),
+		PointerDelta.X, PointerDelta.Y, PreviousYawOffset, CameraYawOffset);
 }
 
 void UTopDownPawnComponent::UpdateFacingFromMouse(float DeltaTime)
