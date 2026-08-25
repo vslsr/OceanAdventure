@@ -138,11 +138,11 @@ protected:
 	float MinimumRange = 1200.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "0.0", Units = "cm"))
-	float MaxRange = 14000.0f;
+	float MaxRange = 7000.0f;
 
 	/** Muzzle-to-impact seconds at full charge; shorter charges scale down with the arc. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "0.25", Units = "s"))
-	float TrajectoryFlightSeconds = 4.0f;
+	float TrajectoryFlightSeconds = 2.4f;
 
 	/**
 	 * Apex of the full-charge arc. It fixes the launch pitch for every charge level, so a
@@ -150,7 +150,7 @@ protected:
 	 * Height never buys a shot over a wall: CanFire blocks on the horizontal fire line.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon", meta = (ClampMin = "0.0", Units = "cm"))
-	float MaxTrajectoryRise = 1200.0f;
+	float MaxTrajectoryRise = 600.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|HeavyWeapon",
 		meta = (ClampMin = "5.0", ClampMax = "180.0", Units = "deg"))

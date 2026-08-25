@@ -54,6 +54,7 @@
 - 所有船只、部件、重武器状态由服务端写入并复制；客户端只做本地预览与表现。
 - 玩家请求一律走 GAS 的 TargetData 通道（`CallServerSetReplicatedTargetData` + `AbilityTargetDataSetDelegate`），**没有任何自造的 Server/Client RPC**。操舵是一个 20Hz 的连续 TargetData 采样流，服务端逐条校验"你是不是我认为在掌舵的那个人"。
 - 重炮交互成功后，服务端给玩家 ASC 临时授予 `UOceanAdventureGameplayAbility_FireHeavyWeapon`，以 HeavyWeapon Actor 作为 `SourceObject` 并绑定 `InputTag.Naval.Fire`；离炮或炮被销毁时回收该 Spec。
+- 弹道参数集中在 `BP_Naval_GroundCannon` 的 `Naval|HeavyWeapon`：`MinimumRange`（最小射程）、`MaxRange`（满蓄力射程）、`TrajectoryFlightSeconds`（满蓄力飞行时间）和 `MaxTrajectoryRise`（满蓄力弧顶高度）。编辑器脚本顶部的 `CANNON_TRAJECTORY_DEFAULTS` 可批量重设这些值；蓄力过程会按射程比例缩放弧线并保持同一发射仰角。
 - 反馈（失败原因、警报、载重变化、命中）全部通过 `UGameplayMessageSubsystem` 广播，UI/音效/埋点各自订阅。
 - 倒计时以**服务器时间戳**复制（`NavalTime::GetNetworkTimeSeconds`），而不是复制一个递减的秒数，中途加入或丢包的客户端读到的数字一致。
 - 角色伤害是唯一一处跨层：NavalCore 广播 `FNavalProjectileImpactMessage`，玩法层的 `UOceanAdventureNavalDamageRelay` 把它变成 GameplayEffect。这样框架层完全不碰 GAS。

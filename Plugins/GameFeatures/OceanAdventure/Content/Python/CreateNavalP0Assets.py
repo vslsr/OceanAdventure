@@ -55,6 +55,15 @@ CANNONBALL_SOURCE_FBX = (
     / "SM_Naval_Cannonball.fbx"
 )
 
+# Tuning exposed on BP_Naval_GroundCannon. Edit these values and rerun this script, or
+# change the same properties directly in the Blueprint after the asset has been generated.
+CANNON_TRAJECTORY_DEFAULTS = {
+    "minimum_range": 1200.0,
+    "max_range": 7000.0,
+    "trajectory_flight_seconds": 2.4,
+    "max_trajectory_rise": 600.0,
+}
+
 GAME_FEATURES_TO_ENABLE = ["OceanAdventure", "TopDownFeature", "Raft"]
 ACTION_SET_PATHS = [
     "/Game/ActionSet/LSA_Standard_Components",
@@ -494,6 +503,8 @@ def configure_placeable_blueprints(projectile_class):
     unreal.BlueprintEditorLibrary.compile_blueprint(cannon)
     cannon_defaults = unreal.get_default_object(blueprint_class(cannon, GROUND_CANNON_PATH))
     cannon_defaults.set_editor_property("projectile_class", projectile_class)
+    for property_name, value in CANNON_TRAJECTORY_DEFAULTS.items():
+        cannon_defaults.set_editor_property(property_name, value)
     unreal.BlueprintEditorLibrary.compile_blueprint(cannon)
     save(cannon)
 
@@ -505,6 +516,12 @@ def configure_placeable_blueprints(projectile_class):
         == projectile_class.get_path_name().split(".", 1)[0],
         "Ground cannon did not retain BP_Naval_CannonballProjectile as ProjectileClass",
     )
+    for property_name, expected_value in CANNON_TRAJECTORY_DEFAULTS.items():
+        retained_value = float(configured_cannon_defaults.get_editor_property(property_name))
+        require(
+            abs(retained_value - expected_value) <= 0.01,
+            f"Ground cannon did not retain {property_name}={expected_value}; got {retained_value}",
+        )
 
     beacon_class = require(
         unreal.load_class(None, "/Script/OceanAdventureRuntime.OceanAdventureNavalBeaconActor"),
