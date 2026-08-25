@@ -337,6 +337,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "NwiroIntegrationKit",
+			"Enabled": true
+		},
+		{
 			"Name": "Reflex",
 			"Enabled": true
 		},
