@@ -337,6 +337,31 @@ void UTopDownPawnComponent::EnsureInputWidget(APlayerController* PlayerControlle
 			UILayerTag,
 			InputWidgetClass);
 	}
+
+	// This widget draws nothing; the whole reason it exists is to declare the FUIInputConfig
+	// that decides how mouse buttons reach gameplay. Pushing it can fail silently when the
+	// layer is missing -- and CommonUI then falls back to its own default, which captures the
+	// viewport on the first mouse-down instead of delivering it. That is indistinguishable
+	// from a broken ability unless the push result is stated, so state it.
+	if (PushedInputWidget)
+	{
+		UE_LOG(
+			LogTopDownPawnComponent,
+			Display,
+			TEXT("[TopDownInput] Pushed input policy widget=%s layer=%s player=%s"),
+			*GetNameSafe(PushedInputWidget), *UILayerTag.ToString(), *GetNameSafe(PlayerController));
+	}
+	else
+	{
+		UE_LOG(
+			LogTopDownPawnComponent,
+			Warning,
+			TEXT("[TopDownInput] Input policy widget was NOT pushed (layer=%s class=%s player=%s). ")
+			TEXT("Nothing declares an FUIInputConfig, so CommonUI's default capture mode applies ")
+			TEXT("and the first mouse click of each capture is swallowed. Check that the experience ")
+			TEXT("still includes the HUD action set that registers this layer."),
+			*UILayerTag.ToString(), *GetNameSafe(InputWidgetClass), *GetNameSafe(PlayerController));
+	}
 }
 
 void UTopDownPawnComponent::RemoveInputWidget()
