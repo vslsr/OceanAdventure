@@ -76,6 +76,13 @@ TOP_DOWN_INPUT_SPECS = [
 BASE_COMPONENTS_ACTION_NAME = "OceanBase_AddComponents"
 BASE_INPUT_MAPPING_ACTION_NAME = "OceanBase_AddInputMapping"
 
+# LSA_Shared_Input adds /Game/Input/IMC_Base at priority 0, and IMC_Base maps W/A/S/D to
+# IA_Move and Mouse2D to IA_Look_Mouse. At equal priority IMC_Base wins the key, so the
+# mode's own move and camera-rotate actions never fire -- `showdebug enhancedinput` reports
+# them as "OVERRIDDEN BY IMC_Base:IA_Move". Sit above it, where IMC_OceanBuild and
+# IMC_OceanNaval already sit; none of those three map the keys this one claims.
+BASE_INPUT_MAPPING_PRIORITY = 1
+
 ACTION_SET_PATHS = [
     "/Game/ActionSet/LSA_Standard_Components",
     "/Game/ActionSet/LSA_Shared_Input",
@@ -450,7 +457,7 @@ def configure_game_feature_data(pawn_class, input_mapping):
             unreal.OceanAdventureAssetLibrary.create_add_input_context_mapping_action(
                 game_feature_data,
                 input_mapping,
-                0,
+                BASE_INPUT_MAPPING_PRIORITY,
                 unreal.Name(BASE_INPUT_MAPPING_ACTION_NAME),
             ),
             "Failed to create OceanAdventure base input mapping action",
