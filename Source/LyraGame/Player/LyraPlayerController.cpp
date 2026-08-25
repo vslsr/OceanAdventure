@@ -2,9 +2,6 @@
 
 #include "LyraPlayerController.h"
 #include "CommonInputTypeEnum.h"
-#include "Engine/GameViewportClient.h"
-#include "GameFramework/PlayerInput.h"
-#include "InputCoreTypes.h"
 #include "Components/PrimitiveComponent.h"
 #include "LyraLogChannels.h"
 #include "LyraCheatManager.h"
@@ -374,43 +371,6 @@ bool ALyraPlayerController::ServerCheatAll_Validate(const FString& Msg)
 void ALyraPlayerController::PreProcessInput(const float DeltaTime, const bool bGamePaused)
 {
 	Super::PreProcessInput(DeltaTime, bGamePaused);
-
-	// TEMPORARY DIAGNOSTIC -- remove once the mouse-button investigation is closed.
-	//
-	// This is the one place that separates "Slate consumed the click" from "the click
-	// reached the player controller but Enhanced Input did not act on it". Everything above
-	// this line in the stack is invisible from gameplay code, and the two cases are
-	// indistinguishable from inside an ability. It reads key state and never drives
-	// gameplay, which is why it is acceptable here despite the project's no-EKeys rule;
-	// it must not become the basis of any gameplay behaviour.
-	if (PlayerInput == nullptr)
-	{
-		return;
-	}
-
-	static const TPair<FKey, const TCHAR*> WatchedMouseKeys[] = {
-		{ EKeys::LeftMouseButton, TEXT("LeftMouseButton") },
-		{ EKeys::RightMouseButton, TEXT("RightMouseButton") },
-	};
-
-	for (const TPair<FKey, const TCHAR*>& Watched : WatchedMouseKeys)
-	{
-		if (PlayerInput->WasJustPressed(Watched.Key) || PlayerInput->WasJustReleased(Watched.Key))
-		{
-			const ULocalPlayer* LP = GetLocalPlayer();
-			const UGameViewportClient* ViewportClient = LP ? LP->ViewportClient : nullptr;
-			UE_LOG(
-				LogLyra,
-				Display,
-				TEXT("[MouseProbe] %s %s at the player controller | pressed_now=%d cursor_shown=%d capture_mode=%d controller=%s"),
-				Watched.Value,
-				PlayerInput->WasJustPressed(Watched.Key) ? TEXT("PRESSED") : TEXT("RELEASED"),
-				PlayerInput->IsPressed(Watched.Key),
-				bShowMouseCursor,
-				ViewportClient ? static_cast<int32>(ViewportClient->GetMouseCaptureMode()) : -1,
-				*GetName());
-		}
-	}
 }
 
 void ALyraPlayerController::PostProcessInput(const float DeltaTime, const bool bGamePaused)

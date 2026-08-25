@@ -125,22 +125,9 @@ void UOceanAdventureGameplayAbility_NavalStation::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
-	// Every "None" below has to say which None it is. A null ASC pointer, an ASC whose avatar
-	// weak pointer is empty, and a null CurrentActorInfo on this instance all used to print
-	// the same word, and reading them as "the pawn was destroyed" is a wrong conclusion the
-	// log itself invited. has_asc/asc_avatar/cur_actor_info separate the three.
-	const UAbilitySystemComponent* LoggingAbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
 	UE_LOG(LogOceanAdventure, Display,
-		TEXT("[NavalStation] End ability=%s avatar=%s cur_actor_info=%d actor_info=%d has_asc=%d asc_avatar=%s ")
-		TEXT("info_avatar=%s station=%s entered=%d cancelled=%d local=%d authority=%d"),
-		*GetNameSafe(this),
-		*GetNameSafe(GetAvatarActorFromActorInfo()),
-		CurrentActorInfo != nullptr,
-		ActorInfo != nullptr,
-		LoggingAbilitySystem != nullptr,
-		*GetNameSafe(LoggingAbilitySystem ? LoggingAbilitySystem->GetAvatarActor() : nullptr),
-		*GetNameSafe(ActorInfo ? ActorInfo->AvatarActor.Get() : nullptr),
-		*GetNameSafe(ActiveStation.Get()),
+		TEXT("[NavalStation] End ability=%s avatar=%s station=%s entered=%d cancelled=%d local=%d authority=%d"),
+		*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(ActiveStation.Get()),
 		bStationEntered, bWasCancelled, ActorInfo && ActorInfo->IsLocallyControlled(), HasAuthority(&ActivationInfo));
 	if (OnTargetDataReadyHandle.IsValid() && ActorInfo)
 	{
@@ -186,16 +173,6 @@ void UOceanAdventureGameplayAbility_NavalStation::EndAbility(
 
 void UOceanAdventureGameplayAbility_NavalStation::SendStationRequest(const FOceanAdventureNavalTargetData& Data)
 {
-	if (Data.Request != ENavalStationRequest::Control)
-	{
-		UE_LOG(
-			LogOceanAdventure,
-			Display,
-			TEXT("[NavalStation] Local request request=%d station=%s avatar=%s local=%d authority=%d world=%.3f"),
-			static_cast<int32>(Data.Request), *GetNameSafe(Data.StationActor.Get()),
-			*GetNameSafe(GetAvatarActorFromActorInfo()), CurrentActorInfo && CurrentActorInfo->IsLocallyControlled(),
-			HasAuthority(&CurrentActivationInfo), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-	}
 	UAbilitySystemComponent* AbilitySystem = CurrentActorInfo
 		? CurrentActorInfo->AbilitySystemComponent.Get()
 		: nullptr;

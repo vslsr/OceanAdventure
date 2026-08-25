@@ -40,11 +40,6 @@ namespace LyraHero
 	{
 		return InputTag.IsValid() && InputTag.ToString().StartsWith(TEXT("InputTag.Build"));
 	}
-
-	static bool IsNavalInputTag(const FGameplayTag& InputTag)
-	{
-		return InputTag.IsValid() && InputTag.ToString().StartsWith(TEXT("InputTag.Naval"));
-	}
 };
 
 const FName ULyraHeroComponent::NAME_BindInputsNow("BindInputsNow");
@@ -293,32 +288,7 @@ void ULyraHeroComponent::InitializePlayerInput(UInputComponent* PlayerInputCompo
 					// This is where we actually bind and input action to a gameplay tag, which means that Gameplay Ability Blueprints will
 					// be triggered directly by these input actions Triggered events. 
 					TArray<uint32> BindHandles;
-					for (const FLyraInputAction& Action : InputConfig->AbilityInputActions)
-					{
-						if (LyraHero::IsNavalInputTag(Action.InputTag))
-						{
-							UE_LOG(
-								LogLyra,
-								Display,
-								TEXT("[AbilityInput] Bind naval action tag=%s action=%s input_config=%s pawn=%s world=%.3f"),
-								*Action.InputTag.ToString(), *GetNameSafe(Action.InputAction), *GetNameSafe(InputConfig),
-								*GetNameSafe(Pawn), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-						}
-					}
 					LyraIC->BindAbilityActions(InputConfig, this, &ThisClass::Input_AbilityInputTagPressed, &ThisClass::Input_AbilityInputTagReleased, /*out*/ BindHandles);
-					if (InputConfig->AbilityInputActions.ContainsByPredicate(
-						[](const FLyraInputAction& Action)
-						{
-							return LyraHero::IsNavalInputTag(Action.InputTag);
-						}))
-					{
-						UE_LOG(
-							LogLyra,
-							Display,
-							TEXT("[AbilityInput] Bind naval actions complete handles=%d input_config=%s pawn=%s world=%.3f"),
-							BindHandles.Num(), *GetNameSafe(InputConfig), *GetNameSafe(Pawn),
-							GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-					}
 
 					LyraIC->BindNativeAction(InputConfig, LyraGameplayTags::InputTag_Move, ETriggerEvent::Triggered, this, &ThisClass::Input_Move, /*bLogIfNotFound=*/ false);
 					LyraIC->BindNativeAction(InputConfig, LyraGameplayTags::InputTag_Look_Mouse, ETriggerEvent::Triggered, this, &ThisClass::Input_LookMouse, /*bLogIfNotFound=*/ false);
@@ -347,32 +317,6 @@ void ULyraHeroComponent::AddAdditionalInputConfig(const ULyraInputConfig* InputC
 		{
 			return LyraHero::IsBuildInputTag(Action.InputTag);
 		});
-	const bool bContainsNavalInput = InputConfig && InputConfig->AbilityInputActions.ContainsByPredicate(
-		[](const FLyraInputAction& Action)
-		{
-			return LyraHero::IsNavalInputTag(Action.InputTag);
-		});
-	if (bContainsNavalInput)
-	{
-		UE_LOG(
-			LogLyra,
-			Display,
-			TEXT("[AbilityInput] AddAdditionalInputConfig naval begin config=%s actions=%d hero=%s pawn=%s ready=%d world=%.3f"),
-			*GetNameSafe(InputConfig), InputConfig->AbilityInputActions.Num(), *GetNameSafe(this),
-			*GetNameSafe(GetPawn<APawn>()), bReadyToBindInputs, GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-		for (const FLyraInputAction& Action : InputConfig->AbilityInputActions)
-		{
-			if (LyraHero::IsNavalInputTag(Action.InputTag))
-			{
-				UE_LOG(
-					LogLyra,
-					Display,
-					TEXT("[AbilityInput] AddAdditionalInputConfig naval entry tag=%s action=%s valid=%d"),
-					*Action.InputTag.ToString(), *GetNameSafe(Action.InputAction),
-					Action.InputAction != nullptr && Action.InputTag.IsValid());
-			}
-		}
-	}
 	if (bContainsBuildInput)
 	{
 		UE_LOG(
@@ -429,15 +373,6 @@ void ULyraHeroComponent::AddAdditionalInputConfig(const ULyraInputConfig* InputC
 					*GetNameSafe(LyraIC),
 					*GetNameSafe(Pawn));
 			}
-			if (bContainsNavalInput)
-			{
-				UE_LOG(
-					LogLyra,
-					Display,
-					TEXT("[AbilityInput] AddAdditionalInputConfig naval bound config=%s handles=%d input_component=%s pawn=%s world=%.3f"),
-					*GetNameSafe(InputConfig), BindHandles.Num(), *GetNameSafe(LyraIC), *GetNameSafe(Pawn),
-					GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-			}
 		}
 	}
 }
@@ -454,7 +389,6 @@ bool ULyraHeroComponent::IsReadyToBindInputs() const
 
 void ULyraHeroComponent::Input_AbilityInputTagPressed(FGameplayTag InputTag)
 {
-	const bool bNavalInput = LyraHero::IsNavalInputTag(InputTag);
 	if (LyraHero::IsBuildInputTag(InputTag))
 	{
 		UE_LOG(
@@ -465,17 +399,6 @@ void ULyraHeroComponent::Input_AbilityInputTagPressed(FGameplayTag InputTag)
 			*GetNameSafe(GetPawn<APawn>()),
 			*GetNameSafe(GetController<APlayerController>()));
 	}
-	if (bNavalInput)
-	{
-		const APawn* Pawn = GetPawn<APawn>();
-		UE_LOG(
-			LogLyra,
-			Display,
-			TEXT("[AbilityInput] Hero event=Triggered tag=%s pawn=%s controller=%s local=%d role=%d world=%.3f"),
-			*InputTag.ToString(), *GetNameSafe(Pawn), *GetNameSafe(GetController<APlayerController>()),
-			Pawn && Pawn->IsLocallyControlled(), Pawn ? Pawn->GetLocalRole() : ROLE_None,
-			GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-	}
 	if (const APawn* Pawn = GetPawn<APawn>())
 	{
 		if (const ULyraPawnExtensionComponent* PawnExtComp = ULyraPawnExtensionComponent::FindPawnExtensionComponent(Pawn))
@@ -483,35 +406,13 @@ void ULyraHeroComponent::Input_AbilityInputTagPressed(FGameplayTag InputTag)
 			if (ULyraAbilitySystemComponent* LyraASC = PawnExtComp->GetLyraAbilitySystemComponent())
 			{
 				LyraASC->AbilityInputTagPressed(InputTag);
-				return;
 			}
-			if (bNavalInput)
-			{
-				UE_LOG(LogLyra, Warning,
-					TEXT("[AbilityInput] Hero pressed reached pawn but ASC is null tag=%s pawn=%s world=%.3f"),
-					*InputTag.ToString(), *GetNameSafe(Pawn), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-			}
-			return;
-		}
-		if (bNavalInput)
-		{
-			UE_LOG(LogLyra, Warning,
-				TEXT("[AbilityInput] Hero pressed pawn extension is null tag=%s pawn=%s world=%.3f"),
-				*InputTag.ToString(), *GetNameSafe(Pawn), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-		}
-		return;
-	}
-	if (bNavalInput)
-	{
-		UE_LOG(LogLyra, Warning,
-			TEXT("[AbilityInput] Hero pressed but pawn is null tag=%s world=%.3f"),
-			*InputTag.ToString(), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
+		}	
 	}
 }
 
 void ULyraHeroComponent::Input_AbilityInputTagReleased(FGameplayTag InputTag)
 {
-	const bool bNavalInput = LyraHero::IsNavalInputTag(InputTag);
 	if (LyraHero::IsBuildInputTag(InputTag))
 	{
 		UE_LOG(
@@ -521,26 +422,9 @@ void ULyraHeroComponent::Input_AbilityInputTagReleased(FGameplayTag InputTag)
 			*InputTag.ToString(),
 			*GetNameSafe(GetPawn<APawn>()));
 	}
-	if (bNavalInput)
-	{
-		const APawn* Pawn = GetPawn<APawn>();
-		UE_LOG(
-			LogLyra,
-			Display,
-			TEXT("[AbilityInput] Hero event=Completed tag=%s pawn=%s controller=%s local=%d role=%d world=%.3f"),
-			*InputTag.ToString(), *GetNameSafe(Pawn), *GetNameSafe(GetController<APlayerController>()),
-			Pawn && Pawn->IsLocallyControlled(), Pawn ? Pawn->GetLocalRole() : ROLE_None,
-			GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-	}
 	const APawn* Pawn = GetPawn<APawn>();
 	if (!Pawn)
 	{
-		if (bNavalInput)
-		{
-			UE_LOG(LogLyra, Warning,
-				TEXT("[AbilityInput] Hero released but pawn is null tag=%s world=%.3f"),
-				*InputTag.ToString(), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-		}
 		return;
 	}
 
@@ -549,21 +433,7 @@ void ULyraHeroComponent::Input_AbilityInputTagReleased(FGameplayTag InputTag)
 		if (ULyraAbilitySystemComponent* LyraASC = PawnExtComp->GetLyraAbilitySystemComponent())
 		{
 			LyraASC->AbilityInputTagReleased(InputTag);
-			return;
 		}
-		if (bNavalInput)
-		{
-			UE_LOG(LogLyra, Warning,
-				TEXT("[AbilityInput] Hero released reached pawn but ASC is null tag=%s pawn=%s world=%.3f"),
-				*InputTag.ToString(), *GetNameSafe(Pawn), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-		}
-		return;
-	}
-	if (bNavalInput)
-	{
-		UE_LOG(LogLyra, Warning,
-			TEXT("[AbilityInput] Hero released pawn extension is null tag=%s pawn=%s world=%.3f"),
-			*InputTag.ToString(), *GetNameSafe(Pawn), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 	}
 }
 

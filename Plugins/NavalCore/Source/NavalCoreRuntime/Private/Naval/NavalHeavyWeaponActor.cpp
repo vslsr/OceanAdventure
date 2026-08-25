@@ -242,14 +242,6 @@ void ANavalHeavyWeaponActor::ReleaseOperator(AActor* LeavingOperator)
 		return;
 	}
 
-	UE_LOG(
-		LogNavalCore,
-		Display,
-		TEXT("[HeavyWeapon] Operator released weapon=%s leaving=%s previous_operator=%s"),
-		*GetName(),
-		*GetNameSafe(LeavingOperator),
-		*GetNameSafe(WeaponOperator.Get()));
-
 	UnbindOperatorDestroyed();
 	WeaponOperator = nullptr;
 	OperatorLostControllerTime = 0.0;
@@ -593,17 +585,6 @@ bool ANavalHeavyWeaponActor::TryFire(AActor* Requester, const FVector& AimLocati
 	const float WindupSeconds = FireWindupSeconds
 		+ (PairedWindow ? PairedWindow->GetOpenWindupSeconds() : 0.0f);
 
-	UE_LOG(
-		LogNavalCore,
-		Display,
-		TEXT("[HeavyWeapon] Fire accepted weapon=%s requester=%s charge=%.2f range=%.0f windup=%.2fs paired_window=%d"),
-		*GetName(),
-		*GetNameSafe(Requester),
-		SanitizedCharge,
-		SanitizedRange,
-		WindupSeconds,
-		PairedWindow != nullptr);
-
 	if (WindupSeconds <= 0.0f)
 	{
 		SpawnProjectile();
@@ -632,11 +613,6 @@ void ANavalHeavyWeaponActor::SpawnProjectile()
 	UWorld* World = GetWorld();
 	if (!World || !HasAuthority() || !ProjectileClass)
 	{
-		UE_LOG(
-			LogNavalCore,
-			Warning,
-			TEXT("[HeavyWeapon] SpawnProjectile aborted weapon=%s world=%d authority=%d projectile_class=%s"),
-			*GetName(), World != nullptr, HasAuthority(), *GetNameSafe(ProjectileClass));
 		return;
 	}
 
@@ -656,11 +632,6 @@ void ANavalHeavyWeaponActor::SpawnProjectile()
 		ProjectileClass, MuzzleLocation, Direction.Rotation(), SpawnParameters);
 	if (!Projectile)
 	{
-		UE_LOG(
-			LogNavalCore,
-			Warning,
-			TEXT("[HeavyWeapon] Projectile failed to spawn weapon=%s class=%s at=%s"),
-			*GetName(), *GetNameSafe(ProjectileClass), *MuzzleLocation.ToCompactString());
 		return;
 	}
 
@@ -673,18 +644,6 @@ void ANavalHeavyWeaponActor::SpawnProjectile()
 	Params.MinimumRange = MinimumRange;
 	Params.MaxRange = ChargedRange;
 	Projectile->LaunchProjectile(Params);
-
-	UE_LOG(
-		LogNavalCore,
-		Display,
-		TEXT("[HeavyWeapon] Projectile launched weapon=%s projectile=%s muzzle=%s velocity=%s gravity=%.1f range=%.0f operator=%s"),
-		*GetName(),
-		*GetNameSafe(Projectile),
-		*MuzzleLocation.ToCompactString(),
-		*InitialVelocity.ToCompactString(),
-		GravityZ,
-		ChargedRange,
-		*GetNameSafe(WeaponOperator.Get()));
 }
 
 void ANavalHeavyWeaponActor::HandlePartStateChanged(UNavalPartComponent* /*Part*/)
@@ -692,12 +651,6 @@ void ANavalHeavyWeaponActor::HandlePartStateChanged(UNavalPartComponent* /*Part*
 	if (PartComponent && !PartComponent->IsFunctional() && WeaponOperator != nullptr)
 	{
 		// A gun shot out from under its operator stops being a gun immediately.
-		UE_LOG(
-			LogNavalCore,
-			Warning,
-			TEXT("[HeavyWeapon] Part went non-functional, kicking operator weapon=%s operator=%s"),
-			*GetName(),
-			*GetNameSafe(WeaponOperator.Get()));
 		ReleaseOperator(WeaponOperator);
 	}
 	BroadcastWeaponState();

@@ -22,8 +22,6 @@ ULyraAbilitySystemComponent::ULyraAbilitySystemComponent(const FObjectInitialize
 	InputPressedSpecHandles.Reset();
 	InputReleasedSpecHandles.Reset();
 	InputHeldSpecHandles.Reset();
-	DiagnosticLastInputHadMatchingSpec.Reset();
-	DiagnosticInputEventSerial = 0;
 
 	FMemory::Memset(ActivationGroupCounts, 0, sizeof(ActivationGroupCounts));
 }
@@ -152,17 +150,6 @@ void ULyraAbilitySystemComponent::CancelInputActivatedAbilities(bool bReplicateC
 void ULyraAbilitySystemComponent::AbilitySpecInputPressed(FGameplayAbilitySpec& Spec)
 {
 	Super::AbilitySpecInputPressed(Spec);
-	if (Spec.GetDynamicSpecSourceTags().ToStringSimple().Contains(TEXT("InputTag.Naval")))
-	{
-		UE_LOG(
-			LogLyraAbilitySystem,
-			Display,
-			TEXT("[AbilityInput] ASC active-spec press-dispatch serial=%llu spec=%s ability=%s source=%s input_pressed=%d active=%d avatar=%s world=%.3f"),
-			static_cast<unsigned long long>(++DiagnosticInputEventSerial),
-			*Spec.Handle.ToString(), *GetNameSafe(Spec.Ability.Get()),
-			*GetNameSafe(Spec.SourceObject.Get()), Spec.InputPressed, Spec.IsActive(),
-			*GetNameSafe(GetAvatarActor()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-	}
 
 	// We don't support UGameplayAbility::bReplicateInputDirectly.
 	// Use replicated events instead so that the WaitInputPress ability task works.
@@ -181,17 +168,6 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 void ULyraAbilitySystemComponent::AbilitySpecInputReleased(FGameplayAbilitySpec& Spec)
 {
 	Super::AbilitySpecInputReleased(Spec);
-	if (Spec.GetDynamicSpecSourceTags().ToStringSimple().Contains(TEXT("InputTag.Naval")))
-	{
-		UE_LOG(
-			LogLyraAbilitySystem,
-			Display,
-			TEXT("[AbilityInput] ASC active-spec release-dispatch serial=%llu spec=%s ability=%s source=%s input_pressed=%d active=%d avatar=%s world=%.3f"),
-			static_cast<unsigned long long>(++DiagnosticInputEventSerial),
-			*Spec.Handle.ToString(), *GetNameSafe(Spec.Ability.Get()),
-			*GetNameSafe(Spec.SourceObject.Get()), Spec.InputPressed, Spec.IsActive(),
-			*GetNameSafe(GetAvatarActor()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-	}
 
 	// We don't support UGameplayAbility::bReplicateInputDirectly.
 	// Use replicated events instead so that the WaitInputRelease ability task works.
@@ -211,10 +187,8 @@ void ULyraAbilitySystemComponent::AbilityInputTagPressed(const FGameplayTag& Inp
 {
 	if (InputTag.IsValid())
 	{
-		const uint64 EventSerial = ++DiagnosticInputEventSerial;
 		const bool bBuildInput = InputTag.ToString().StartsWith(TEXT("InputTag.Build"));
 		const bool bNavalInput = InputTag.ToString().StartsWith(TEXT("InputTag.Naval"));
-		const bool bFireInput = InputTag.ToString().Equals(TEXT("InputTag.Naval.Fire"), ESearchCase::CaseSensitive);
 		const bool bDiagnosticInput = bBuildInput || bNavalInput;
 		int32 MatchingSpecs = 0;
 		for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
@@ -230,82 +204,28 @@ void ULyraAbilitySystemComponent::AbilityInputTagPressed(const FGameplayTag& Inp
 					UE_LOG(
 						LogLyraAbilitySystem,
 						Display,
-						TEXT("[AbilityInput] ASC matched serial=%llu tag=%s spec=%s ability=%s source=%s active=%d policy=%d input_pressed=%d avatar=%s world=%.3f"),
-						static_cast<unsigned long long>(EventSerial),
+						TEXT("[AbilityInput] ASC matched tag=%s spec=%s ability=%s active=%d policy=%d avatar=%s"),
 						*InputTag.ToString(),
 						*AbilitySpec.Handle.ToString(),
 						*GetNameSafe(AbilitySpec.Ability),
-						*GetNameSafe(AbilitySpec.SourceObject.Get()),
 						AbilitySpec.IsActive(),
 						LyraAbility ? static_cast<int32>(LyraAbility->GetActivationPolicy()) : INDEX_NONE,
-						AbilitySpec.InputPressed,
-						*GetNameSafe(GetAvatarActor()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
+						*GetNameSafe(GetAvatarActor()));
 				}
 			}
 		}
-		const bool bHadMatchingSpec = MatchingSpecs > 0;
-		const bool bPreviousHadMatchingSpec = DiagnosticLastInputHadMatchingSpec.FindRef(InputTag);
-		const bool bMatchStateChanged = !DiagnosticLastInputHadMatchingSpec.Contains(InputTag)
-			|| bPreviousHadMatchingSpec != bHadMatchingSpec;
-		DiagnosticLastInputHadMatchingSpec.Add(InputTag, bHadMatchingSpec);
 		if (bDiagnosticInput)
 		{
 			UE_LOG(
 				LogLyraAbilitySystem,
 				Display,
-				TEXT("[AbilityInput] ASC press summary serial=%llu tag=%s matching_specs=%d pressed_queue=%d held_queue=%d blocked=%d avatar=%s owner_role=%d world=%.3f"),
-				static_cast<unsigned long long>(EventSerial),
+				TEXT("[AbilityInput] ASC press summary tag=%s matching_specs=%d pressed_queue=%d held_queue=%d blocked=%d avatar=%s"),
 				*InputTag.ToString(),
 				MatchingSpecs,
 				InputPressedSpecHandles.Num(),
 				InputHeldSpecHandles.Num(),
 				HasMatchingGameplayTag(TAG_Gameplay_AbilityInputBlocked),
-				*GetNameSafe(GetAvatarActor()),
-				GetAvatarActor() ? GetAvatarActor()->GetLocalRole() : ROLE_None,
-				GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-
-			if (bNavalInput && bMatchStateChanged)
-			{
-				UE_LOG(
-					LogLyraAbilitySystem,
-					Warning,
-					TEXT("[AbilityInput] NAVAL match-state transition serial=%llu tag=%s had_matching_spec=%d avatar=%s"),
-					static_cast<unsigned long long>(EventSerial), *InputTag.ToString(), bHadMatchingSpec,
-					*GetNameSafe(GetAvatarActor()));
-				if (!bHadMatchingSpec)
-				{
-					for (const FGameplayAbilitySpec& AvailableSpec : ActivatableAbilities.Items)
-					{
-						UE_LOG(
-							LogLyraAbilitySystem,
-							Warning,
-							TEXT("[AbilityInput] NAVAL available-spec serial=%llu spec=%s ability=%s tags=%s source=%s active=%d input_pressed=%d"),
-							static_cast<unsigned long long>(EventSerial),
-							*AvailableSpec.Handle.ToString(), *GetNameSafe(AvailableSpec.Ability.Get()),
-							*AvailableSpec.GetDynamicSpecSourceTags().ToStringSimple(),
-							*GetNameSafe(AvailableSpec.SourceObject.Get()), AvailableSpec.IsActive(),
-							AvailableSpec.InputPressed);
-					}
-				}
-			}
-			if (bFireInput && bHadMatchingSpec && bMatchStateChanged)
-			{
-				UE_LOG(
-					LogLyraAbilitySystem,
-					Display,
-					TEXT("[NavalFire] FIRE_SPEC_AVAILABLE serial=%llu avatar=%s world=%.3f"),
-					static_cast<unsigned long long>(EventSerial), *GetNameSafe(GetAvatarActor()),
-					GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-			}
-			if (bFireInput && MatchingSpecs == 0 && bMatchStateChanged)
-			{
-				UE_LOG(
-					LogLyraAbilitySystem,
-					Error,
-					TEXT("[NavalFire] FIRE_INPUT_NO_SPEC serial=%llu tag=%s avatar=%s world=%.3f"),
-					static_cast<unsigned long long>(EventSerial), *InputTag.ToString(),
-					*GetNameSafe(GetAvatarActor()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-			}
+				*GetNameSafe(GetAvatarActor()));
 		}
 	}
 }
@@ -314,9 +234,7 @@ void ULyraAbilitySystemComponent::AbilityInputTagReleased(const FGameplayTag& In
 {
 	if (InputTag.IsValid())
 	{
-		const uint64 EventSerial = ++DiagnosticInputEventSerial;
 		const bool bNavalInput = InputTag.ToString().StartsWith(TEXT("InputTag.Naval"));
-		const bool bFireInput = InputTag.ToString().Equals(TEXT("InputTag.Naval.Fire"), ESearchCase::CaseSensitive);
 		int32 MatchingSpecs = 0;
 		for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
 		{
@@ -330,21 +248,9 @@ void ULyraAbilitySystemComponent::AbilityInputTagReleased(const FGameplayTag& In
 		if (bNavalInput)
 		{
 			UE_LOG(LogLyraAbilitySystem, Display,
-				TEXT("[AbilityInput] ASC release serial=%llu tag=%s matching_specs=%d released_queue=%d held_queue=%d avatar=%s owner_role=%d world=%.3f"),
-				static_cast<unsigned long long>(EventSerial),
+				TEXT("[AbilityInput] ASC release tag=%s matching_specs=%d released_queue=%d held_queue=%d avatar=%s"),
 				*InputTag.ToString(), MatchingSpecs, InputReleasedSpecHandles.Num(),
-				InputHeldSpecHandles.Num(), *GetNameSafe(GetAvatarActor()),
-				GetAvatarActor() ? GetAvatarActor()->GetLocalRole() : ROLE_None,
-				GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-			if (bFireInput && MatchingSpecs == 0)
-			{
-				UE_LOG(
-					LogLyraAbilitySystem,
-					Error,
-					TEXT("[NavalFire] FIRE_RELEASE_NO_SPEC serial=%llu tag=%s avatar=%s world=%.3f"),
-					static_cast<unsigned long long>(EventSerial), *InputTag.ToString(),
-					*GetNameSafe(GetAvatarActor()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-			}
+				InputHeldSpecHandles.Num(), *GetNameSafe(GetAvatarActor()));
 		}
 	}
 }
@@ -353,15 +259,6 @@ void ULyraAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGam
 {
 	if (HasMatchingGameplayTag(TAG_Gameplay_AbilityInputBlocked))
 	{
-		if (InputPressedSpecHandles.Num() > 0 || InputReleasedSpecHandles.Num() > 0 || InputHeldSpecHandles.Num() > 0)
-		{
-			UE_LOG(
-				LogLyraAbilitySystem,
-				Warning,
-				TEXT("[AbilityInput] ASC input blocked; clearing queues pressed=%d released=%d held=%d avatar=%s world=%.3f"),
-				InputPressedSpecHandles.Num(), InputReleasedSpecHandles.Num(), InputHeldSpecHandles.Num(),
-				*GetNameSafe(GetAvatarActor()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-		}
 		ClearAbilityInput();
 		return;
 	}
@@ -426,26 +323,19 @@ void ULyraAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGam
 	for (const FGameplayAbilitySpecHandle& AbilitySpecHandle : AbilitiesToActivate)
 	{
 		const FGameplayAbilitySpec* AbilitySpec = FindAbilitySpecFromHandle(AbilitySpecHandle);
-		const FString SpecInputTags = AbilitySpec
-			? AbilitySpec->GetDynamicSpecSourceTags().ToStringSimple()
-			: FString();
-		const bool bBuildAbility = SpecInputTags.Contains(TEXT("InputTag.Build"));
-		const bool bNavalAbility = SpecInputTags.Contains(TEXT("InputTag.Naval"));
+		const bool bBuildAbility = AbilitySpec
+			&& AbilitySpec->GetDynamicSpecSourceTags().ToStringSimple().Contains(TEXT("InputTag.Build"));
 		const bool bActivated = TryActivateAbility(AbilitySpecHandle);
-		if (bBuildAbility || bNavalAbility)
+		if (bBuildAbility)
 		{
 			UE_LOG(
 				LogLyraAbilitySystem,
 				Display,
-				TEXT("[AbilityInput] ASC activation result tags=%s spec=%s ability=%s source=%s active_after=%d input_pressed=%d activated=%d avatar=%s world=%.3f"),
-				*SpecInputTags,
+				TEXT("[BuildInput] ASC activation result spec=%s ability=%s activated=%d avatar=%s"),
 				*AbilitySpecHandle.ToString(),
 				*GetNameSafe(AbilitySpec ? AbilitySpec->Ability.Get() : nullptr),
-				*GetNameSafe(AbilitySpec ? AbilitySpec->SourceObject.Get() : nullptr),
-				AbilitySpec ? AbilitySpec->IsActive() : false,
-				AbilitySpec ? AbilitySpec->InputPressed : false,
 				bActivated,
-				*GetNameSafe(GetAvatarActor()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
+				*GetNameSafe(GetAvatarActor()));
 		}
 	}
 
@@ -458,42 +348,13 @@ void ULyraAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGam
 		{
 			if (AbilitySpec->Ability)
 			{
-				const bool bInputPressedBeforeRelease = AbilitySpec->InputPressed;
 				AbilitySpec->InputPressed = false;
 
-				const FString SpecInputTags = AbilitySpec->GetDynamicSpecSourceTags().ToStringSimple();
-				const bool bActiveOnRelease = AbilitySpec->IsActive();
-				if (SpecInputTags.Contains(TEXT("InputTag.Naval")))
-				{
-					// A release that lands while the spec is inactive is dropped here: the
-					// ability never sees InputReleased, so a hold-to-charge action would sit
-					// waiting for a release that already happened.
-					UE_LOG(
-						LogLyraAbilitySystem,
-						Display,
-						TEXT("[AbilityInput] ASC release dispatch tags=%s ability=%s source=%s active=%d input_pressed_before=%d avatar=%s world=%.3f"),
-						*SpecInputTags,
-						*GetNameSafe(AbilitySpec->Ability.Get()),
-						*GetNameSafe(AbilitySpec->SourceObject.Get()),
-						bActiveOnRelease,
-						bInputPressedBeforeRelease,
-						*GetNameSafe(GetAvatarActor()), GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-				}
-
-				if (bActiveOnRelease)
+				if (AbilitySpec->IsActive())
 				{
 					// Ability is active so pass along the input event.
 					AbilitySpecInputReleased(*AbilitySpec);
 				}
-			}
-			else if (InputReleasedSpecHandles.Contains(SpecHandle))
-			{
-				UE_LOG(
-					LogLyraAbilitySystem,
-					Warning,
-					TEXT("[AbilityInput] ASC release dropped because spec handle is missing handle=%s avatar=%s world=%.3f"),
-					*SpecHandle.ToString(), *GetNameSafe(GetAvatarActor()),
-					GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
 			}
 		}
 	}
@@ -515,17 +376,6 @@ void ULyraAbilitySystemComponent::ClearAbilityInput()
 void ULyraAbilitySystemComponent::NotifyAbilityActivated(const FGameplayAbilitySpecHandle Handle, UGameplayAbility* Ability)
 {
 	Super::NotifyAbilityActivated(Handle, Ability);
-	if (Ability && Ability->GetName().Contains(TEXT("FireHeavyWeapon")))
-	{
-		const FGameplayAbilitySpec* Spec = FindAbilitySpecFromHandle(Handle);
-		UE_LOG(
-			LogLyraAbilitySystem,
-			Display,
-			TEXT("[AbilityInput] ASC NotifyAbilityActivated fire handle=%s ability=%s source=%s avatar=%s world=%.3f"),
-			*Handle.ToString(), *GetNameSafe(Ability),
-			*GetNameSafe(Spec ? Spec->SourceObject.Get() : nullptr), *GetNameSafe(GetAvatarActor()),
-			GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-	}
 
 	if (ULyraGameplayAbility* LyraAbility = Cast<ULyraGameplayAbility>(Ability))
 	{
@@ -536,23 +386,10 @@ void ULyraAbilitySystemComponent::NotifyAbilityActivated(const FGameplayAbilityS
 void ULyraAbilitySystemComponent::NotifyAbilityFailed(const FGameplayAbilitySpecHandle Handle, UGameplayAbility* Ability, const FGameplayTagContainer& FailureReason)
 {
 	Super::NotifyAbilityFailed(Handle, Ability, FailureReason);
-	const FString AbilityName = GetNameSafe(Ability);
-	if (AbilityName.Contains(TEXT("Naval")) || AbilityName.Contains(TEXT("FireHeavyWeapon")))
-	{
-		const FGameplayAbilitySpec* Spec = FindAbilitySpecFromHandle(Handle);
-		const FString SpecTags = Spec ? Spec->GetDynamicSpecSourceTags().ToStringSimple() : FString();
-		UE_LOG(
-			LogLyraAbilitySystem,
-			Warning,
-			TEXT("[AbilityInput] ASC NotifyAbilityFailed handle=%s ability=%s reason=%s tags=%s source=%s avatar=%s world=%.3f"),
-			*Handle.ToString(), *AbilityName, *FailureReason.ToStringSimple(), *SpecTags,
-			*GetNameSafe(Spec ? Spec->SourceObject.Get() : nullptr), *GetNameSafe(GetAvatarActor()),
-			GetWorld() ? GetWorld()->GetTimeSeconds() : -1.0f);
-	}
 
 	if (APawn* Avatar = Cast<APawn>(GetAvatarActor()))
 	{
-		if (Ability && !Avatar->IsLocallyControlled() && Ability->IsSupportedForNetworking())
+		if (!Avatar->IsLocallyControlled() && Ability->IsSupportedForNetworking())
 		{
 			ClientNotifyAbilityFailed(Ability, FailureReason);
 			return;

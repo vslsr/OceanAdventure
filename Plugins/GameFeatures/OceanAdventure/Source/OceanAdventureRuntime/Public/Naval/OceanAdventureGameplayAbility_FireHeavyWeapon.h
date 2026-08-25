@@ -33,14 +33,6 @@ public:
 		const FGameplayTagContainer* TargetTags,
 		FGameplayTagContainer* OptionalRelevantTags) const override;
 
-	virtual void OnGiveAbility(
-		const FGameplayAbilityActorInfo* ActorInfo,
-		const FGameplayAbilitySpec& Spec) override;
-
-	virtual void OnRemoveAbility(
-		const FGameplayAbilityActorInfo* ActorInfo,
-		const FGameplayAbilitySpec& Spec) override;
-
 	virtual void ActivateAbility(
 		const FGameplayAbilitySpecHandle Handle,
 		const FGameplayAbilityActorInfo* ActorInfo,
@@ -77,9 +69,8 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "OceanAdventure|Naval|Cannon", meta = (ClampMin = "0.1", Units = "s"))
 	float MaxChargeSeconds = 1.8f;
 
-	/** Lowest preview/release charge; a short tap still produces a valid near-range shot. */
 	UPROPERTY(EditDefaultsOnly, Category = "OceanAdventure|Naval|Cannon", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float MinimumChargeAlpha = 0.02f;
+	float MinimumChargeAlpha = 0.12f;
 
 	UPROPERTY(EditDefaultsOnly, Category = "OceanAdventure|Naval|Cannon", meta = (ClampMin = "0.016", Units = "s"))
 	float PreviewSampleInterval = 0.08f;
@@ -96,5 +87,4 @@ private:
 	float ChargeElapsedSeconds = 0.0f;
 	float CurrentChargeAlpha = 0.0f;
 	bool bFireResolved = false;
-	int32 LastLoggedChargeBucket = INDEX_NONE;
 };

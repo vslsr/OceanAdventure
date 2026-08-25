@@ -103,12 +103,6 @@ protected:
 	// Handles to abilities that have their input held.
 	TArray<FGameplayAbilitySpecHandle> InputHeldSpecHandles;
 
-	// Runtime-only state used to correlate an input event with the temporary naval ability
-	// spec.  This deliberately does not affect activation; it only makes the "input arrived
-	// before the Fire spec existed" window visible in the log.
-	TMap<FGameplayTag, bool> DiagnosticLastInputHadMatchingSpec;
-	uint64 DiagnosticInputEventSerial = 0;
-
 	// Number of abilities running in each activation group.
 	int32 ActivationGroupCounts[(uint8)ELyraAbilityActivationGroup::MAX];
 };
