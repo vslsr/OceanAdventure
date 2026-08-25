@@ -1,6 +1,6 @@
 ---
 name: lyra-editor-asset-automation
-description: 为 OceanAdventure 的 UE 5.7/Lyra 编辑器资产脚本配置 AbilitySet、InputConfig 或 GameFeatureData，并处理 Python USTRUCT 构造失败、EditDefaultsOnly 不可写、GameplayTag 读回误判和原生编辑器桥接编译错误。用户要求用 Python 创建或修复这些 Lyra 资产，或日志出现 `call() takes at most 0 arguments`、`cannot be edited on instances`、`InputConfig did not retain`、`SubclassOf.h` 未定义类型时使用；普通运行时玩法 C++、可直接编辑的 Python 资产属性和 Blender 原始模型导出改用 `blender-asset-workflow`，不使用本技能。
+description: 为 OceanAdventure 的 UE 5.7/Lyra 编辑器资产脚本配置 AbilitySet、InputConfig 或 GameFeatureData，并处理 Python USTRUCT 构造失败、EditDefaultsOnly 不可写、GameplayTag 读回误判和原生编辑器桥接编译错误。用户要求用 Python 创建或修复这些 Lyra 资产，或日志出现 `call() takes at most 0 arguments`、`cannot be edited on instances`、`InputConfig did not retain`、`SubclassOf.h` 未定义类型时使用；脚本重跑后资产数组出现重复条目、条目数成倍增长或旧条目删不掉时同样使用；普通运行时玩法 C++、可直接编辑的 Python 资产属性和 Blender 原始模型导出改用 `blender-asset-workflow`，不使用本技能。
 ---
 
 # Lyra 编辑器资产自动化
@@ -57,6 +57,49 @@ Python 侧收集三个并行数组，调用桥接后检查布尔返回值，再�
 
 本次复查证据：UE 5.7 Python commandlet 使用 `-DDC-ForceMemoryCache` 执行 `CreateOceanAdventureExperience.py`，日志包含 `Python script executed successfully`，并成功保存四个 WASD InputAction、三个相机 InputAction、IMC 与 InputConfig。命令进程仍可能因本机 DDC 无可写节点或 ONNX runtime 缺失返回非零；应以 `LogPythonScriptCommandlet` 的 Python 结果和资产保存记录区分脚本故障与环境告警。
 
+## 幂等重建：数组过滤必须按值比较
+
+上一节的包装器身份比较还有第二个出口，比读回误报更隐蔽：**重建脚本所拥有的数组时用 `in` / `not in` 过滤旧条目**。
+
+```python
+# 错误。`in` 走 `==`，即包装器身份比较，过滤永远不命中
+native_actions = [
+    a for a in input_config.get_editor_property("native_input_actions")
+    if a.get_editor_property("input_tag") not in owned_tags
+    and a.get_editor_property("input_tag") not in legacy_tags
+]
+```
+
+过滤不命中意味着这段代码退化成"只追加、不移除"：
+
+- 本脚本拥有的条目每跑一次多一份，脚本是累加器而不是幂等重建；
+- 本该淘汰的 legacy 条目永远留在资产里。
+
+本项目的实测后果：`DA_InputConfig_OceanAdventure` 的 `NativeInputActions` 在三次运行后变成 26 条，7 个 TopDown action 各 3 份，同时 `InputTag.Move` 和 `InputTag.TopDownClick` 一直没被删掉。修复后应为 10 条。
+
+**这个缺陷不会自己暴露。** `ULyraInputConfig::FindNativeInputActionForTag` 取第一个匹配就返回，重复条目既不报错也不改变绑定结果；残留的 legacy 条目还会让两套输入同时绑定，表现为"功能正常"直到某次清理才炸出来。不要指望运行期发现它。
+
+重建任何"本脚本拥有的数组"时固定采用以下规则：
+
+1. 先把本次要替换掉的键集中到一处（本脚本新写入的 + 要淘汰的 legacy），再用语义比较逐项过滤，不使用 `in` / `not in`：
+
+   ```python
+   replaced_tags = list(owned_tags) + legacy_tags
+   native_actions = [
+       a for a in input_config.get_editor_property("native_input_actions")
+       if not any(
+           gameplay_tags_equal(a.get_editor_property("input_tag"), t)
+           for t in replaced_tags
+       )
+   ]
+   ```
+
+2. 以 UObject 资产为键时同样不用 `in`，改用 `asset_path()` 比较稳定包路径。
+3. 过滤并追加后读回断言长度：`len(final) == len(preserved) + len(appended)`。长度不符即抛错，不要只验证"新条目在不在里面"——`has_native_input_action` 这类存在性检查对重复条目返回 `True`，挡不住这个缺陷。
+4. 以稳定名称过滤 GameFeatureData 的 Actions 时（`str(action.get_name()) not in {...}`）不受此影响，那是 Python 字符串比较；只有包装器结构和 UObject 需要改写。
+
+本项目的实现与复查锚点：`CreateOceanAdventureExperience.py` 的 `configure_input_assets`，以及 `create_top_down_assets.py` 中的同名逻辑。这两处曾是同一段代码的复制品，修改其一时必须同时检查另一处。
+
 ## 故障速查
 
 | 现象 | 根因 | 修复 |
@@ -68,6 +111,8 @@ Python 侧收集三个并行数组，调用桥接后检查布尔返回值，再�
 | Python 中没有新函数或仍调用旧签名 | 编辑器仍加载旧 DLL | 成功编译目标后完整重启编辑器，再运行脚本 |
 | `AttributeError: GameplayTagLibrary has no attribute request_gameplay_tag` | 当前 UE Python 暴露未提供注册表请求函数 | 用 `GameplayTag().import_text(name)` 兜底，并用 `is_gameplay_tag_valid` 验证 |
 | `RuntimeError: InputConfig did not retain IA_...`，但 Tag 已注册 | `FGameplayTag` Python 包装器的 `==` 可能只比较对象身份 | 用 `equal_equal_gameplay_tag` 或 `export_text()` 做语义比较；用 `is_gameplay_tag_valid` 判定有效性 |
+| 脚本每重跑一次，被拥有的数组就多出一份重复条目；legacy 条目怎么都删不掉 | 过滤用了 `in` / `not in`，落到包装器身份比较，过滤永不命中，代码退化成只追加 | 集中成 `replaced_tags` 后用 `gameplay_tags_equal` / `asset_path()` 逐项比较；重建后断言最终长度 |
+| 编辑器里数组条目数是预期的整数倍（如 26 而非 10） | 同上，历次运行的累加结果 | 修正过滤后重跑一次即可塌回；不要手工删条目，那样下次运行还会长回来 |
 | 首次运行出现一串 `LoadAsset failed` | 脚本对尚未创建的资产直接调用 `load_asset` | `scan_paths_synchronous` 后先用 `does_asset_exist` 守卫加载 |
 
 ## 构建与验证门禁
@@ -81,6 +126,7 @@ Python 侧收集三个并行数组，调用桥接后检查布尔返回值，再�
 2. 只有构建输出包含 `Result: Succeeded`，且 `UnrealEditor-OceanAdventureRuntime` 已链接，才算原生桥接通过。
 3. 完整重启编辑器，让 Python 反射注册新 `UFUNCTION`；运行所属 GameFeature 的资产脚本。
 4. 脚本必须无 traceback，并读回验证所拥有的资产项或 GameFeature Actions。若脚本修改了 GameFeatureData Actions，再重启一次编辑器后进入 PIE。
-5. 最后运行 Python AST/语法检查与 `git diff --check`。这些是补充检查，不能替代第 1 步。
+5. 幂等门禁：**连续运行同一脚本两次**，第二次运行后被拥有数组的条目数必须与第一次相同。长度增长即说明过滤退化成了追加，按「幂等重建」一节处理。只跑一次看不出这个缺陷。
+6. 最后运行 Python AST/语法检查与 `git diff --check`。这些是补充检查，不能替代第 1 步。
 
 出现反射布局变化、数组输入不一致、无效能力类或无效 Tag 时应停止并保留原资产，不能为了让脚本继续而跳过验证。
