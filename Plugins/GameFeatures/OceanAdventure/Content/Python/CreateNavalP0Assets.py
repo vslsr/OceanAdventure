@@ -87,6 +87,7 @@ HELM_ACTION_SPECS = (
     ("IA_Ocean_Helm_Steer", "A/D"),
 )
 
+
 ABILITIES = (
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_OperateHelm", "InputTag.Naval.Interact"),
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_OperateHeavyWeapon", "InputTag.Naval.Interact"),
@@ -503,6 +504,8 @@ def configure_placeable_blueprints(projectile_class):
     unreal.BlueprintEditorLibrary.compile_blueprint(cannon)
     cannon_defaults = unreal.get_default_object(blueprint_class(cannon, GROUND_CANNON_PATH))
     cannon_defaults.set_editor_property("projectile_class", projectile_class)
+    # Blueprint overrides win over the C++ defaults, so the ballistics live here too --
+    # otherwise a stale override silently keeps the old arc after the C++ change.
     for property_name, value in CANNON_TRAJECTORY_DEFAULTS.items():
         cannon_defaults.set_editor_property(property_name, value)
     unreal.BlueprintEditorLibrary.compile_blueprint(cannon)
@@ -522,6 +525,18 @@ def configure_placeable_blueprints(projectile_class):
             abs(retained_value - expected_value) <= 0.01,
             f"Ground cannon did not retain {property_name}={expected_value}; got {retained_value}",
         )
+    configured_minimum = float(configured_cannon_defaults.get_editor_property("minimum_range"))
+    configured_max = float(configured_cannon_defaults.get_editor_property("max_range"))
+    require(
+        configured_minimum < configured_max,
+        f"Ground cannon MinimumRange={configured_minimum} is not below MaxRange={configured_max}; "
+        "charging would pull the impact point inwards instead of pushing it out",
+    )
+    log(
+        "Configured BP_Naval_GroundCannon ballistics: "
+        f"range {configured_minimum:.0f}-{configured_max:.0f}cm, "
+        f"apex at full charge {float(configured_cannon_defaults.get_editor_property('max_trajectory_rise')):.0f}cm"
+    )
 
     beacon_class = require(
         unreal.load_class(None, "/Script/OceanAdventureRuntime.OceanAdventureNavalBeaconActor"),

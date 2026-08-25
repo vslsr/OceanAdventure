@@ -323,15 +323,19 @@ void ULyraAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGam
 	for (const FGameplayAbilitySpecHandle& AbilitySpecHandle : AbilitiesToActivate)
 	{
 		const FGameplayAbilitySpec* AbilitySpec = FindAbilitySpecFromHandle(AbilitySpecHandle);
-		const bool bBuildAbility = AbilitySpec
-			&& AbilitySpec->GetDynamicSpecSourceTags().ToStringSimple().Contains(TEXT("InputTag.Build"));
+		const FString SpecInputTags = AbilitySpec
+			? AbilitySpec->GetDynamicSpecSourceTags().ToStringSimple()
+			: FString();
+		const bool bBuildAbility = SpecInputTags.Contains(TEXT("InputTag.Build"));
+		const bool bNavalAbility = SpecInputTags.Contains(TEXT("InputTag.Naval"));
 		const bool bActivated = TryActivateAbility(AbilitySpecHandle);
-		if (bBuildAbility)
+		if (bBuildAbility || bNavalAbility)
 		{
 			UE_LOG(
 				LogLyraAbilitySystem,
 				Display,
-				TEXT("[BuildInput] ASC activation result spec=%s ability=%s activated=%d avatar=%s"),
+				TEXT("[AbilityInput] ASC activation result tags=%s spec=%s ability=%s activated=%d avatar=%s"),
+				*SpecInputTags,
 				*AbilitySpecHandle.ToString(),
 				*GetNameSafe(AbilitySpec ? AbilitySpec->Ability.Get() : nullptr),
 				bActivated,
@@ -350,7 +354,24 @@ void ULyraAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGam
 			{
 				AbilitySpec->InputPressed = false;
 
-				if (AbilitySpec->IsActive())
+				const FString SpecInputTags = AbilitySpec->GetDynamicSpecSourceTags().ToStringSimple();
+				const bool bActiveOnRelease = AbilitySpec->IsActive();
+				if (SpecInputTags.Contains(TEXT("InputTag.Naval")))
+				{
+					// A release that lands while the spec is inactive is dropped here: the
+					// ability never sees InputReleased, so a hold-to-charge action would sit
+					// waiting for a release that already happened.
+					UE_LOG(
+						LogLyraAbilitySystem,
+						Display,
+						TEXT("[AbilityInput] ASC release dispatch tags=%s ability=%s active=%d avatar=%s"),
+						*SpecInputTags,
+						*GetNameSafe(AbilitySpec->Ability.Get()),
+						bActiveOnRelease,
+						*GetNameSafe(GetAvatarActor()));
+				}
+
+				if (bActiveOnRelease)
 				{
 					// Ability is active so pass along the input event.
 					AbilitySpecInputReleased(*AbilitySpec);
