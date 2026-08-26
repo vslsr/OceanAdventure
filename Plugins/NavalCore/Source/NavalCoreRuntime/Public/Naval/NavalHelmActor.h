@@ -96,7 +96,7 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Naval|Helm")
 	TObjectPtr<USceneComponent> OperatorPoint;
 
-	/** 加固舵芯座: the wide, low body that shots actually have to reach. */
+	/** 加固舵芯座: the 160 x 160 x 140 cm authoritative damage/seat envelope. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Naval|Helm")
 	TObjectPtr<UBoxComponent> CoreSeatCollision;
 

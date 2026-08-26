@@ -30,10 +30,11 @@ deliberately outside this first implementation.
 
 `BuildingCoreRuntime` supplies the replicated grid structure, ISM collision, and the
 console-driven local preview. Raft owns the build-piece Definition/Catalog and implements
-`IBuildStructureHost`. One rectangular build cell is derived from `DA_Raft_Default`'s full
-deck collision size. The original raft is cell `(0,0)`; each placed piece is the same unscaled
-`VisualMesh`, snapped one full raft width or length away and attached to the same replicated
-raft actor so the connected sections cannot drift apart.
+`IBuildStructureHost`. Building/hull modules use a fixed `200 × 200 cm` horizontal cell and
+`150 cm` level height (`200 × 200 × 150 cm` total), independent of the dynamically expanded
+`DeckCollision`. The original raft is cell `(0,0)`; each placed piece is the same unscaled
+`VisualMesh`, snapped one 200 cm cell away and attached to the same replicated raft actor so
+the connected sections cannot drift apart.
 
 Before PIE, generate the gameplay-owned input, GAS, and pawn-component assets after any
 experience-generation script that may rewrite `OceanAdventure.uasset`:

@@ -11,6 +11,8 @@ RAFT_DEFINITION_PATH = "/Raft/Vehicles/Raft/DA_Raft_Default"
 RAFT_BLUEPRINT_PATH = "/Raft/Vehicles/Raft/BP_Raft_Default"
 INVALID_PREVIEW_MATERIAL_PATH = "/Raft/Build/Materials/M_Raft_BuildPreview_Invalid"
 PIECE_TAG = "Raft.Piece.Foundation.Wood"
+EXPECTED_DECK_BOX_EXTENT = unreal.Vector(100.0, 100.0, 75.0)
+EXPECTED_VISUAL_MESH_OFFSET = unreal.Vector(0.0, 0.0, 0.0)
 
 
 def gameplay_tag(tag_name):
@@ -115,6 +117,14 @@ def main():
     )
     deck_extent = definition.get_editor_property("deck_box_extent")
     visual_offset = definition.get_editor_property("visual_mesh_offset")
+    require(
+        vector_nearly_equal(deck_extent, EXPECTED_DECK_BOX_EXTENT),
+        "DA_Raft_Default must use the 200 x 200 x 150 cm building/hull envelope",
+    )
+    require(
+        vector_nearly_equal(visual_offset, EXPECTED_VISUAL_MESH_OFFSET),
+        "DA_Raft_Default must keep SM_Raft at the collision-box centre",
+    )
     expected_mesh_offset = unreal.Vector(
         visual_offset.x,
         visual_offset.y,

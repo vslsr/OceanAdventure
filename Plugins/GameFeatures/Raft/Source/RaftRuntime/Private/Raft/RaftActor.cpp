@@ -14,6 +14,16 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RaftActor)
 
+namespace RaftBuildModuleSpec
+{
+	constexpr float WidthCm = 200.0f;
+	constexpr float DepthCm = 200.0f;
+	constexpr float HeightCm = 150.0f;
+	constexpr float HalfWidthCm = WidthCm * 0.5f;
+	constexpr float HalfDepthCm = DepthCm * 0.5f;
+	constexpr float HalfHeightCm = HeightCm * 0.5f;
+}
+
 ARaftActor::ARaftActor()
 {
 	PrimaryActorTick.bCanEverTick = false;
@@ -21,7 +31,7 @@ ARaftActor::ARaftActor()
 	DeckCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("DeckCollision"));
 	SetRootComponent(DeckCollision);
 	DeckCollision->SetMobility(EComponentMobility::Movable);
-	DeckCollision->SetBoxExtent(FVector(124.0, 200.0, 21.0));
+	DeckCollision->SetBoxExtent(FVector(RaftBuildModuleSpec::HalfWidthCm, RaftBuildModuleSpec::HalfDepthCm, RaftBuildModuleSpec::HalfHeightCm));
 	DeckCollision->SetCollisionProfileName(UCollisionProfile::BlockAllDynamic_ProfileName);
 	DeckCollision->SetGenerateOverlapEvents(false);
 	DeckCollision->SetCanEverAffectNavigation(false);
@@ -29,7 +39,7 @@ ARaftActor::ARaftActor()
 
 	VisualPivot = CreateDefaultSubobject<USceneComponent>(TEXT("VisualPivot"));
 	VisualPivot->SetupAttachment(DeckCollision);
-	VisualPivot->SetRelativeLocation(FVector(0.0, 0.0, 9.0));
+	VisualPivot->SetRelativeLocation(FVector::ZeroVector);
 
 	VisualMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("VisualMesh"));
 	VisualMesh->SetupAttachment(VisualPivot);
@@ -105,7 +115,7 @@ FVector ARaftActor::GetBaseDeckExtent() const
 	// the built structure, and feeding it back in would make the anchor area self-expand.
 	return RaftDefinition
 		? RaftDefinition->GetDeckBoxExtent()
-		: FVector(124.0, 200.0, 21.0);
+		: FVector(RaftBuildModuleSpec::HalfWidthCm, RaftBuildModuleSpec::HalfDepthCm, RaftBuildModuleSpec::HalfHeightCm);
 }
 
 void ARaftActor::RecomputeGridAlignment()
@@ -114,7 +124,8 @@ void ARaftActor::RecomputeGridAlignment()
 	// One hull/deck module is exactly one physical raft footprint. The grid coordinate is only
 	// the replicated occupancy address; it must never introduce a separately authored snap
 	// distance that can leave adjacent hull meshes overlapping or separated by a gap.
-	BuildGridSettings.CellSizeXY = FVector2D(Extent.X * 2.0, Extent.Y * 2.0);
+	BuildGridSettings.CellSizeXY = FVector2D(RaftBuildModuleSpec::WidthCm, RaftBuildModuleSpec::DepthCm);
+	BuildGridSettings.LevelHeight = RaftBuildModuleSpec::HeightCm;
 	const FVector2D CellSize = BuildGrid::GetCellSize(BuildGridSettings);
 
 	// Only whole cells that fit inside the deck may be anchored; a deck that is not an exact

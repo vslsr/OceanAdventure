@@ -23,10 +23,10 @@ URaftBuoyancyComponent::URaftBuoyancyComponent()
 	SetIsReplicatedByDefault(false);
 
 	PontoonOffsets = {
-		FVector(90.0, 150.0, 0.0),
-		FVector(-90.0, 150.0, 0.0),
-		FVector(90.0, -150.0, 0.0),
-		FVector(-90.0, -150.0, 0.0)
+		FVector(80.0, 80.0, 0.0),
+		FVector(-80.0, 80.0, 0.0),
+		FVector(80.0, -80.0, 0.0),
+		FVector(-80.0, -80.0, 0.0)
 	};
 }
 

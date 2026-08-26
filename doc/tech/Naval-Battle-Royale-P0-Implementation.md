@@ -63,7 +63,7 @@
 ## 4. 编辑器操作步骤
 
 1. **编译**：`NavalCoreRuntime`、`BuildingCoreRuntime`、`RaftRuntime`、`OceanAdventureRuntime`（顺序由 UBT 自行解析），然后重启编辑器，让新的 UCLASS 与原生 GameplayTag 注册进来。
-2. **在 Blender 的 Scripting 工作区运行** `blender/script/python/create_naval_cannonball.py`。脚本会把炮弹 FBX 输出到项目规范目录 `blender/models/`，不会改动无关集合。
+2. **在 Blender 的 Scripting 工作区运行** `blender/script/python/create_naval_cannonball.py`、`blender/script/python/create_naval_helm_wheel.py` 和 `blender/script/python/SM_Raft.py`。脚本会把源文件输出到项目规范目录 `blender/models/`，不会改动无关集合。可装配模块（炮/船舵）为 `160 × 160 × 140 cm`，建筑/船体模块为 `200 × 200 × 150 cm`，统一定义见 `doc/tech/Naval-Buildable-Module-Art-Spec.md`。
 3. **按顺序运行编辑器 Python**（都幂等，可反复运行修复资产）：
    ```
    import CreateRaftNavalAssets;  CreateRaftNavalAssets.main()      # Raft：海战建造件、船体组件、救生筏

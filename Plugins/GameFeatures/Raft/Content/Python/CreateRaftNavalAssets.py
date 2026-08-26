@@ -187,7 +187,7 @@ COMPONENT_BLUEPRINTS = (
         "parent": "/Script/NavalCoreRuntime.NavalHelmComponent",
         "properties": {
             # 初始甲板中后部的固定格, with two open approaches so it can be reached and contested.
-            "helm_local_offset": unreal.Vector(-120.0, 0.0, 25.0),
+            "helm_local_offset": unreal.Vector(-20.0, 0.0, 75.0),
             # The console faces the bow, so the operator snap point behind it does too.
             "helm_local_yaw": 0.0,
             "interaction_range": 260.0,

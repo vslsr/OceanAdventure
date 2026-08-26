@@ -1,358 +1,225 @@
-"""Create a basic UE5-ready wooden raft and export it as FBX.
+"""Create the 200 x 200 x 150 cm OceanAdventure building/hull raft module."""
 
-Run this file from Blender's Scripting workspace.  It creates:
-
-* SM_Raft           - the visible static mesh
-* UCX_SM_Raft_00    - a single stable simple collision box for Unreal Engine
-
-The generated .blend and .fbx files are written to the project-level
-``blender/models`` source directory. This script intentionally does not create
-Unreal assets; import the FBX into /Raft/Vehicles/Raft.
-"""
-
-from pathlib import Path
-import math
 import os
-import random
+from pathlib import Path
 
 import bpy
+from mathutils import Vector
 
 
-# -----------------------------------------------------------------------------
-# Model settings (Blender metres; Unreal imports the result as centimetres)
-# -----------------------------------------------------------------------------
+MODULE_SIZE_M = 2.0
+MODULE_HEIGHT_M = 1.5
+HALF_EXTENT_M = (1.0, 1.0, 0.75)
+ART_MARGIN_M = 0.04
+DECK_LENGTH_M = 1.92
+BOARD_COUNT = 7
+BOARD_WIDTH_M = 0.27
+BOARD_GAP_M = 0.005
+BOARD_THICKNESS_M = 0.16
+BOARD_CENTER_Z_M = 0.58
+CROSSBEAM_LENGTH_M = 1.90
+CROSSBEAM_WIDTH_M = 0.20
+CROSSBEAM_HEIGHT_M = 0.18
+CROSSBEAM_Y_M = (-0.65, 0.0, 0.65)
+CROSSBEAM_CENTER_Z_M = 0.33
+PONTOON_DIMENSIONS_M = (0.40, 0.50, 0.42)
+PONTOON_X_M = (-0.73, 0.73)
+PONTOON_Y_M = (-0.68, 0.68)
+PONTOON_Z_M = -0.44
 
-RAFT_LENGTH = 12.0
-BOARD_COUNT = 13
-BOARD_WIDTH = 0.48
-BOARD_GAP = 0.07
-BOARD_THICKNESS = 0.30
-
-CROSSBEAM_WIDTH = 0.32
-CROSSBEAM_HEIGHT = 0.25
-CROSSBEAM_Y_POSITIONS = (-4.5, -1.5, 1.5, 4.5)
-
-BOARD_BEVEL = 0.035
-CROSSBEAM_BEVEL = 0.025
-RANDOM_SEED = 20260820
-
-FBX_NAME = "SM_Raft.fbx"
-BLEND_NAME = "SM_Raft.blend"
-
-# Blender's Text Editor commonly reports __file__ as only "SM_Raft.py" when
-# the script was pasted into a text block.  Keep the checked-out project path
-# as a final fallback; OCEAN_ADVENTURE_PROJECT_ROOT can still override it when
-# the workspace is moved.
-DEFAULT_PROJECT_ROOT = Path(r"C:\EpicWkspc\OceanAdventure")
+VISIBLE_COLLECTION = "SM_Raft_Generated"
+COLLISION_COLLECTION = "SM_Raft_Collision_Generated"
+STATIC_MESH_NAME = "SM_Raft"
+COLLISION_NAME = "UCX_SM_Raft_00"
 
 
-def find_project_root() -> Path:
-    """Find OceanAdventure even when Blender is opened from LyraStarterGame."""
-
-    def is_ocean_adventure_root(candidate: Path) -> bool:
-        return (
-            candidate.is_dir()
-            and any(candidate.glob("*.uproject"))
-            and (candidate / "Plugins" / "GameFeatures" / "OceanAdventure").is_dir()
-        )
+def project_root() -> Path:
+    def valid(path):
+        return path.is_dir() and any(path.glob("*.uproject")) and (
+            path / "Plugins" / "GameFeatures" / "OceanAdventure"
+        ).is_dir()
 
     override = os.environ.get("OCEAN_ADVENTURE_PROJECT_ROOT")
     if override:
         root = Path(override).expanduser().resolve()
-        if is_ocean_adventure_root(root):
+        if valid(root):
             return root
-        raise RuntimeError(
-            "OCEAN_ADVENTURE_PROJECT_ROOT does not point to an OceanAdventure project: "
-            f"{root}"
-        )
-
-    starts = []
-    if "__file__" in globals():
-        starts.append(Path(__file__).resolve().parent)
+        raise RuntimeError(f"Invalid OCEAN_ADVENTURE_PROJECT_ROOT: {root}")
+    starts = [Path(__file__).resolve().parent, Path.cwd().resolve()]
     if bpy.data.filepath:
         starts.append(Path(bpy.data.filepath).resolve().parent)
-    starts.append(Path.cwd().resolve())
-
-    visited = set()
-    search_roots = []
+    candidates = []
+    seen = set()
     for start in starts:
-        for candidate in (start, *start.parents):
-            if candidate in visited:
-                continue
-            visited.add(candidate)
-            search_roots.append(candidate)
-
-    sibling_candidates = []
-    for candidate in search_roots:
+        for path in (start, *start.parents):
+            if path not in seen:
+                seen.add(path)
+                candidates.append(path)
+    for path in candidates:
+        if valid(path):
+            return path
         try:
-            sibling_candidates.extend(
-                child for child in candidate.parent.iterdir() if child.is_dir()
-            )
+            for sibling in path.parent.iterdir():
+                if sibling.is_dir() and valid(sibling):
+                    return sibling
         except OSError:
+            pass
+    raise RuntimeError("Could not locate OceanAdventure project root")
+
+
+def collection(name):
+    value = bpy.data.collections.new(name)
+    bpy.context.scene.collection.children.link(value)
+    return value
+
+
+def remove_owned():
+    for name in (VISIBLE_COLLECTION, COLLISION_COLLECTION):
+        value = bpy.data.collections.get(name)
+        if value is None:
             continue
-
-    for candidate in (*search_roots, *sibling_candidates, DEFAULT_PROJECT_ROOT):
-        if is_ocean_adventure_root(candidate):
-            return candidate
-
-    raise RuntimeError(
-        "Could not locate OceanAdventure (expected a .uproject plus "
-        "Plugins/GameFeatures/OceanAdventure). Set OCEAN_ADVENTURE_PROJECT_ROOT "
-        r"to C:\EpicWkspc\OceanAdventure before running this script."
-    )
+        for obj in list(value.objects):
+            bpy.data.objects.remove(obj, do_unlink=True)
+        bpy.data.collections.remove(value)
 
 
-def set_scene_units() -> None:
-    scene = bpy.context.scene
-    scene.unit_settings.system = "METRIC"
-    scene.unit_settings.scale_length = 1.0
-    scene.unit_settings.length_unit = "METERS"
+def move(obj, target):
+    for source in list(obj.users_collection):
+        source.objects.unlink(obj)
+    target.objects.link(obj)
 
 
-def reset_scene() -> None:
-    if bpy.context.object is not None and bpy.context.object.mode != "OBJECT":
-        bpy.ops.object.mode_set(mode="OBJECT")
-
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete(use_global=False)
-
-    # Remove unused data left by a previous run so repeated execution is stable.
-    for data_collection in (bpy.data.meshes, bpy.data.curves, bpy.data.materials):
-        for data_block in list(data_collection):
-            if data_block.users == 0:
-                data_collection.remove(data_block)
+def wood(name, color):
+    mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    mat.use_nodes = True
+    bsdf = next((node for node in mat.node_tree.nodes if node.type == "BSDF_PRINCIPLED"), None)
+    if bsdf:
+        bsdf.inputs["Base Color"].default_value = (*color, 1.0)
+        bsdf.inputs["Roughness"].default_value = 0.78
+    return mat
 
 
-def get_principled_bsdf(material):
-    if not material.use_nodes or material.node_tree is None:
-        return None
-    for node in material.node_tree.nodes:
-        if node.type == "BSDF_PRINCIPLED":
-            return node
-    return None
-
-
-def make_wood_material(name: str, color: tuple[float, float, float]):
-    material = bpy.data.materials.new(name=name)
-    material.use_nodes = True
-
-    bsdf = get_principled_bsdf(material)
-    if bsdf is not None:
-        base_color = bsdf.inputs.get("Base Color")
-        roughness = bsdf.inputs.get("Roughness")
-        metallic = bsdf.inputs.get("Metallic")
-
-        if base_color is not None:
-            base_color.default_value = (*color, 1.0)
-        if roughness is not None:
-            roughness.default_value = 0.78
-        if metallic is not None:
-            metallic.default_value = 0.0
-
-    return material
-
-
-def create_beveled_box(
-    name: str,
-    dimensions: tuple[float, float, float],
-    location: tuple[float, float, float],
-    rotation_z: float,
-    material,
-    bevel_width: float,
-):
-    bpy.ops.mesh.primitive_cube_add(location=location, rotation=(0.0, 0.0, rotation_z))
+def box(name, dimensions, location, material, target, bevel=0.02):
+    bpy.ops.mesh.primitive_cube_add(location=location)
     obj = bpy.context.object
     obj.name = name
-    obj.data.name = f"{name}_Mesh"
     obj.dimensions = dimensions
-
     bpy.context.view_layer.objects.active = obj
-    obj.select_set(True)
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-
-    if material is not None:
-        obj.data.materials.append(material)
-
-    bevel = obj.modifiers.new(name="EdgeBevel", type="BEVEL")
-    bevel.width = bevel_width
-    bevel.segments = 3
-    bevel.limit_method = "ANGLE"
-    if hasattr(bevel, "harden_normals"):
-        bevel.harden_normals = True
-    bpy.ops.object.modifier_apply(modifier=bevel.name)
-
+    obj.data.materials.append(material)
+    modifier = obj.modifiers.new("EdgeBevel", "BEVEL")
+    modifier.width = bevel
+    modifier.segments = 3
+    bpy.ops.object.modifier_apply(modifier=modifier.name)
+    move(obj, target)
     return obj
 
 
-def join_visible_parts(parts, total_width: float):
+def bounds(obj):
+    corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+    return tuple(min(c[i] for c in corners) for i in range(3)), tuple(max(c[i] for c in corners) for i in range(3))
+
+
+def build():
+    remove_owned()
+    visible = collection(VISIBLE_COLLECTION)
+    collision_collection = collection(COLLISION_COLLECTION)
+    materials = (
+        wood("M_Raft_Wood_Light", (0.36, 0.16, 0.055)),
+        wood("M_Raft_Wood_Mid", (0.27, 0.105, 0.032)),
+        wood("M_Raft_Wood_Dark", (0.18, 0.060, 0.018)),
+    )
+    beam_material = wood("M_Raft_Crossbeam", (0.13, 0.040, 0.012))
+    pontoon_material = wood("M_Raft_Pontoon", (0.20, 0.075, 0.020))
+    parts = []
+    total_width = BOARD_COUNT * BOARD_WIDTH_M + (BOARD_COUNT - 1) * BOARD_GAP_M
+    first_x = -total_width * 0.5 + BOARD_WIDTH_M * 0.5
+    for index in range(BOARD_COUNT):
+        parts.append(box(
+            f"Raft_Board_{index + 1:02d}",
+            (BOARD_WIDTH_M, DECK_LENGTH_M, BOARD_THICKNESS_M),
+            (first_x + index * (BOARD_WIDTH_M + BOARD_GAP_M), 0.0, BOARD_CENTER_Z_M),
+            materials[index % len(materials)], visible, 0.025,
+        ))
+    for index, y in enumerate(CROSSBEAM_Y_M, 1):
+        parts.append(box(
+            f"Raft_Crossbeam_{index:02d}",
+            (CROSSBEAM_LENGTH_M, CROSSBEAM_WIDTH_M, CROSSBEAM_HEIGHT_M),
+            (0.0, y, CROSSBEAM_CENTER_Z_M), beam_material, visible, 0.025,
+        ))
+    for x in PONTOON_X_M:
+        for y in PONTOON_Y_M:
+            parts.append(box(
+                f"Raft_Pontoon_{'L' if x < 0 else 'R'}_{'F' if y > 0 else 'B'}",
+                PONTOON_DIMENSIONS_M, (x, y, PONTOON_Z_M), pontoon_material, visible, 0.08,
+            ))
+
     bpy.ops.object.select_all(action="DESELECT")
     for part in parts:
         part.select_set(True)
-
     bpy.context.view_layer.objects.active = parts[0]
     bpy.ops.object.join()
-
     raft = bpy.context.object
-    raft.name = "SM_Raft"
-    raft.data.name = "SM_Raft_Mesh"
-
-    # Keep actor-space pontoon offsets intuitive: the raft origin is its centre.
+    raft.name = STATIC_MESH_NAME
+    raft.data.name = f"{STATIC_MESH_NAME}_Mesh"
     bpy.context.scene.cursor.location = (0.0, 0.0, 0.0)
-    bpy.ops.object.origin_set(type="ORIGIN_CURSOR", center="MEDIAN")
-
-    bpy.ops.object.mode_set(mode="EDIT")
-    bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.smart_project(
-        angle_limit=math.radians(66.0),
-        island_margin=0.02,
-        correct_aspect=True,
-        scale_to_bounds=False,
-    )
-    bpy.ops.object.mode_set(mode="OBJECT")
-
+    bpy.ops.object.origin_set(type="ORIGIN_CURSOR")
     raft["ue_asset_type"] = "StaticMesh"
-    raft["ue_forward_axis"] = "X"
-    raft["dimensions_cm"] = (
-        f"{RAFT_LENGTH * 100:.0f} x {total_width * 100:.0f} x "
-        f"{(BOARD_THICKNESS + CROSSBEAM_HEIGHT) * 100:.0f}"
-    )
-    return raft
+    raft["module_dimensions_cm"] = "200 x 200 x 150"
+    raft["module_origin"] = "collision_box_center"
 
-
-def create_collision(total_width: float):
-    # Cover the board deck and its supporting crossbeams with one stable box.
-    collision_height = BOARD_THICKNESS + CROSSBEAM_HEIGHT
-    collision_z = (BOARD_THICKNESS * 0.5 - collision_height * 0.5)
-
-    bpy.ops.mesh.primitive_cube_add(location=(0.0, 0.0, collision_z))
+    bpy.ops.mesh.primitive_cube_add(location=(0.0, 0.0, 0.0))
     collision = bpy.context.object
-    collision.name = "UCX_SM_Raft_00"
-    collision.data.name = "UCX_SM_Raft_00_Mesh"
-    collision.dimensions = (
-        total_width,
-        RAFT_LENGTH - 0.04,
-        collision_height,
-    )
-
+    collision.name = COLLISION_NAME
+    collision.data.name = f"{COLLISION_NAME}_Mesh"
+    collision.dimensions = (MODULE_SIZE_M, MODULE_SIZE_M, MODULE_HEIGHT_M)
     bpy.context.view_layer.objects.active = collision
-    collision.select_set(True)
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     collision.display_type = "WIRE"
     collision.show_name = True
-    collision["ue_collision_for"] = "SM_Raft"
-    return collision
-
-
-def build_raft():
-    random.seed(RANDOM_SEED)
-
-    wood_materials = (
-        make_wood_material("M_Raft_Wood_Light", (0.36, 0.16, 0.055)),
-        make_wood_material("M_Raft_Wood_Mid", (0.27, 0.105, 0.032)),
-        make_wood_material("M_Raft_Wood_Dark", (0.18, 0.060, 0.018)),
-    )
-    beam_material = make_wood_material("M_Raft_Crossbeam", (0.13, 0.040, 0.012))
-
-    total_width = (
-        BOARD_COUNT * BOARD_WIDTH + (BOARD_COUNT - 1) * BOARD_GAP
-    )
-    first_x = -total_width * 0.5 + BOARD_WIDTH * 0.5
-
-    visible_parts = []
-    for index in range(BOARD_COUNT):
-        x = first_x + index * (BOARD_WIDTH + BOARD_GAP)
-        y_jitter = random.uniform(-0.018, 0.018)
-        z_jitter = random.uniform(-0.010, 0.010)
-        yaw = math.radians(random.uniform(-0.45, 0.45))
-
-        board = create_beveled_box(
-            name=f"Raft_Board_{index + 1:02d}",
-            dimensions=(BOARD_WIDTH, RAFT_LENGTH, BOARD_THICKNESS),
-            location=(x, y_jitter, z_jitter),
-            rotation_z=yaw,
-            material=wood_materials[index % len(wood_materials)],
-            bevel_width=BOARD_BEVEL,
-        )
-        visible_parts.append(board)
-
-    beam_z = -(BOARD_THICKNESS * 0.5 + CROSSBEAM_HEIGHT * 0.5)
-    for index, y in enumerate(CROSSBEAM_Y_POSITIONS, start=1):
-        beam = create_beveled_box(
-            name=f"Raft_Crossbeam_{index:02d}",
-            dimensions=(total_width + 0.12, CROSSBEAM_WIDTH, CROSSBEAM_HEIGHT),
-            location=(0.0, y, beam_z),
-            rotation_z=0.0,
-            material=beam_material,
-            bevel_width=CROSSBEAM_BEVEL,
-        )
-        visible_parts.append(beam)
-
-    raft = join_visible_parts(visible_parts, total_width)
-    collision = create_collision(total_width)
+    collision["ue_collision_for"] = STATIC_MESH_NAME
+    collision["module_dimensions_cm"] = "200 x 200 x 150"
+    move(collision, collision_collection)
     return raft, collision
 
 
-def save_and_export(raft, collision) -> tuple[Path, Path]:
-    project_root = find_project_root()
-    output_dir = project_root / "blender" / "models"
-    output_dir.mkdir(parents=True, exist_ok=True)
+def validate(raft, collision):
+    minimum, maximum = bounds(raft)
+    allowed_min = tuple(-extent + ART_MARGIN_M for extent in HALF_EXTENT_M)
+    allowed_max = tuple(extent - ART_MARGIN_M for extent in HALF_EXTENT_M)
+    for index, axis in enumerate("XYZ"):
+        if minimum[index] < allowed_min[index] - 1e-4 or maximum[index] > allowed_max[index] + 1e-4:
+            raise RuntimeError(f"{STATIC_MESH_NAME} exceeds 200x200x150 {axis} envelope")
+    if any(abs(a - b) > 1e-4 for a, b in zip(collision.dimensions, (2.0, 2.0, 1.5))):
+        raise RuntimeError(f"{COLLISION_NAME} must be exactly 2 x 2 x 1.5 m")
+    print(f"Raft module bounds validated (m): min={minimum} max={maximum}")
 
-    blend_path = output_dir / BLEND_NAME
-    fbx_path = output_dir / FBX_NAME
 
+def main():
+    bpy.context.scene.unit_settings.system = "METRIC"
+    bpy.context.scene.unit_settings.scale_length = 1.0
+    bpy.context.scene.unit_settings.length_unit = "METERS"
+    raft, collision = build()
+    validate(raft, collision)
+    output = project_root() / "blender" / "models"
+    output.mkdir(parents=True, exist_ok=True)
+    previous = bpy.context.preferences.filepaths.save_version
+    bpy.context.preferences.filepaths.save_version = 0
+    try:
+        bpy.ops.wm.save_as_mainfile(filepath=str(output / "SM_Raft.blend"))
+    finally:
+        bpy.context.preferences.filepaths.save_version = previous
     bpy.ops.object.select_all(action="DESELECT")
     raft.select_set(True)
     collision.select_set(True)
     bpy.context.view_layer.objects.active = raft
-
-    bpy.ops.wm.save_as_mainfile(filepath=str(blend_path))
-
-    # Keep both the visible mesh and the UCX collision selected for export.
-    bpy.ops.object.select_all(action="DESELECT")
-    raft.select_set(True)
-    collision.select_set(True)
-    bpy.context.view_layer.objects.active = raft
-
     bpy.ops.export_scene.fbx(
-        filepath=str(fbx_path),
-        use_selection=True,
-        object_types={"MESH"},
-        global_scale=1.0,
-        apply_unit_scale=True,
-        apply_scale_options="FBX_SCALE_UNITS",
-        use_space_transform=True,
-        bake_space_transform=False,
-        axis_forward="-Z",
-        axis_up="Y",
-        use_mesh_modifiers=True,
-        mesh_smooth_type="FACE",
-        use_custom_props=True,
-        add_leaf_bones=False,
-        bake_anim=False,
-        path_mode="AUTO",
-        embed_textures=False,
+        filepath=str(output / "SM_Raft.fbx"), use_selection=True, object_types={"MESH"},
+        global_scale=1.0, apply_unit_scale=True, apply_scale_options="FBX_SCALE_UNITS",
+        axis_forward="-Z", axis_up="Y", use_mesh_modifiers=True, use_tspace=False,
+        use_custom_props=True, add_leaf_bones=False, bake_anim=False, embed_textures=False,
     )
-
-    if not fbx_path.is_file() or fbx_path.stat().st_size < 1024:
-        raise RuntimeError(f"FBX export is missing or unexpectedly small: {fbx_path}")
-
-    return blend_path, fbx_path
-
-
-def main() -> None:
-    set_scene_units()
-    reset_scene()
-    raft, collision = build_raft()
-    blend_path, fbx_path = save_and_export(raft, collision)
-
-    print("[SM_Raft] Build complete")
-    print(f"  Visible mesh : {raft.name}")
-    print(f"  Collision    : {collision.name}")
-    print(f"  Vertices     : {len(raft.data.vertices)}")
-    print(f"  Polygons     : {len(raft.data.polygons)}")
-    print(f"  Blend        : {blend_path}")
-    print(f"  FBX          : {fbx_path}")
-    print(f"  FBX size     : {fbx_path.stat().st_size // 1024} KB")
+    print("[SM_Raft] Build complete: 200 x 200 x 150 cm")
 
 
 if __name__ == "__main__":

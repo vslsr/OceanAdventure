@@ -37,12 +37,13 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Presentation")
 	TObjectPtr<UStaticMesh> VisualMesh;
 
+	/** Building/hull module collision envelope: 200 x 200 x 150 cm. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Collision", meta = (ClampMin = "1.0", Units = "cm"))
-	FVector DeckBoxExtent = FVector(124.0, 200.0, 21.0);
+	FVector DeckBoxExtent = FVector(100.0, 100.0, 75.0);
 
-	/** Imported FBX origin relative to the stable deck-collision center. */
+	/** SM_Raft is authored around the deck-collision centre, so no visual correction is needed. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Presentation", meta = (Units = "cm"))
-	FVector VisualMeshOffset = FVector(0.0, 0.0, 9.0);
+	FVector VisualMeshOffset = FVector::ZeroVector;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy")
 	TArray<FVector> PontoonOffsets;

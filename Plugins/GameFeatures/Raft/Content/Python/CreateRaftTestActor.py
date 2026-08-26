@@ -14,7 +14,7 @@ import unreal
 
 
 PROJECT_ROOT = Path(unreal.Paths.project_dir()).resolve()
-SOURCE_FBX = PROJECT_ROOT / "Plugins" / "GameFeatures" / "Raft" / "ArtSource" / "Raft" / "SM_Raft.fbx"
+SOURCE_FBX = PROJECT_ROOT / "blender" / "models" / "SM_Raft.fbx"
 STATIC_MESH_PATH = "/Raft/Vehicles/Raft/SM_Raft"
 DEFINITION_PATH = "/Raft/Vehicles/Raft/DA_Raft_Default"
 BUILD_CATALOG_PATH = "/Raft/Build/DA_BuildPieceCatalog_Raft"
@@ -22,16 +22,14 @@ BLUEPRINT_PATH = "/Raft/Vehicles/Raft/BP_Raft_Default"
 TEST_MAP_PATH = "/OceanAdventure/Maps/L_OceanChunkTest"
 TEST_ACTOR_LABEL = "Raft Test Actor"
 
-# SM_Raft is approximately 720 x 1202.5 x 55.9 cm. These values follow the
-# authored UCX collision dimensions (708 x 1196 x 55 cm) and compensate for
-# the FBX origin being 12.5 cm below the collision center.
-DECK_BOX_EXTENT = unreal.Vector(354.0, 598.0, 27.5)
-VISUAL_MESH_OFFSET = unreal.Vector(0.0, 0.0, 12.5)
+# Building/hull modules use a centred 200 x 200 x 150 cm collision envelope.
+DECK_BOX_EXTENT = unreal.Vector(100.0, 100.0, 75.0)
+VISUAL_MESH_OFFSET = unreal.Vector(0.0, 0.0, 0.0)
 PONTOON_OFFSETS = (
-    unreal.Vector(285.0, 480.0, 0.0),
-    unreal.Vector(-285.0, 480.0, 0.0),
-    unreal.Vector(285.0, -480.0, 0.0),
-    unreal.Vector(-285.0, -480.0, 0.0),
+    unreal.Vector(80.0, 80.0, 0.0),
+    unreal.Vector(-80.0, 80.0, 0.0),
+    unreal.Vector(80.0, -80.0, 0.0),
+    unreal.Vector(-80.0, -80.0, 0.0),
 )
 
 
@@ -50,15 +48,7 @@ def split_asset_path(asset_path):
 
 
 def import_static_mesh():
-    if unreal.EditorAssetLibrary.does_asset_exist(STATIC_MESH_PATH):
-        existing = require(
-            unreal.EditorAssetLibrary.load_asset(STATIC_MESH_PATH),
-            f"Unable to load {STATIC_MESH_PATH}",
-        )
-        log(f"Reusing {STATIC_MESH_PATH}")
-        return existing
-
-    require(SOURCE_FBX.is_file(), f"Missing raft FBX: {SOURCE_FBX}")
+    require(SOURCE_FBX.is_file(), f"Missing raft FBX: {SOURCE_FBX}. Run SM_Raft.py first")
 
     options = unreal.FbxImportUI()
     options.set_editor_property("import_mesh", True)

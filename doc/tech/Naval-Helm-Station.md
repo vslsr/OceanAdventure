@@ -52,7 +52,7 @@ IA_Naval_Interact (E)
 | `ConsoleMesh` | 舵台底座，**无碰撞**——设计 8.3.1 明确不允许远处一枪打瘫全船 |
 | `WheelPivot` / `WheelMesh` | 舵轮，跟随 `GetSteerIntent()` 插值转动，纯表现 |
 | `OperatorPoint` | 角色站位（舵台后方、面向船首），`GetOperatorTransform()` 提供给能力 |
-| `CoreSeatCollision` | 加固舵芯座：唯一的受击体，也是 Overlap 找站位时命中的体积（`WorldDynamic`） |
+| `CoreSeatCollision` | 加固舵芯座：唯一的受击体，也是 Overlap 找站位时命中的体积（`WorldDynamic`）；可装配模块包络为 `160 × 160 × 140 cm` |
 | `CorePart` | `UNavalPartComponent`，750 耐久 ≈ 普通墙的 2.5–3 倍 |
 
 它不持有"谁在掌舵"这件事——归属、夺船、控制量全在船上的 `UNavalHelmComponent`，
@@ -73,7 +73,7 @@ Raft.uasset (GameFeatureData)
 └─ ARaftActor ← BPC_NavalVessel_RaftT0 / BPC_NavalLoad_RaftT0
                 BPC_NavalHelm_RaftT0 / BPC_NavalMovement_RaftT0
                         └─ HelmActorClass = BP_Raft_Helm  (/Raft/Naval/BP_Raft_Helm)
-                           HelmLocalOffset = (-120, 0, 25)
+                           HelmLocalOffset = (-20, 0, 75)
 ```
 
 `BP_Raft_Helm` 由 `Plugins/GameFeatures/Raft/Content/Python/CreateRaftNavalAssets.py` 生成，

@@ -78,8 +78,9 @@ ANavalHelmActor::ANavalHelmActor()
 
 	CoreSeatCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("CoreSeatCollision"));
 	CoreSeatCollision->SetupAttachment(SceneRoot);
-	CoreSeatCollision->SetBoxExtent(FVector(70.0, 70.0, 35.0));
-	CoreSeatCollision->SetRelativeLocation(FVector(0.0, 0.0, 20.0));
+	// Attachable helm module envelope: 160 x 160 x 140 cm, rooted on the deck.
+	CoreSeatCollision->SetBoxExtent(FVector(80.0, 80.0, 70.0));
+	CoreSeatCollision->SetRelativeLocation(FVector(0.0, 0.0, 70.0));
 	CoreSeatCollision->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
 	CoreSeatCollision->SetCollisionObjectType(ECC_WorldDynamic);
 	CoreSeatCollision->SetCollisionResponseToAllChannels(ECR_Block);

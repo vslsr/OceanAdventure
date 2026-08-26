@@ -88,7 +88,7 @@ protected:
 private:
 	void ApplyDefinition();
 
-	/** Aligns logical occupancy coordinates to the physical deck and caches its anchor. */
+	/** Aligns the fixed 200 cm building/hull snap grid and caches its anchor range. */
 	void RecomputeGridAlignment();
 
 	FVector GetBaseDeckExtent() const;

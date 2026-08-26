@@ -17,13 +17,13 @@ BLUEPRINT_PATH = "/Raft/Vehicles/Raft/BP_Raft_Default"
 EXPERIENCE_PATH = "/OceanAdventure/Experience/BP_Experience_Ocean"
 TEST_MAP_PATH = "/OceanAdventure/Maps/L_OceanChunkTest"
 TEST_ACTOR_LABEL = "Raft Test Actor"
-EXPECTED_DECK_BOX_EXTENT = unreal.Vector(354.0, 598.0, 27.5)
-EXPECTED_VISUAL_MESH_OFFSET = unreal.Vector(0.0, 0.0, 12.5)
+EXPECTED_DECK_BOX_EXTENT = unreal.Vector(100.0, 100.0, 75.0)
+EXPECTED_VISUAL_MESH_OFFSET = unreal.Vector(0.0, 0.0, 0.0)
 EXPECTED_PONTOON_OFFSETS = (
-    unreal.Vector(285.0, 480.0, 0.0),
-    unreal.Vector(-285.0, 480.0, 0.0),
-    unreal.Vector(285.0, -480.0, 0.0),
-    unreal.Vector(-285.0, -480.0, 0.0),
+    unreal.Vector(80.0, 80.0, 0.0),
+    unreal.Vector(-80.0, 80.0, 0.0),
+    unreal.Vector(80.0, -80.0, 0.0),
+    unreal.Vector(-80.0, -80.0, 0.0),
 )
 
 
