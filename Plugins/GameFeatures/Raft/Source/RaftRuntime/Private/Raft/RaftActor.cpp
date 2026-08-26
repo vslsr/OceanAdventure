@@ -11,6 +11,7 @@
 #include "Engine/CollisionProfile.h"
 #include "Raft/RaftBuoyancyComponent.h"
 #include "Raft/RaftDefinition.h"
+#include "RaftRuntimeModule.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RaftActor)
 
@@ -81,6 +82,23 @@ void ARaftActor::PostInitializeComponents()
 {
 	// The build component caches grid settings in its BeginPlay, which runs after this.
 	RecomputeGridAlignment();
+
+	// A raft whose root came back Static silently swallows every buoyancy and steering write:
+	// SetActorLocationAndRotation is discarded, and the only trace is a per-frame PIE warning.
+	// The constructor already asks for Movable, but a Mobility saved on the Blueprint or on a
+	// placed instance overrides that and no C++ change can reach it, so it is corrected here.
+	if (DeckCollision && DeckCollision->Mobility != EComponentMobility::Movable)
+	{
+		UE_LOG(
+			LogRaft,
+			Warning,
+			TEXT("[Raft] %s : DeckCollision was not Movable, so the hull could not be moved at "
+				 "all. Forcing Movable -- clear the stale Mobility on the Blueprint or the "
+				 "placed instance so this stops being needed."),
+			*GetPathName());
+		DeckCollision->SetMobility(EComponentMobility::Movable);
+	}
+
 	Super::PostInitializeComponents();
 }
 

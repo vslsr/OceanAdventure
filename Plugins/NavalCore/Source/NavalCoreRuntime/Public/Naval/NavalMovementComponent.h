@@ -118,6 +118,17 @@ protected:
 private:
 	void ResolvePeers();
 
+	/**
+	 * A hull whose root component is Static silently refuses every move.
+	 *
+	 * SetActorLocationAndRotation is dropped, the only symptom is a per-frame PIE warning, and
+	 * everything else reads correct: the helm resolves, the throttle arrives, the boat sits
+	 * still. A stale Mobility saved on a Blueprint or on a placed instance is enough to cause
+	 * it, and no amount of fixing the C++ default reaches those. So the component whose job is
+	 * to move the hull insists the hull can be moved.
+	 */
+	void EnsureOwnerCanMove();
+
 	TWeakObjectPtr<UNavalHelmComponent> Helm;
 	TWeakObjectPtr<UNavalLoadComponent> Load;
 	TWeakObjectPtr<UNavalVesselComponent> Vessel;

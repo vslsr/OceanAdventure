@@ -9,6 +9,7 @@
 #include "Naval/NavalHelmComponent.h"
 #include "Naval/NavalLoadComponent.h"
 #include "Naval/NavalVesselComponent.h"
+#include "NavalCoreRuntimeModule.h"
 #include "Net/UnrealNetwork.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NavalMovementComponent)
@@ -27,6 +28,7 @@ void UNavalMovementComponent::BeginPlay()
 	Super::BeginPlay();
 
 	ResolvePeers();
+	EnsureOwnerCanMove();
 	PlanarVelocity = FVector::ZeroVector;
 	YawRateDegrees = 0.0f;
 
@@ -59,6 +61,26 @@ void UNavalMovementComponent::ResolvePeers()
 	Vessel = OwnerActor->FindComponentByClass<UNavalVesselComponent>();
 }
 
+void UNavalMovementComponent::EnsureOwnerCanMove()
+{
+	AActor* OwnerActor = GetOwner();
+	USceneComponent* RootComponent = OwnerActor ? OwnerActor->GetRootComponent() : nullptr;
+	if (!RootComponent || RootComponent->Mobility == EComponentMobility::Movable)
+	{
+		return;
+	}
+
+	UE_LOG(
+		LogNavalCore,
+		Warning,
+		TEXT("[Movement] %s : %s was not Movable, so every steering and buoyancy write was being "
+			 "discarded. Forcing Movable -- clear the stale Mobility on the Blueprint or the "
+			 "placed instance so this stops being needed."),
+		*GetPathNameSafe(OwnerActor),
+		*RootComponent->GetName());
+	RootComponent->SetMobility(EComponentMobility::Movable);
+}
+
 void UNavalMovementComponent::SetSpeedScale(float NewSpeedScale)
 {
 	if (AActor* OwnerActor = GetOwner(); OwnerActor && OwnerActor->HasAuthority())
@@ -84,6 +106,14 @@ void UNavalMovementComponent::TickComponent(
 	if (!OwnerActor || !OwnerActor->HasAuthority() || DeltaTime <= 0.0f)
 	{
 		return;
+	}
+
+	// Vessel components arrive by GameFeature injection, so a peer can finish registering after
+	// this one's BeginPlay. Re-resolving only while the helm is missing keeps a boat that came
+	// up in an awkward order from being permanently unsteerable for one lookup a frame.
+	if (!Helm.IsValid())
+	{
+		ResolvePeers();
 	}
 
 	UNavalHelmComponent* HelmComponent = Helm.Get();
