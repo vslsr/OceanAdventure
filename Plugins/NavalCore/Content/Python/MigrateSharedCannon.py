@@ -23,6 +23,13 @@ reported missing dependencies -- the fix relies on the objects still being resol
     import MigrateSharedCannon
     MigrateSharedCannon.main()
 
+Re-running inside the same editor session needs a reload -- import hands back the module object
+it cached the first time, so an edited file is silently ignored and the old code runs again:
+
+    import importlib, MigrateSharedCannon
+    importlib.reload(MigrateSharedCannon)
+    MigrateSharedCannon.main()
+
 Afterwards re-run the two authoring scripts (CreateNavalCoreCannon.py, and the Raft feature's
 CreateRaftNavalAssets.py), then open L_NavalP0 and save it so the placed guns stop going
 through a redirector.
