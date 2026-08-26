@@ -7,7 +7,8 @@ Run this file from Blender's Scripting workspace. It only replaces the generated
         SM_Naval_Cannonball.fbx
 
 After export, run NavalCore's ``CreateNavalCoreCannon.py`` in Unreal Editor to import
-the FBX into ``/NavalCore/Naval/Meshes`` and configure the projectile Blueprint. The
+the FBX into ``/NavalCore/NavalArts/Cannon/Meshes`` and configure the projectile
+Blueprint. The
 shell belongs to the shared cannon in the framework plugin, not to a GameFeature,
 because the field emplacement and the deck gun both fire it. The script is safe to
 re-run and does not touch unrelated scene objects.
