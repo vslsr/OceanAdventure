@@ -148,3 +148,18 @@ bool UOceanAdventureGameplayAbility_OperateHelm::IsStationStillValid(AActor* Sta
 	const AActor* CurrentOperator = Helm->GetOperator();
 	return CurrentOperator == nullptr || CurrentOperator == GetAvatarActorFromActorInfo();
 }
+
+bool UOceanAdventureGameplayAbility_OperateHelm::GetOperatorTransform(
+	AActor* Station, FTransform& OutTransform) const
+{
+	const ANavalHelmActor* HelmActor = Cast<ANavalHelmActor>(Station);
+	if (!HelmActor)
+	{
+		return false;
+	}
+
+	// Standing behind the wheel and facing the bow, so W/S read as ahead/astern for the
+	// player exactly as they do for the hull.
+	OutTransform = HelmActor->GetOperatorTransform();
+	return true;
+}

@@ -200,7 +200,15 @@ private:
 	/** Seconds of uninterrupted contact so far; only past ContestEntrySeconds does 改旗 start. */
 	float ContestContactSeconds = 0.0f;
 
+	/**
+	 * Replicated for presentation only -- the wheel on the console turns with them. The
+	 * server writes them from validated control samples and is the only reader that moves
+	 * the hull; nothing on a client is allowed to write them back.
+	 */
+	UPROPERTY(Replicated)
 	float ThrottleIntent = 0.0f;
+
+	UPROPERTY(Replicated)
 	float SteerIntent = 0.0f;
 
 	/** Server clock reading of the first sweep that saw the operator without a controller. */

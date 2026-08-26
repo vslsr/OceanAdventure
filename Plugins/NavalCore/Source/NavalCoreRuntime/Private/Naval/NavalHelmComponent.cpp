@@ -80,6 +80,8 @@ void UNavalHelmComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	DOREPLIFETIME(UNavalHelmComponent, HelmActor);
 	DOREPLIFETIME(UNavalHelmComponent, CaptureProgress);
 	DOREPLIFETIME(UNavalHelmComponent, CapturingTeamId);
+	DOREPLIFETIME(UNavalHelmComponent, ThrottleIntent);
+	DOREPLIFETIME(UNavalHelmComponent, SteerIntent);
 }
 
 void UNavalHelmComponent::SpawnHelmActor()

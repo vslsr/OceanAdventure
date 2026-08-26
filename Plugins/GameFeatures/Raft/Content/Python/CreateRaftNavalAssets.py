@@ -6,7 +6,8 @@ Two things live here because both belong to the raft rather than to a game mode:
     rudder and a deck cannon -- all backed by ANavalBuildPieceActor and tuned entirely
     through NavalCore's piece fragments;
   * Blueprint component subclasses carrying the T0 raft's hull, tonnage and helm placement,
-    injected into ARaftActor by this feature's own GameFeatureData.
+    injected into ARaftActor by this feature's own GameFeatureData, plus BP_Raft_Helm -- the
+    console the helm component spawns on the deck for players to press E on.
 
 The vessel components are added by the Raft feature and not by a gameplay feature on purpose:
 a GameFeature may not reference another GameFeature's classes or assets, and "how much hull a
@@ -31,12 +32,17 @@ CYLINDER_MESH_PATH = "/Engine/BasicShapes/Cylinder.Cylinder"
 
 NAVAL_PIECE_ACTOR_CLASS_PATH = "/Script/NavalCoreRuntime.NavalBuildPieceActor"
 HEAVY_WEAPON_CLASS_PATH = "/Script/NavalCoreRuntime.NavalHeavyWeaponActor"
+HELM_ACTOR_CLASS_PATH = "/Script/NavalCoreRuntime.NavalHelmActor"
 RAFT_ACTOR_CLASS_PATH = "/Script/RaftRuntime.RaftActor"
 RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_Default"
 LIFE_RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_LifeRaft"
 LIFE_RAFT_BLUEPRINT_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/BP_Raft_LifeRaft"
 
 DECK_CANNON_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Raft_HeavyCannon"
+
+# 主舵台. The raft's helm component spawns one of these on its own deck at BeginPlay, so this
+# Blueprint is where art and snap-point tweaks go without touching NavalCore.
+HELM_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Raft_Helm"
 
 # Design 7.11's starting tonnage scale: floor 1, wall/window 2, pontoon +2/+15,
 # thruster +4/+18, small heavy weapon +8, large heavy weapon +12.
@@ -173,6 +179,8 @@ COMPONENT_BLUEPRINTS = (
         "properties": {
             # 初始甲板中后部的固定格, with two open approaches so it can be reached and contested.
             "helm_local_offset": unreal.Vector(-120.0, 0.0, 25.0),
+            # The console faces the bow, so the operator snap point behind it does too.
+            "helm_local_yaw": 0.0,
             "interaction_range": 260.0,
         },
     },
@@ -503,7 +511,25 @@ def configure_life_raft():
     )
 
 
-def configure_component_blueprints():
+def configure_helm_blueprint():
+    """The console the player walks up to and presses E on.
+
+    ANavalHelmActor already greyboxes itself, so this Blueprint exists purely as the art and
+    tuning hook: assign the wheel and pedestal meshes here, nudge OperatorPoint, and the raft
+    spawns it instead of the bare C++ class.
+    """
+    helm_class = require(
+        unreal.load_class(None, HELM_ACTOR_CLASS_PATH),
+        f"Failed to load {HELM_ACTOR_CLASS_PATH}; compile NavalCoreRuntime first",
+    )
+    blueprint = get_or_create_blueprint(HELM_BLUEPRINT_PATH, helm_class)
+    unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    save(blueprint)
+    return blueprint_class(blueprint, HELM_BLUEPRINT_PATH)
+
+
+def configure_component_blueprints(property_overrides=None):
+    property_overrides = property_overrides or {}
     component_classes = []
     for spec in COMPONENT_BLUEPRINTS:
         asset_path = f"{NAVAL_ROOT}/{spec['asset']}"
@@ -513,7 +539,9 @@ def configure_component_blueprints():
         )
         blueprint = get_or_create_blueprint(asset_path, parent)
         defaults = unreal.get_default_object(blueprint_class(blueprint, asset_path))
-        for name, value in spec["properties"].items():
+        properties = dict(spec["properties"])
+        properties.update(property_overrides.get(spec["asset"], {}))
+        for name, value in properties.items():
             defaults.set_editor_property(name, value)
 
         # Blueprint defaults only persist through a compile, and compilation can replace the
@@ -595,11 +623,17 @@ def main():
     save(catalog)
 
     configure_life_raft()
-    configure_game_feature_data(configure_component_blueprints())
+    helm_actor_class = configure_helm_blueprint()
+    configure_game_feature_data(
+        configure_component_blueprints(
+            {"BPC_NavalHelm_RaftT0": {"helm_actor_class": helm_actor_class}}
+        )
+    )
 
     log(
-        f"Added {len(managed_pieces)} naval pieces to the raft catalog and injected the vessel "
-        "components; restart the editor so the GameFeature re-registers"
+        f"Added {len(managed_pieces)} naval pieces to the raft catalog, authored "
+        f"{HELM_BLUEPRINT_PATH} and injected the vessel components; restart the editor so the "
+        "GameFeature re-registers"
     )
 
 
