@@ -38,7 +38,10 @@ HELM_ACTOR_CLASS_PATH = "/Script/NavalCoreRuntime.NavalHelmActor"
 # gun and the field emplacement the same weapon, and a GameFeature may not reference another
 # feature's assets -- NavalCore is the only place both can name.
 SHARED_CANNON_BLUEPRINT_PATH = "/NavalCore/Naval/BP_Naval_Cannon"
-SHARED_CANNON_MESH_PATH = "/NavalCore/Naval/Meshes/SM_Naval_Cannon"
+NAVAL_CORE_ROOT = "/NavalCore"
+# Looked up by name, not by folder: NavalCore's art is grouped per weapon under NavalArts and
+# gets regrouped as it grows, and this script has no business tracking that.
+SHARED_CANNON_MESH_NAME = "SM_Naval_Cannon"
 RAFT_ACTOR_CLASS_PATH = "/Script/RaftRuntime.RaftActor"
 RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_Default"
 LIFE_RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_LifeRaft"
@@ -151,7 +154,7 @@ DECK_CANNON_PIECE = {
     "slot": "PROP",
     # Placement ghost. The real gun mesh when it is available, so what the player lines up is
     # the shape they get; the box is only a stand-in before the art has been migrated.
-    "mesh": SHARED_CANNON_MESH_PATH,
+    "mesh": SHARED_CANNON_MESH_NAME,
     "mesh_scale": (1.0, 1.0, 1.0),
     "mesh_offset": (0.0, 0.0, 0.0),
     "fallback_mesh": CUBE_MESH_PATH,
@@ -403,6 +406,15 @@ def configure_naval_piece(piece_class, spec, invalid_material, naval_actor_class
     return piece
 
 
+def find_naval_core_asset(asset_name):
+    """Where a NavalCore asset lives right now, or None. Name lookup survives a reorganise."""
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    for asset_data in registry.get_assets_by_path(NAVAL_CORE_ROOT, recursive=True):
+        if str(asset_data.asset_name) == asset_name:
+            return str(asset_data.package_name)
+    return None
+
+
 def configure_deck_cannon(piece_class, invalid_material):
     """A deck-mounted heavy weapon: the shared cannon, built as a piece and owned by its ship.
 
@@ -422,17 +434,17 @@ def configure_deck_cannon(piece_class, invalid_material):
         unreal.EditorAssetLibrary.load_blueprint_class(SHARED_CANNON_BLUEPRINT_PATH), missing_cannon
     )
 
+    ghost_mesh_path = find_naval_core_asset(DECK_CANNON_PIECE["mesh"])
     ghost_mesh = (
-        unreal.EditorAssetLibrary.load_asset(DECK_CANNON_PIECE["mesh"])
-        if unreal.EditorAssetLibrary.does_asset_exist(DECK_CANNON_PIECE["mesh"])
-        else None
+        unreal.EditorAssetLibrary.load_asset(ghost_mesh_path) if ghost_mesh_path else None
     )
     if ghost_mesh is not None:
         mesh_scale = DECK_CANNON_PIECE["mesh_scale"]
         mesh_offset = DECK_CANNON_PIECE["mesh_offset"]
     else:
         log(
-            f"{DECK_CANNON_PIECE['mesh']} is missing; the placement ghost falls back to a box"
+            f"No {DECK_CANNON_PIECE['mesh']} under {NAVAL_CORE_ROOT}; the placement ghost "
+            "falls back to a box"
         )
         ghost_mesh = require(
             unreal.EditorAssetLibrary.load_asset(DECK_CANNON_PIECE["fallback_mesh"]),
@@ -621,7 +633,9 @@ def configure_game_feature_data(component_classes):
 
 
 def main():
-    unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([FEATURE_ROOT], True, True)
+    unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous(
+        [FEATURE_ROOT, NAVAL_CORE_ROOT], True, True
+    )
 
     validate_gameplay_tags()
 
