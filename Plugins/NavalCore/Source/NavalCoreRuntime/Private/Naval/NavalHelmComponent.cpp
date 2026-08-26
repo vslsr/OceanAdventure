@@ -143,13 +143,9 @@ bool UNavalHelmComponent::CanOccupy(const AActor* Candidate, FGameplayTag& OutFa
 		return false;
 	}
 
-	const double DistanceSquared = FVector::DistSquared(Candidate->GetActorLocation(), GetHelmWorldLocation());
-	if (DistanceSquared > FMath::Square(static_cast<double>(InteractionRange)))
-	{
-		OutFailReason = NavalGameplayTags::Fail_TooFar;
-		return false;
-	}
-
+	// Reach is deliberately not checked here. A vessel can carry several wheels -- one that
+	// came with the hull, more built onto the deck -- so "close enough" is a question only the
+	// wheel the player walked up to can answer, and ANavalHelmActor::CanOperate answers it.
 	return true;
 }
 

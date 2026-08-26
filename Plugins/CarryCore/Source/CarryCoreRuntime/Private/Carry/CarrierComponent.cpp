@@ -217,11 +217,12 @@ bool UCarrierComponent::ServerPutDown()
 
 	UCarryableComponent* Carryable = Carried.Get();
 	AActor* CarriedActor = Carryable->GetOwner();
-	const FVector PutDownLocation = ComputePutDownLocation(CarriedActor);
+	USceneComponent* RestAttachParent = nullptr;
+	const FVector PutDownLocation = ComputePutDownLocation(CarriedActor, RestAttachParent);
 
 	// Rest transform first: clearing the carrier is what makes every machine place the
-	// object, so it has to already know where.
-	Carryable->SetRestTransform(PutDownLocation, Owner->GetActorRotation().Yaw);
+	// object, so it has to already know where, and what it is standing on.
+	Carryable->SetRestTransform(PutDownLocation, Owner->GetActorRotation().Yaw, RestAttachParent);
 	Carryable->SetCarrier(nullptr);
 
 	// Collision came back with the put-down, so anyone standing in the new footprint is
@@ -230,8 +231,11 @@ bool UCarrierComponent::ServerPutDown()
 	return true;
 }
 
-FVector UCarrierComponent::ComputePutDownLocation(const AActor* CarriedActor) const
+FVector UCarrierComponent::ComputePutDownLocation(
+	const AActor* CarriedActor, USceneComponent*& OutRestAttachParent) const
 {
+	OutRestAttachParent = nullptr;
+
 	const AActor* Owner = GetOwner();
 	if (!Owner)
 	{
@@ -273,6 +277,9 @@ FVector UCarrierComponent::ComputePutDownLocation(const AActor* CarriedActor) co
 	const FVector TraceEnd = Desired - FVector(0.0, 0.0, PutDownTraceDown);
 	if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, GroundTraceChannel, QueryParams))
 	{
+		// Whatever it landed on becomes its host. On a deck that is what makes it ride the
+		// boat; on terrain the attachment is inert, and costs nothing.
+		OutRestAttachParent = Hit.GetComponent();
 		return Hit.ImpactPoint;
 	}
 

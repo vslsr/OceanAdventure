@@ -82,15 +82,17 @@ AActor* UOceanAdventureGameplayAbility_OperateHelm::FindStationInRange() const
 
 bool UOceanAdventureGameplayAbility_OperateHelm::ServerOccupyStation(AActor* Station)
 {
-	UNavalHelmComponent* Helm = ResolveHelm(Station);
-	return Helm && Helm->TryOccupy(GetAvatarActorFromActorInfo());
+	// Through the wheel rather than through the vessel: a deck can carry several, and only the
+	// one the client says it walked up to may re-check its own reach and damage state.
+	ANavalHelmActor* HelmActor = Cast<ANavalHelmActor>(Station);
+	return HelmActor && HelmActor->TryOccupy(GetAvatarActorFromActorInfo());
 }
 
 void UOceanAdventureGameplayAbility_OperateHelm::ServerReleaseStation(AActor* Station)
 {
-	if (UNavalHelmComponent* Helm = ResolveHelm(Station))
+	if (ANavalHelmActor* HelmActor = Cast<ANavalHelmActor>(Station))
 	{
-		Helm->ReleaseHelm(GetAvatarActorFromActorInfo());
+		HelmActor->ReleaseOperator(GetAvatarActorFromActorInfo());
 	}
 }
 

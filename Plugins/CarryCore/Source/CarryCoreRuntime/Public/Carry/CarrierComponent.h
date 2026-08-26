@@ -125,8 +125,11 @@ protected:
 	TEnumAsByte<ECollisionChannel> GroundTraceChannel = ECC_Visibility;
 
 private:
-	/** Ground under the spot in front of the owner, or that spot at foot height if there is none. */
-	FVector ComputePutDownLocation(const AActor* CarriedActor) const;
+	/**
+	 * Ground under the spot in front of the owner, or that spot at foot height if there is
+	 * none. Also reports what it came to rest on, so a deck can be attached to and ridden.
+	 */
+	FVector ComputePutDownLocation(const AActor* CarriedActor, USceneComponent*& OutRestAttachParent) const;
 
 	/** Pushes characters standing in the footprint out of it, once collision is back on. */
 	void PushCharactersClear(const AActor* PlacedActor, const FVector& Center, float ClearanceRadius) const;

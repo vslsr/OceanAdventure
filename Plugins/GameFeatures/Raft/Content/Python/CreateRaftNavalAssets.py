@@ -3,9 +3,9 @@
 Two things live here because both belong to the raft rather than to a game mode:
 
   * the P0 build pieces that can be shot -- wall, one-way firing window, pontoon, thruster,
-    rudder and a deck cannon -- all backed by ANavalBuildPieceActor and tuned entirely
-    through NavalCore's piece fragments (the cannon piece spawns the shared gun from
-    /NavalCore, not a raft-local copy);
+    rudder, a deck cannon and the helm -- all backed by ANavalBuildPieceActor and tuned
+    entirely through NavalCore's piece fragments (the cannon and helm pieces stand up real
+    Actors instead: the shared gun from /NavalCore, and BP_Raft_Helm);
   * Blueprint component subclasses carrying the T0 raft's hull, tonnage and helm placement,
     injected into ARaftActor by this feature's own GameFeatureData, plus BP_Raft_Helm -- the
     console the helm component spawns on the deck for players to press E on.
@@ -42,14 +42,31 @@ NAVAL_CORE_ROOT = "/NavalCore"
 # Looked up by name, not by folder: NavalCore's art is grouped per weapon under NavalArts and
 # gets regrouped as it grows, and this script has no business tracking that.
 SHARED_CANNON_MESH_NAME = "SM_Naval_Cannon"
+HELM_WHEEL_MESH_NAME = "SM_Naval_HelmWheel"
 RAFT_ACTOR_CLASS_PATH = "/Script/RaftRuntime.RaftActor"
 RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_Default"
 LIFE_RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_LifeRaft"
 LIFE_RAFT_BLUEPRINT_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/BP_Raft_LifeRaft"
 
-# 主舵台. The raft's helm component spawns one of these on its own deck at BeginPlay, so this
-# Blueprint is where art and snap-point tweaks go without touching NavalCore.
+# 主舵台. The hull spawns one of these at BeginPlay and more can be built onto the deck, so
+# this Blueprint is where art and snap-point tweaks go without touching NavalCore.
 HELM_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Raft_Helm"
+
+# The helm as a build piece. Weighs about as much as a wall pair and takes a mid-function
+# construction time (design 7.8's 2.5-4s band): a wheel is quick to bolt down, and losing one
+# has to be recoverable at sea or a shot to the helm ends the boat.
+HELM_PIECE = {
+    "asset": "DA_BuildPiece_Raft_Helm",
+    "tag": "Raft.Piece.Prop.Helm",
+    "slot": "PROP",
+    "mesh": HELM_WHEEL_MESH_NAME,
+    "mesh_scale": (1.0, 1.0, 1.0),
+    "mesh_offset": (0.0, 0.0, 0.0),
+    "fallback_mesh": CYLINDER_MESH_PATH,
+    "fallback_mesh_scale": (0.6, 0.6, 0.9),
+    "fallback_mesh_offset": (0.0, 0.0, 45.0),
+    "tonnage": 3.0,
+}
 
 # Design 7.11's starting tonnage scale: floor 1, wall/window 2, pontoon +2/+15,
 # thruster +4/+18, small heavy weapon +8, large heavy weapon +12.
@@ -243,6 +260,7 @@ def validate_gameplay_tags():
     """Fail before touching assets if the Raft module did not register its tag directory."""
     tag_names = [spec["tag"] for spec in PIECES]
     tag_names.append(DECK_CANNON_PIECE["tag"])
+    tag_names.append(HELM_PIECE["tag"])
     for tag_name in tag_names:
         gameplay_tag(tag_name)
     log(f"Validated {len(tag_names)} registered Raft naval piece tags")
@@ -415,6 +433,68 @@ def find_naval_core_asset(asset_name):
     return None
 
 
+def resolve_ghost_mesh(spec):
+    """The real thing when its art exists, a greybox stand-in when it does not.
+
+    The placement ghost is what the player lines a piece up with, so it should be the shape
+    they end up with. The fallback only covers the window before the art has been made.
+    """
+    mesh_path = find_naval_core_asset(spec["mesh"])
+    mesh = unreal.EditorAssetLibrary.load_asset(mesh_path) if mesh_path else None
+    if mesh is not None:
+        return mesh, spec["mesh_scale"], spec["mesh_offset"]
+
+    log(f"No {spec['mesh']} under {NAVAL_CORE_ROOT}; the placement ghost falls back to a box")
+    fallback = require(
+        unreal.EditorAssetLibrary.load_asset(spec["fallback_mesh"]),
+        f"Missing {spec['fallback_mesh']}",
+    )
+    return fallback, spec["fallback_mesh_scale"], spec["fallback_mesh_offset"]
+
+
+def configure_spawn_actor_piece(piece_class, spec, invalid_material, actor_class):
+    """A build piece that puts a real Actor on the deck rather than a mesh instance.
+
+    Guns and helms both own durability, occupancy and their own construction window, so the
+    piece only has to say what it weighs and which Actor to stand up. UBuildStructureVisual-
+    Component attaches what it spawns to the host, which is what makes the thing ride the boat
+    and, for a helm, what makes the vessel recognise it as somewhere to steer from.
+    """
+    ghost_mesh, mesh_scale, mesh_offset = resolve_ghost_mesh(spec)
+
+    asset_path = f"{PIECES_ROOT}/{spec['asset']}"
+    piece = get_or_create_data_asset(asset_path, piece_class)
+    piece.set_editor_property("piece_tag", gameplay_tag(spec["tag"]))
+    piece.set_editor_property("slot_type", enum_value("BuildSlotType", spec["slot"]))
+    piece.set_editor_property("mesh", ghost_mesh)
+    piece.set_editor_property("mesh_scale", unreal.Vector(*mesh_scale))
+    piece.set_editor_property("mesh_offset", unreal.Vector(*mesh_offset))
+    piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
+    piece.set_editor_property("override_materials", [])
+    piece.set_editor_property("invalid_preview_material", invalid_material)
+    piece.set_editor_property("costs", [])
+
+    spawn_fragment = make_fragment(
+        piece,
+        "BuildPieceFragment_SpawnActor",
+        {"actor_class": actor_class, "spawn_offset": unreal.Vector(0.0, 0.0, 0.0)},
+    )
+    load_fragment = make_fragment(
+        piece,
+        "BuildPieceFragment_NavalLoad",
+        {
+            "tonnage": spec["tonnage"],
+            "buoyancy_capacity": 0.0,
+            "thrust": 0.0,
+            "steering": 0.0,
+        },
+    )
+    piece.set_editor_property("fragments", [spawn_fragment, load_fragment])
+    save(piece)
+    log(f"{spec['asset']} spawns {actor_class.get_name()}")
+    return piece
+
+
 def configure_deck_cannon(piece_class, invalid_material):
     """A deck-mounted heavy weapon: the shared cannon, built as a piece and owned by its ship.
 
@@ -433,59 +513,17 @@ def configure_deck_cannon(piece_class, invalid_material):
     cannon_class = require(
         unreal.EditorAssetLibrary.load_blueprint_class(SHARED_CANNON_BLUEPRINT_PATH), missing_cannon
     )
+    return configure_spawn_actor_piece(piece_class, DECK_CANNON_PIECE, invalid_material, cannon_class)
 
-    ghost_mesh_path = find_naval_core_asset(DECK_CANNON_PIECE["mesh"])
-    ghost_mesh = (
-        unreal.EditorAssetLibrary.load_asset(ghost_mesh_path) if ghost_mesh_path else None
-    )
-    if ghost_mesh is not None:
-        mesh_scale = DECK_CANNON_PIECE["mesh_scale"]
-        mesh_offset = DECK_CANNON_PIECE["mesh_offset"]
-    else:
-        log(
-            f"No {DECK_CANNON_PIECE['mesh']} under {NAVAL_CORE_ROOT}; the placement ghost "
-            "falls back to a box"
-        )
-        ghost_mesh = require(
-            unreal.EditorAssetLibrary.load_asset(DECK_CANNON_PIECE["fallback_mesh"]),
-            f"Missing {DECK_CANNON_PIECE['fallback_mesh']}",
-        )
-        mesh_scale = DECK_CANNON_PIECE["fallback_mesh_scale"]
-        mesh_offset = DECK_CANNON_PIECE["fallback_mesh_offset"]
 
-    asset_path = f"{PIECES_ROOT}/{DECK_CANNON_PIECE['asset']}"
-    piece = get_or_create_data_asset(asset_path, piece_class)
-    piece.set_editor_property("piece_tag", gameplay_tag(DECK_CANNON_PIECE["tag"]))
-    piece.set_editor_property("slot_type", enum_value("BuildSlotType", DECK_CANNON_PIECE["slot"]))
-    piece.set_editor_property("mesh", ghost_mesh)
-    piece.set_editor_property("mesh_scale", unreal.Vector(*mesh_scale))
-    piece.set_editor_property("mesh_offset", unreal.Vector(*mesh_offset))
-    piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
-    piece.set_editor_property("override_materials", [])
-    piece.set_editor_property("invalid_preview_material", invalid_material)
-    piece.set_editor_property("costs", [])
+def configure_helm_piece(piece_class, invalid_material, helm_actor_class):
+    """The helm as something you build, carry and steer from.
 
-    # The weapon Actor owns its own durability and construction window, so the piece only
-    # needs to say what it weighs.
-    spawn_fragment = make_fragment(
-        piece,
-        "BuildPieceFragment_SpawnActor",
-        {"actor_class": cannon_class, "spawn_offset": unreal.Vector(0.0, 0.0, 0.0)},
-    )
-    load_fragment = make_fragment(
-        piece,
-        "BuildPieceFragment_NavalLoad",
-        {
-            "tonnage": DECK_CANNON_PIECE["tonnage"],
-            "buoyancy_capacity": 0.0,
-            "thrust": 0.0,
-            "steering": 0.0,
-        },
-    )
-    piece.set_editor_property("fragments", [spawn_fragment, load_fragment])
-    save(piece)
-    log(f"Deck cannon piece spawns {SHARED_CANNON_BLUEPRINT_PATH}")
-    return piece
+    A vessel is issued one wheel with its hull and can build more; each is a separate Actor on
+    the deck, and the vessel-wide state -- who is steering, capture progress, throttle -- stays
+    on the one UNavalHelmComponent behind all of them.
+    """
+    return configure_spawn_actor_piece(piece_class, HELM_PIECE, invalid_material, helm_actor_class)
 
 
 def configure_base_module_load():
@@ -555,11 +593,11 @@ def configure_life_raft():
 
 
 def configure_helm_blueprint():
-    """The console the player walks up to and presses E on.
+    """The wheel the player walks up to and presses E on.
 
-    ANavalHelmActor already greyboxes itself, so this Blueprint exists purely as the art and
-    tuning hook: assign the wheel and pedestal meshes here, nudge OperatorPoint, and the raft
-    spawns it instead of the bare C++ class.
+    ANavalHelmActor greyboxes itself, so this Blueprint is the art hook: the wheel mesh goes on
+    WheelMesh, which hangs off WheelPivot and turns with the steering actually being applied.
+    The pedestal under it stays a greybox until someone authors an SM_Naval_HelmConsole.
     """
     helm_class = require(
         unreal.load_class(None, HELM_ACTOR_CLASS_PATH),
@@ -567,6 +605,29 @@ def configure_helm_blueprint():
     )
     blueprint = get_or_create_blueprint(HELM_BLUEPRINT_PATH, helm_class)
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+
+    wheel_mesh_path = find_naval_core_asset(HELM_WHEEL_MESH_NAME)
+    wheel_mesh = (
+        unreal.EditorAssetLibrary.load_asset(wheel_mesh_path) if wheel_mesh_path else None
+    )
+    if wheel_mesh is not None:
+        defaults = unreal.get_default_object(blueprint_class(blueprint, HELM_BLUEPRINT_PATH))
+        wheel_component = require(
+            defaults.get_editor_property("wheel_mesh"),
+            "ANavalHelmActor has no WheelMesh component",
+        )
+        wheel_component.set_static_mesh(wheel_mesh)
+        # The C++ default is a flattened cylinder standing in for a wheel; a real wheel is
+        # authored at its own scale and orientation, so both are handed back.
+        wheel_component.set_relative_scale3d(unreal.Vector(1.0, 1.0, 1.0))
+        wheel_component.set_relative_rotation(unreal.Rotator(0.0, 0.0, 0.0))
+        unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+        log(f"{HELM_BLUEPRINT_PATH} uses {wheel_mesh_path} as its wheel")
+    else:
+        log(
+            f"No {HELM_WHEEL_MESH_NAME} under {NAVAL_CORE_ROOT}; the helm keeps its greybox wheel"
+        )
+
     save(blueprint)
     return blueprint_class(blueprint, HELM_BLUEPRINT_PATH)
 
@@ -650,11 +711,16 @@ def main():
         f"Missing {INVALID_PREVIEW_MATERIAL_PATH}; run CreateRaftBuildPieceAssets.py first",
     )
 
+    # The helm Blueprint comes first: both the vessel component that issues one with the hull
+    # and the build piece that adds more need its generated class.
+    helm_actor_class = configure_helm_blueprint()
+
     managed_pieces = [
         configure_naval_piece(piece_class, spec, invalid_material, naval_actor_class)
         for spec in PIECES
     ]
     managed_pieces.append(configure_deck_cannon(piece_class, invalid_material))
+    managed_pieces.append(configure_helm_piece(piece_class, invalid_material, helm_actor_class))
     configure_base_module_load()
 
     catalog = get_or_create_data_asset(CATALOG_PATH, catalog_class)
@@ -668,7 +734,6 @@ def main():
     save(catalog)
 
     configure_life_raft()
-    helm_actor_class = configure_helm_blueprint()
     configure_game_feature_data(
         configure_component_blueprints(
             {"BPC_NavalHelm_RaftT0": {"helm_actor_class": helm_actor_class}}

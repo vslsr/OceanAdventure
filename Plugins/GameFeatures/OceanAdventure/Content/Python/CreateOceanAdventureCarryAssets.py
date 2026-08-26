@@ -4,6 +4,7 @@
     DA_AbilitySet_OceanCarry                     the toggle ability, granted by PawnData
     OceanCarry_AddComponents                     UCarrierComponent  -> AOceanAdventurePawn
                                                  UCarryableComponent -> ANavalHeavyWeaponActor
+                                                 UCarryableComponent -> ANavalHelmActor
 
 Nothing here is authored onto the cannon Blueprint: an experience that does not enable this
 feature gets a gun nobody can lift, which is the point of injecting the component instead of
@@ -62,6 +63,10 @@ OWNED_ACTION_CLASSES = {
 INJECTED_COMPONENTS = (
     ("/Script/OceanAdventureRuntime.OceanAdventurePawn", "CarrierComponent"),
     ("/Script/NavalCoreRuntime.NavalHeavyWeaponActor", "CarryableComponent"),
+    # The helm follows the same rule as the gun: built onto a deck, and liftable off it again.
+    # Picking one up attaches it to the character, which is exactly what makes the vessel stop
+    # recognising it as a way to steer -- no extra bookkeeping is needed for that.
+    ("/Script/NavalCoreRuntime.NavalHelmActor", "CarryableComponent"),
 )
 
 

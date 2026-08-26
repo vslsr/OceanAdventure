@@ -45,7 +45,12 @@ public:
 		FActorComponentTickFunction* ThisTickFunction) override;
 	virtual void GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const override;
 
-	/** Same-team check, seat occupancy and core state, in one place both sides can call. */
+	/**
+	 * The vessel-wide half of "may this character steer": team, wreck state and whether the
+	 * seat is already taken. Reach and damage belong to the wheel being used, so they are
+	 * checked by ANavalHelmActor::CanOperate -- go through that unless there is no wheel
+	 * involved at all, as with a capture attempt.
+	 */
 	UFUNCTION(BlueprintCallable, Category = "Naval|Helm")
 	bool CanOccupy(const AActor* Candidate, FGameplayTag& OutFailReason) const;
 
@@ -114,7 +119,13 @@ public:
 	FOnNavalHelmChanged OnHelmChanged;
 
 protected:
-	/** Deck console spawned and attached at BeginPlay; carries the reinforced core seat. */
+	/**
+	 * The wheel the hull comes with, spawned and attached at BeginPlay.
+	 *
+	 * Leave it empty on a vessel whose helm is meant to be built rather than issued: the
+	 * component still owns steering, capture and ownership, and any ANavalHelmActor placed on
+	 * the deck by the build system becomes a way in the moment it is attached.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm")
 	TSubclassOf<ANavalHelmActor> HelmActorClass;
 
@@ -125,6 +136,7 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (Units = "deg"))
 	float HelmLocalYaw = 0.0f;
 
+	/** Capture reach, measured to the hull's own wheel. Steering reach lives on each wheel. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (ClampMin = "50.0", Units = "cm"))
 	float InteractionRange = 260.0f;
 

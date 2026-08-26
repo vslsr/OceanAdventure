@@ -25,8 +25,15 @@ class UStaticMeshComponent;
  * Everything a player touches is here, mirroring ANavalHeavyWeaponActor: the seat body is
  * what the station search overlaps, OperatorPoint is where the character is pinned once it
  * takes the wheel, and the wheel turns with the steering the helm is actually applying.
- * Ownership, capture and control still live on UNavalHelmComponent, which spawns one of these
- * per vessel -- this Actor never becomes a second source of truth for who is steering.
+ * Ownership, capture and control still live on UNavalHelmComponent, which is one per vessel --
+ * this Actor never becomes a second source of truth for who is steering.
+ *
+ * A vessel may carry several of these: one spawned with the hull, more built onto the deck,
+ * and any of them can be picked up and moved. So the wheel a player is standing at is what
+ * answers "close enough?" and "is this thing intact?", and the vessel-wide questions -- team,
+ * wreck, is the seat already taken -- stay on the component. Which vessel this belongs to is
+ * read from what it is attached to, never cached, so carrying one off a deck takes its
+ * steering with it without anything having to be told.
  */
 UCLASS(BlueprintType, Blueprintable)
 class NAVALCORERUNTIME_API ANavalHelmActor : public AActor
@@ -67,11 +74,20 @@ public:
 	AActor* GetHelmOperator() const;
 
 	/**
-	 * Same question the server answers in UNavalHelmComponent::CanOccupy, asked through the
-	 * Actor the player actually walked up to, so a preview and the server share one rule set.
+	 * Everything that can refuse this wheel, in one place both the client preview and the
+	 * server verdict call: reach and damage are this Actor's, team and occupancy are the
+	 * vessel's.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Naval|Helm")
 	bool CanOperate(const AActor* Candidate, FGameplayTag& OutFailReason) const;
+
+	/** Server side. Takes this wheel for the operator, re-validating everything first. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
+	bool TryOccupy(AActor* NewOperator);
+
+	/** Server side. Frees the wheel if this operator holds it. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
+	void ReleaseOperator(AActor* LeavingOperator);
 
 	/** Where the character is placed and pinned while it holds the wheel. */
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
@@ -106,6 +122,13 @@ protected:
 	 */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Naval|Helm")
 	TObjectPtr<UNavalPartComponent> CorePart;
+
+	/**
+	 * Reach from this wheel. It matches the heavy weapon's and the carryable's so that "close
+	 * enough to steer" and "close enough to lift it" cannot disagree by a few centimetres.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (ClampMin = "50.0", Units = "cm"))
+	float InteractionRange = 260.0f;
 
 	/** Wheel rotation at full steer. Reads as "hard over", it is not a physical limit. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (Units = "deg"))

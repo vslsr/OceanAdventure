@@ -10,6 +10,7 @@
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalHelmComponent.h"
 #include "Naval/NavalPartComponent.h"
+#include "NavalCoreRuntimeModule.h"
 #include "UObject/ConstructorHelpers.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NavalHelmActor)
@@ -144,15 +145,75 @@ AActor* ANavalHelmActor::GetHelmOperator() const
 
 bool ANavalHelmActor::CanOperate(const AActor* Candidate, FGameplayTag& OutFailReason) const
 {
+	if (!Candidate)
+	{
+		OutFailReason = NavalGameplayTags::Fail_WrongTeam;
+		return false;
+	}
+
 	const UNavalHelmComponent* Helm = GetHelmComponent();
 	if (!Helm)
 	{
-		// A console with no core assembly behind it is scenery, not a station.
+		// Not on a vessel: either scenery, or a wheel someone is carrying or has set down on
+		// dry land. Nothing to steer from here.
 		OutFailReason = NavalGameplayTags::Fail_NotOperational;
 		return false;
 	}
 
+	// A wheel shot apart stops being a way in, even though the core seat under it survives.
+	if (CorePart && !CorePart->IsFunctional())
+	{
+		OutFailReason = NavalGameplayTags::Fail_NotOperational;
+		return false;
+	}
+
+	// Reach is measured to this wheel rather than to the vessel's original one: with several
+	// helms on a deck, the one the player walked up to is the one that decides.
+	const double DistanceSquared = FVector::DistSquared(Candidate->GetActorLocation(), GetActorLocation());
+	if (DistanceSquared > FMath::Square(static_cast<double>(InteractionRange)))
+	{
+		OutFailReason = NavalGameplayTags::Fail_TooFar;
+		return false;
+	}
+
 	return Helm->CanOccupy(Candidate, OutFailReason);
+}
+
+bool ANavalHelmActor::TryOccupy(AActor* NewOperator)
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	FGameplayTag FailReason;
+	if (!CanOperate(NewOperator, FailReason))
+	{
+		UE_LOG(
+			LogNavalCore,
+			Verbose,
+			TEXT("[Helm] Occupy refused helm=%s candidate=%s reason=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(NewOperator),
+			*FailReason.ToString());
+		return false;
+	}
+
+	UNavalHelmComponent* Helm = GetHelmComponent();
+	return Helm && Helm->TryOccupy(NewOperator);
+}
+
+void ANavalHelmActor::ReleaseOperator(AActor* LeavingOperator)
+{
+	if (!HasAuthority())
+	{
+		return;
+	}
+
+	if (UNavalHelmComponent* Helm = GetHelmComponent())
+	{
+		Helm->ReleaseHelm(LeavingOperator);
+	}
 }
 
 FTransform ANavalHelmActor::GetOperatorTransform() const

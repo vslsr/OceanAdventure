@@ -1,8 +1,10 @@
-# 船舵（主舵台）：按 E 上舵、再按 E 下舵
+# 船舵（主舵台）：可建造、可搬运、按 E 上舵
 
 ## 这一版做了什么
 
 - 玩家初始木筏的甲板上有一座**船舵 Actor**（`ANavalHelmActor`），走近按 `E` 吸附上去。
+- 船舵也是**建造件**（`DA_BuildPiece_Raft_Helm`）和**可搬运物**（`UCarryableComponent`）：
+  按 `B` 造一座、按 `F` 抬走放到别处，和甲板炮完全同一套规则。
 - 上舵后角色被钉在舵位上（`OperatorPoint`），`W/S` 变成进退、`A/D` 变成转向，控制的是船体而不是脚。
 - 再按一次 `E` 下舵：输入还给走路，船保持航向并自然减速（不急停、不自动驾驶）。
 - 舵轮会跟着当前实际转向量转动，作为纯表现反馈。
@@ -52,7 +54,7 @@ IA_Naval_Interact (E)
 | `ConsoleMesh` | 舵台底座，**无碰撞**——设计 8.3.1 明确不允许远处一枪打瘫全船 |
 | `WheelPivot` / `WheelMesh` | 舵轮，跟随 `GetSteerIntent()` 插值转动，纯表现 |
 | `OperatorPoint` | 角色站位（舵台后方、面向船首），`GetOperatorTransform()` 提供给能力 |
-| `CoreSeatCollision` | 加固舵芯座：唯一的受击体，也是 Overlap 找站位时命中的体积（`WorldDynamic`） |
+| `CoreSeatCollision` | 加固舵芯座：唯一的受击体，也是 Overlap 找站位时命中的体积（`WorldDynamic`）。被抬起时碰撞整体关闭，因此搜不到，也打不中 |
 | `CorePart` | `UNavalPartComponent`，750 耐久 ≈ 普通墙的 2.5–3 倍 |
 
 它不持有"谁在掌舵"这件事——归属、夺船、控制量全在船上的 `UNavalHelmComponent`，
@@ -60,11 +62,25 @@ Actor 只是玩家能走到、能看到、能打到的那一层。
 
 两个 Mesh 默认用引擎基础体素灰盒，所以**没有美术资源也能直接看到并交互**。
 
-## 谁把它放到木筏上
+## 一条船可以有几座舵台
 
-不是手动摆的，也不是建造出来的：`UNavalHelmComponent::BeginPlay()` 在服务端按
-`HelmLocalOffset` / `HelmLocalYaw` 生成一座并 attach 到船上，`EndPlay` 时销毁。
-"舵不能在海上拆装移动"因此是结构事实，而不是一条要玩家遵守的规则。
+**一座舵芯，多个入口。** 归属、控制量、夺船进度只存在于船上那一个
+`UNavalHelmComponent`；甲板上的每座 `ANavalHelmActor` 都只是走上去开船的入口。
+
+- **出厂那座**：`UNavalHelmComponent::BeginPlay()` 在服务端按 `HelmLocalOffset` /
+  `HelmLocalYaw` 生成并 attach，`EndPlay` 时销毁。想要"必须先造舵才能开船"的船型，
+  把 `HelmActorClass` 留空即可。
+- **建造出来的**：`DA_BuildPiece_Raft_Helm` 的 `SpawnActor` fragment 生成 `BP_Raft_Helm`，
+  `UBuildStructureVisualComponent` 负责 attach 到甲板。
+- **搬来的**：抬起时附着到角色身上、关碰撞；放下时附着到落点所在的物件上。
+
+三条路径共用同一个判断：**这座舵台当前 attach 在谁身上，它就属于那条船**
+（`ANavalHelmActor::GetHelmComponent()` 每次现算，不缓存）。所以抬起一座舵台就等于
+把这个入口从船上摘走，不需要任何额外通知；放到另一条船的甲板上，它立刻就是那条船的舵台。
+
+**够不够得着由舵台自己判定**，不再由船判定：`ANavalHelmActor::CanOperate()` 检查与
+**这一座**的距离和它自身的损坏状态，`UNavalHelmComponent::CanOccupy()` 只回答全船性的问题
+（队伍、残骸、座位是否被占）。一条船上有前后两座舵台时，这是唯一说得通的分法。
 
 木筏的这套船体组件由 Raft 这个 GameFeature 自己注入（`RaftNaval_AddVesselComponents`）：
 
@@ -77,7 +93,18 @@ Raft.uasset (GameFeatureData)
 ```
 
 `BP_Raft_Helm` 由 `Plugins/GameFeatures/Raft/Content/Python/CreateRaftNavalAssets.py` 生成，
-换舵轮/舵台模型、微调站位都改这个蓝图，不要回头改 NavalCore 的 C++ 默认值。
+舵轮模型取自 `/NavalCore` 下的 `SM_Naval_HelmWheel`（按资产名解析，美术目录怎么分组都行），
+挂在 `WheelMesh` 上——它在 `WheelPivot` 下面，会跟着转向量转。舵台底座仍是灰盒，
+补一个 `SM_Naval_HelmConsole` 挂到 `ConsoleMesh` 即可。微调站位也改这个蓝图，
+不要回头改 NavalCore 的 C++ 默认值。
+
+## 已知限制
+
+**抬走一件建造出来的东西，格子不会被释放。** 建造记录（`FBuildPieceEntry`）与 Actor 是两回事：
+`UCarryableComponent` 只搬 Actor，`UBuildStructureComponent` 那边的占用、连通性和吨位仍然算着。
+所以把建造出来的舵台抬走后，那个格子还是占着的，吨位也还在。甲板炮同样如此——这是搬运系统
+V1 就存在的缺口，不是舵台引入的。要修的话是在抬起时调 `TryRemovePiece()` 把格子退掉，
+放下时重新走一次放置校验；那会牵动建造的资源返还与连通性规则，单独做。
 
 ## 常见排查
 
@@ -88,3 +115,5 @@ Raft.uasset (GameFeatureData)
   对照 `CanOccupy()` 的四项：队伍、残骸、座位被占、距离。
 - **上了舵船不动**：`AcceptsControlInput()` 为假（舵芯被打坏 / 正被夺船 / 船已成残骸），
   或推进力为 0——舵本身不产生动力，推进来自推进器部件。
+- **搬到别处的舵台按 E 没反应**：它没 attach 在船上（放在了地形上），
+  `GetHelmComponent()` 返回空 → `Fail_NotOperational`。这是有意的：舵台离船就不能开船。

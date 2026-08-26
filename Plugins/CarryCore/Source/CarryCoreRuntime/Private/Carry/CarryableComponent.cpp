@@ -24,6 +24,7 @@ void UCarryableComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	DOREPLIFETIME(UCarryableComponent, Carrier);
 	DOREPLIFETIME(UCarryableComponent, RestLocation);
 	DOREPLIFETIME(UCarryableComponent, RestYaw);
+	DOREPLIFETIME(UCarryableComponent, RestAttachParent);
 }
 
 void UCarryableComponent::BeginPlay()
@@ -38,9 +39,13 @@ void UCarryableComponent::BeginPlay()
 	}
 	else if (const AActor* Owner = GetOwner())
 	{
-		// Wherever it was authored or spawned is its resting place until someone moves it.
+		// Wherever it was authored or spawned is its resting place until someone moves it,
+		// including whatever it was already attached to -- a deck gun starts life on a deck.
 		RestLocation = Owner->GetActorLocation();
 		RestYaw = Owner->GetActorRotation().Yaw;
+		RestAttachParent = Owner->GetRootComponent()
+			? Owner->GetRootComponent()->GetAttachParent()
+			: nullptr;
 	}
 }
 
@@ -107,7 +112,8 @@ void UCarryableComponent::SetCarrier(AActor* NewCarrier)
 	Owner->ForceNetUpdate();
 }
 
-void UCarryableComponent::SetRestTransform(const FVector& InLocation, float InYaw)
+void UCarryableComponent::SetRestTransform(
+	const FVector& InLocation, float InYaw, USceneComponent* InAttachParent)
 {
 	const AActor* Owner = GetOwner();
 	if (!Owner || !Owner->HasAuthority())
@@ -117,6 +123,7 @@ void UCarryableComponent::SetRestTransform(const FVector& InLocation, float InYa
 
 	RestLocation = InLocation;
 	RestYaw = InYaw;
+	RestAttachParent = InAttachParent;
 }
 
 void UCarryableComponent::OnRep_CarryState()
@@ -160,6 +167,12 @@ void UCarryableComponent::ApplyCarryState()
 	{
 		Owner->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 		Owner->SetActorLocationAndRotation(FVector(RestLocation), FRotator(0.0, RestYaw, 0.0));
+		if (USceneComponent* AttachParent = RestAttachParent.Get())
+		{
+			// Set down on something that moves -- a deck, a lift -- so it rides that instead of
+			// being left behind in world space the first time the host moves.
+			Owner->AttachToComponent(AttachParent, FAttachmentTransformRules::KeepWorldTransform);
+		}
 		Owner->SetActorEnableCollision(true);
 	}
 

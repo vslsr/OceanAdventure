@@ -70,8 +70,14 @@ public:
 	/** Server side. Called by UCarrierComponent, which owns the sequencing. */
 	void SetCarrier(AActor* NewCarrier);
 
-	/** Server side. Where the object goes when it is put back down. */
-	void SetRestTransform(const FVector& InLocation, float InYaw);
+	/**
+	 * Server side. Where the object goes when it is put back down, and what it rides.
+	 *
+	 * RestAttachParent is whatever the put-down trace landed on. An object set down on a deck
+	 * has to be attached to it or it stays behind the moment the boat moves, and systems that
+	 * ask "which vessel is this on?" read exactly that attachment. Null means open ground.
+	 */
+	void SetRestTransform(const FVector& InLocation, float InYaw, USceneComponent* InAttachParent = nullptr);
 
 	/** Fires on the server and on every client that sees the object change hands. */
 	FOnCarryStateChanged OnCarryStateChanged;
@@ -117,6 +123,13 @@ protected:
 
 	UPROPERTY(ReplicatedUsing = OnRep_CarryState)
 	float RestYaw = 0.0f;
+
+	/**
+	 * What the object stands on once it is down, replicated with the rest of the state so
+	 * every machine reattaches the same way rather than inferring it from a local trace.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_CarryState)
+	TObjectPtr<USceneComponent> RestAttachParent = nullptr;
 
 	UFUNCTION()
 	void OnRep_CarryState();
