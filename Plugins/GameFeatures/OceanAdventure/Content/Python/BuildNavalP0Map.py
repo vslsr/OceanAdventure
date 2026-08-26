@@ -24,7 +24,9 @@ LABEL_PREFIX = "NavalP0_"
 
 RAFT_ACTOR_PATH = "/Raft/Vehicles/Raft/BP_Raft_Default"
 BEACON_ACTOR_PATH = "/OceanAdventure/Naval/BP_NavalP0_Beacon"
-GROUND_CANNON_PATH = "/OceanAdventure/Naval/BP_Naval_GroundCannon"
+# The shared gun, in the general framework plugin: the same Blueprint the raft builds on
+# its deck.
+CANNON_BLUEPRINT_PATH = "/NavalCore/Naval/BP_Naval_Cannon"
 CUBE_MESH_PATH = "/Engine/BasicShapes/Cube"
 
 # One unit of the arena. The two bays sit 24000cm apart, which is roughly 30 seconds of
@@ -154,7 +156,7 @@ def build_bays(actor_subsystem):
     """Two mirrored spawn bays: a start, a raft, and a gun kit already on the beach."""
     player_start_class = load_class("/Script/LyraGame.LyraPlayerStart")
     raft_class = load_blueprint_class(RAFT_ACTOR_PATH)
-    cannon_class = load_blueprint_class(GROUND_CANNON_PATH)
+    cannon_class = load_blueprint_class(CANNON_BLUEPRINT_PATH)
 
     for index, side in enumerate((-1.0, 1.0)):
         bay_x = side * BAY_OFFSET_X

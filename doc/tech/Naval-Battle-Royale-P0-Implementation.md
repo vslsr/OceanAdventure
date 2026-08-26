@@ -25,7 +25,8 @@
 三条容易踩的边界，本次都按规范处理：
 
 - **NavalCore 不认识 GAS、CommonUI、LyraGame。** 队伍归属通过 `IGenericTeamAgentInterface` 读取，作弊命令、存档恢复、编辑器脚本可以直接调用框架 API。
-- **两个 GameFeature 互不引用。** 船体组件由 Raft 自己的 GameFeatureData 注入 `ARaftActor`；救生筏与地面炮的类路径写在项目 `Config/DefaultGame.ini` 里，由宿主工程把两边接起来。
+- **两个 GameFeature 互不引用。** 船体组件由 Raft 自己的 GameFeatureData 注入 `ARaftActor`；救生筏的类路径写在项目 `Config/DefaultGame.ini` 里，由宿主工程把两边接起来。
+- **炮只有一门。** 设计 7.10 规定地面架设与甲板安装是同一门炮、同一套规则，所以蓝图、炮弹和美术都下沉到 `NavalCore`（`/NavalCore/Naval/BP_Naval_Cannon`），野战与甲板两条路径都指向它。为此 `NavalCore.uplugin` 开了 `CanContainContent`——通用插件装内容不违反分层，Feature 依赖通用框架是自上而下的合法方向；反过来把炮留在某个 Feature 里，另一个 Feature 就无法引用。
 - **`GameFeatureAction_AddComponents` 的反射桥下沉到 NavalCore**（`UNavalCoreAssetLibrary`），Raft 的编辑器脚本不再需要调用 OceanAdventure 的脚本。
 
 ## 2. P0 硬规则 → 代码
@@ -54,7 +55,7 @@
 - 所有船只、部件、重武器状态由服务端写入并复制；客户端只做本地预览与表现。
 - 玩家请求一律走 GAS 的 TargetData 通道（`CallServerSetReplicatedTargetData` + `AbilityTargetDataSetDelegate`），**没有任何自造的 Server/Client RPC**。操舵是一个 20Hz 的连续 TargetData 采样流，服务端逐条校验"你是不是我认为在掌舵的那个人"。
 - 重炮交互成功后，服务端给玩家 ASC 临时授予 `UOceanAdventureGameplayAbility_FireHeavyWeapon`，以 HeavyWeapon Actor 作为 `SourceObject` 并绑定 `InputTag.Naval.Fire`；离炮或炮被销毁时回收该 Spec。
-- 弹道参数集中在 `BP_Naval_GroundCannon` 的 `Naval|HeavyWeapon`：`MinimumRange`（最小射程）、`MaxRange`（满蓄力射程）、`TrajectoryFlightSeconds`（满蓄力飞行时间）和 `MaxTrajectoryRise`（满蓄力弧顶高度）。编辑器脚本顶部的 `CANNON_TRAJECTORY_DEFAULTS` 可批量重设这些值；蓄力过程会按射程比例缩放弧线并保持同一发射仰角。
+- 弹道参数集中在 `/NavalCore/Naval/BP_Naval_Cannon` 的 `Naval|HeavyWeapon`：`MinimumRange`（最小射程）、`MaxRange`（满蓄力射程）、`TrajectoryFlightSeconds`（满蓄力飞行时间）和 `MaxTrajectoryRise`（满蓄力弧顶高度）。`Plugins/NavalCore/Content/Python/CreateNavalCoreCannon.py` 顶部的 `CANNON_TRAJECTORY_DEFAULTS` 可批量重设这些值；蓄力过程会按射程比例缩放弧线并保持同一发射仰角。
 - 反馈（失败原因、警报、载重变化、命中）全部通过 `UGameplayMessageSubsystem` 广播，UI/音效/埋点各自订阅。
 - 倒计时以**服务器时间戳**复制（`NavalTime::GetNetworkTimeSeconds`），而不是复制一个递减的秒数，中途加入或丢包的客户端读到的数字一致。
 - 角色伤害是唯一一处跨层：NavalCore 广播 `FNavalProjectileImpactMessage`，玩法层的 `UOceanAdventureNavalDamageRelay` 把它变成 GameplayEffect。这样框架层完全不碰 GAS。

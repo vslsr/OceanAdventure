@@ -1,15 +1,16 @@
 """Create and export a UE5-ready stylized heavy-weapon cannonball.
 
 Run this file from Blender's Scripting workspace. It only replaces the generated
-``Naval_Cannonball_Generated`` collection and exports one FBX into the owning
-OceanAdventure GameFeature:
+``Naval_Cannonball_Generated`` collection and exports one FBX:
 
     blender/models/
         SM_Naval_Cannonball.fbx
 
-After export, run OceanAdventure's ``CreateNavalP0Assets.py`` in Unreal Editor to
-import the FBX into ``/OceanAdventure/Naval/Models`` and configure the projectile
-Blueprint. The script is safe to re-run and does not touch unrelated scene objects.
+After export, run NavalCore's ``CreateNavalCoreCannon.py`` in Unreal Editor to import
+the FBX into ``/NavalCore/Naval/Meshes`` and configure the projectile Blueprint. The
+shell belongs to the shared cannon in the framework plugin, not to a GameFeature,
+because the field emplacement and the deck gun both fire it. The script is safe to
+re-run and does not touch unrelated scene objects.
 """
 
 import math

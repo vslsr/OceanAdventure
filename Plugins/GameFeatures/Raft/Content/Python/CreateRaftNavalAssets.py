@@ -4,7 +4,8 @@ Two things live here because both belong to the raft rather than to a game mode:
 
   * the P0 build pieces that can be shot -- wall, one-way firing window, pontoon, thruster,
     rudder and a deck cannon -- all backed by ANavalBuildPieceActor and tuned entirely
-    through NavalCore's piece fragments;
+    through NavalCore's piece fragments (the cannon piece spawns the shared gun from
+    /NavalCore, not a raft-local copy);
   * Blueprint component subclasses carrying the T0 raft's hull, tonnage and helm placement,
     injected into ARaftActor by this feature's own GameFeatureData, plus BP_Raft_Helm -- the
     console the helm component spawns on the deck for players to press E on.
@@ -31,14 +32,17 @@ CUBE_MESH_PATH = "/Engine/BasicShapes/Cube.Cube"
 CYLINDER_MESH_PATH = "/Engine/BasicShapes/Cylinder.Cylinder"
 
 NAVAL_PIECE_ACTOR_CLASS_PATH = "/Script/NavalCoreRuntime.NavalBuildPieceActor"
-HEAVY_WEAPON_CLASS_PATH = "/Script/NavalCoreRuntime.NavalHeavyWeaponActor"
 HELM_ACTOR_CLASS_PATH = "/Script/NavalCoreRuntime.NavalHelmActor"
+
+# The one cannon. It lives in the general framework plugin because design 7.10 makes the deck
+# gun and the field emplacement the same weapon, and a GameFeature may not reference another
+# feature's assets -- NavalCore is the only place both can name.
+SHARED_CANNON_BLUEPRINT_PATH = "/NavalCore/Naval/BP_Naval_Cannon"
+SHARED_CANNON_MESH_PATH = "/NavalCore/Naval/Meshes/SM_Naval_Cannon"
 RAFT_ACTOR_CLASS_PATH = "/Script/RaftRuntime.RaftActor"
 RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_Default"
 LIFE_RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_LifeRaft"
 LIFE_RAFT_BLUEPRINT_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/BP_Raft_LifeRaft"
-
-DECK_CANNON_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Raft_HeavyCannon"
 
 # 主舵台. The raft's helm component spawns one of these on its own deck at BeginPlay, so this
 # Blueprint is where art and snap-point tweaks go without touching NavalCore.
@@ -145,9 +149,14 @@ DECK_CANNON_PIECE = {
     "asset": "DA_BuildPiece_Raft_HeavyCannon",
     "tag": "Raft.Piece.Prop.HeavyCannon",
     "slot": "PROP",
-    "mesh": CUBE_MESH_PATH,
-    "mesh_scale": (1.2, 0.6, 0.6),
-    "mesh_offset": (0.0, 0.0, 30.0),
+    # Placement ghost. The real gun mesh when it is available, so what the player lines up is
+    # the shape they get; the box is only a stand-in before the art has been migrated.
+    "mesh": SHARED_CANNON_MESH_PATH,
+    "mesh_scale": (1.0, 1.0, 1.0),
+    "mesh_offset": (0.0, 0.0, 0.0),
+    "fallback_mesh": CUBE_MESH_PATH,
+    "fallback_mesh_scale": (1.2, 0.6, 0.6),
+    "fallback_mesh_offset": (0.0, 0.0, 30.0),
     "tonnage": 12.0,
 }
 
@@ -395,29 +404,50 @@ def configure_naval_piece(piece_class, spec, invalid_material, naval_actor_class
 
 
 def configure_deck_cannon(piece_class, invalid_material):
-    """A deck-mounted heavy weapon, built as a piece and owned by the ship it stands on."""
-    weapon_class = require(
-        unreal.load_class(None, HEAVY_WEAPON_CLASS_PATH),
-        f"Failed to load {HEAVY_WEAPON_CLASS_PATH}; compile NavalCoreRuntime first",
+    """A deck-mounted heavy weapon: the shared cannon, built as a piece and owned by its ship.
+
+    There is no BP_Raft_HeavyCannon any more. It was an empty subclass of the same C++ class
+    the field emplacement uses, which meant the deck gun quietly ran without a mesh, without a
+    shell and with the C++ default minimum range while the emplacement had all three. Design
+    7.10 says support is the only difference between ground and mounted, so both now spawn
+    /NavalCore/Naval/BP_Naval_Cannon and the difference is expressed where it belongs: this
+    piece's tonnage, and the vessel the gun ends up attached to.
+    """
+    missing_cannon = (
+        f"Missing {SHARED_CANNON_BLUEPRINT_PATH}; run NavalCore's CreateNavalCoreCannon.py "
+        "(and MigrateSharedCannon.py once, if the old per-feature cannons are still around)"
     )
-    cannon_blueprint = get_or_create_blueprint(DECK_CANNON_BLUEPRINT_PATH, weapon_class)
-    unreal.BlueprintEditorLibrary.compile_blueprint(cannon_blueprint)
-    save(cannon_blueprint)
-    cannon_class = blueprint_class(cannon_blueprint, DECK_CANNON_BLUEPRINT_PATH)
+    require(unreal.EditorAssetLibrary.does_asset_exist(SHARED_CANNON_BLUEPRINT_PATH), missing_cannon)
+    cannon_class = require(
+        unreal.EditorAssetLibrary.load_blueprint_class(SHARED_CANNON_BLUEPRINT_PATH), missing_cannon
+    )
+
+    ghost_mesh = (
+        unreal.EditorAssetLibrary.load_asset(DECK_CANNON_PIECE["mesh"])
+        if unreal.EditorAssetLibrary.does_asset_exist(DECK_CANNON_PIECE["mesh"])
+        else None
+    )
+    if ghost_mesh is not None:
+        mesh_scale = DECK_CANNON_PIECE["mesh_scale"]
+        mesh_offset = DECK_CANNON_PIECE["mesh_offset"]
+    else:
+        log(
+            f"{DECK_CANNON_PIECE['mesh']} is missing; the placement ghost falls back to a box"
+        )
+        ghost_mesh = require(
+            unreal.EditorAssetLibrary.load_asset(DECK_CANNON_PIECE["fallback_mesh"]),
+            f"Missing {DECK_CANNON_PIECE['fallback_mesh']}",
+        )
+        mesh_scale = DECK_CANNON_PIECE["fallback_mesh_scale"]
+        mesh_offset = DECK_CANNON_PIECE["fallback_mesh_offset"]
 
     asset_path = f"{PIECES_ROOT}/{DECK_CANNON_PIECE['asset']}"
     piece = get_or_create_data_asset(asset_path, piece_class)
     piece.set_editor_property("piece_tag", gameplay_tag(DECK_CANNON_PIECE["tag"]))
     piece.set_editor_property("slot_type", enum_value("BuildSlotType", DECK_CANNON_PIECE["slot"]))
-    piece.set_editor_property(
-        "mesh",
-        require(
-            unreal.EditorAssetLibrary.load_asset(DECK_CANNON_PIECE["mesh"]),
-            f"Missing {DECK_CANNON_PIECE['mesh']}",
-        ),
-    )
-    piece.set_editor_property("mesh_scale", unreal.Vector(*DECK_CANNON_PIECE["mesh_scale"]))
-    piece.set_editor_property("mesh_offset", unreal.Vector(*DECK_CANNON_PIECE["mesh_offset"]))
+    piece.set_editor_property("mesh", ghost_mesh)
+    piece.set_editor_property("mesh_scale", unreal.Vector(*mesh_scale))
+    piece.set_editor_property("mesh_offset", unreal.Vector(*mesh_offset))
     piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
     piece.set_editor_property("override_materials", [])
     piece.set_editor_property("invalid_preview_material", invalid_material)
@@ -442,6 +472,7 @@ def configure_deck_cannon(piece_class, invalid_material):
     )
     piece.set_editor_property("fragments", [spawn_fragment, load_fragment])
     save(piece)
+    log(f"Deck cannon piece spawns {SHARED_CANNON_BLUEPRINT_PATH}")
     return piece
 
 

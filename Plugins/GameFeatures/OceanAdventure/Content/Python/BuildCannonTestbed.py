@@ -29,7 +29,9 @@ FEATURE_ROOT = "/OceanAdventure"
 MAP_PATH = f"{FEATURE_ROOT}/Maps/L_CannonTest"
 EXPERIENCE_PATH = f"{FEATURE_ROOT}/Experience/B_Experience_CannonTest"
 PAWN_DATA_PATH = f"{FEATURE_ROOT}/Character/DA_OceanAdventure_PawnData"
-GROUND_CANNON_PATH = f"{FEATURE_ROOT}/Naval/BP_Naval_GroundCannon"
+# The shared gun, in the general framework plugin: the same Blueprint the raft builds on
+# its deck, so this testbed measures the gun players actually get.
+CANNON_BLUEPRINT_PATH = "/NavalCore/Naval/BP_Naval_Cannon"
 CUBE_MESH_PATH = "/Engine/BasicShapes/Cube"
 
 LABEL_PREFIX = "CannonTest_"
@@ -234,7 +236,7 @@ def build_cannon(actor_subsystem):
     """Pre-placed and already usable: deployment is a separate feature from firing."""
     return spawn(
         actor_subsystem,
-        load_blueprint_class(GROUND_CANNON_PATH),
+        load_blueprint_class(CANNON_BLUEPRINT_PATH),
         "GroundCannon",
         unreal.Vector(CANNON_OFFSET_X, 0.0, 0.0),
     )

@@ -6,7 +6,7 @@
 	"Description": "Host-agnostic vessel state, tonnage/buoyancy/thrust, helm authority, the wall-and-window ballistic rule, and heavy weapons.",
 	"Category": "Gameplay",
 	"EnabledByDefault": true,
-	"CanContainContent": false,
+	"CanContainContent": true,
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
