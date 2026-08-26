@@ -32,11 +32,26 @@ void UNavalMovementComponent::BeginPlay()
 	PlanarVelocity = FVector::ZeroVector;
 	YawRateDegrees = 0.0f;
 
-	if (!GetOwner() || !GetOwner()->HasAuthority())
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
 	{
-		// Clients receive the replicated transform; predicting a shared platform locally would
-		// fight the passengers standing on it.
-		SetComponentTickEnabled(false);
+		return;
+	}
+
+	if (OwnerActor->HasAuthority())
+	{
+		// This component publishes the pose itself, so the engine's movement replication would
+		// only fight it: a simulated proxy snaps onto each ReplicatedMovement update, which is
+		// exactly the 30Hz staircase the client smoothing exists to remove.
+		OwnerActor->SetReplicateMovement(false);
+		PublishServerPose();
+	}
+	else
+	{
+		// Clients still tick, but only to smooth. Nothing here simulates the hull: predicting a
+		// shared platform locally would fight the passengers standing on it.
+		ServerLocation = OwnerActor->GetActorLocation();
+		ServerRotation = OwnerActor->GetActorRotation();
 	}
 }
 
@@ -46,6 +61,10 @@ void UNavalMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 
 	DOREPLIFETIME(UNavalMovementComponent, CurrentSpeed);
 	DOREPLIFETIME(UNavalMovementComponent, SpeedScale);
+	DOREPLIFETIME(UNavalMovementComponent, ServerLocation);
+	DOREPLIFETIME(UNavalMovementComponent, ServerRotation);
+	DOREPLIFETIME(UNavalMovementComponent, ServerPlanarVelocity);
+	DOREPLIFETIME(UNavalMovementComponent, ServerYawRateDegrees);
 }
 
 void UNavalMovementComponent::ResolvePeers()
@@ -103,7 +122,27 @@ void UNavalMovementComponent::TickComponent(
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor || !OwnerActor->HasAuthority() || DeltaTime <= 0.0f)
+	if (!OwnerActor || DeltaTime <= 0.0f)
+	{
+		return;
+	}
+
+	if (!OwnerActor->HasAuthority())
+	{
+		TickClientSmoothing(DeltaTime);
+		return;
+	}
+
+	TickServerMovement(DeltaTime);
+	// Unconditionally, including the frames the hull did not move: buoyancy is still writing Z
+	// and tilt behind us, and a client that stopped hearing about it would stop bobbing.
+	PublishServerPose();
+}
+
+void UNavalMovementComponent::TickServerMovement(float DeltaTime)
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
 	{
 		return;
 	}
@@ -221,4 +260,70 @@ void UNavalMovementComponent::TickComponent(
 	// Not swept, matching the host's buoyancy: passengers must never become blockers for the
 	// platform that carries them. Hull-to-hull collision belongs to a later ramming pass.
 	OwnerActor->SetActorLocationAndRotation(NewLocation, NewRotation, false, nullptr, ETeleportType::None);
+}
+
+void UNavalMovementComponent::PublishServerPose()
+{
+	const AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		return;
+	}
+
+	ServerLocation = OwnerActor->GetActorLocation();
+	ServerRotation = OwnerActor->GetActorRotation();
+	ServerPlanarVelocity = PlanarVelocity;
+	ServerYawRateDegrees = YawRateDegrees;
+}
+
+void UNavalMovementComponent::OnRep_ServerPose()
+{
+	const UWorld* World = GetWorld();
+	LastServerPoseTime = World ? World->GetTimeSeconds() : 0.0;
+	bHasServerPose = true;
+}
+
+void UNavalMovementComponent::TickClientSmoothing(float DeltaTime)
+{
+	AActor* OwnerActor = GetOwner();
+	const UWorld* World = GetWorld();
+	if (!OwnerActor || !World || !bHasServerPose)
+	{
+		return;
+	}
+
+	// Dead reckon first. Aiming straight at the last pose received would leave the hull
+	// permanently half an update behind, which on a boat holding course is a constant offset
+	// rather than a wobble -- and constant offsets are what make a moving platform feel wrong.
+	const float Elapsed = FMath::Clamp(
+		static_cast<float>(World->GetTimeSeconds() - LastServerPoseTime),
+		0.0f,
+		ClientMaxExtrapolationSeconds);
+
+	const FVector TargetLocation = FVector(ServerLocation) + FVector(ServerPlanarVelocity) * Elapsed;
+	FRotator TargetRotation = ServerRotation;
+	// Yaw is the only axis under power. Pitch and roll come from the waves and are eased into,
+	// never extrapolated: guessing a tilt forward would read as the boat lurching on its own.
+	TargetRotation.Yaw = FRotator::NormalizeAxis(TargetRotation.Yaw + ServerYawRateDegrees * Elapsed);
+
+	const FVector CurrentLocation = OwnerActor->GetActorLocation();
+	if (FVector::DistSquared(CurrentLocation, TargetLocation)
+		> FMath::Square(static_cast<double>(ClientSnapDistance)))
+	{
+		// A spawn, a teleport, or a connection that just came back. Sliding a deck with people
+		// standing on it across that gap is worse than putting it where it belongs.
+		OwnerActor->SetActorLocationAndRotation(
+			TargetLocation, TargetRotation, false, nullptr, ETeleportType::TeleportPhysics);
+		return;
+	}
+
+	const FVector NewLocation =
+		FMath::VInterpTo(CurrentLocation, TargetLocation, DeltaTime, ClientCorrectionSpeed);
+	const FRotator NewRotation =
+		FMath::RInterpTo(OwnerActor->GetActorRotation(), TargetRotation, DeltaTime, ClientCorrectionSpeed);
+
+	// Not swept, matching the server: passengers must never become blockers for the platform
+	// that carries them.
+	OwnerActor->SetActorLocationAndRotation(
+		NewLocation, NewRotation, false, nullptr, ETeleportType::None);
 }

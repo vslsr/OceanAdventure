@@ -29,6 +29,28 @@
 - **炮只有一门。** 设计 7.10 规定地面架设与甲板安装是同一门炮、同一套规则，所以蓝图、炮弹和美术都下沉到 `NavalCore`（`/NavalCore/Naval/BP_Naval_Cannon`），野战与甲板两条路径都指向它。为此 `NavalCore.uplugin` 开了 `CanContainContent`——通用插件装内容不违反分层，Feature 依赖通用框架是自上而下的合法方向；反过来把炮留在某个 Feature 里，另一个 Feature 就无法引用。
 - **`GameFeatureAction_AddComponents` 的反射桥下沉到 NavalCore**（`UNavalCoreAssetLibrary`），Raft 的编辑器脚本不再需要调用 OceanAdventure 的脚本。
 
+### 客户端看到的船
+
+船体的位姿**不走 AActor 的移动复制**，由 `UNavalMovementComponent` 自己发布并在客户端插值。
+原因是普通 Actor 的 `PostNetReceiveLocationAndRotation` 是直接 snap（只有 Character 才有
+CMC 的 `SmoothClientPosition`），30Hz 下就是每秒 30 级台阶——**站在甲板上的每个人都跟着跳**。
+
+```
+服务端  TickServerMovement()  →  PublishServerPose()
+          位姿 + 平面速度 + 偏航角速度（4 个复制属性）
+客户端  TickClientSmoothing()
+          ① 用速度把上一帧位姿外推 Elapsed 秒（上限 ClientMaxExtrapolationSeconds）
+          ② VInterpTo/RInterpTo 把剩余误差以 ClientCorrectionSpeed 抹掉
+          ③ 误差超过 ClientSnapDistance 直接瞬移（出生、重连、大延迟尖峰）
+```
+
+先外推再纠正，是为了避免"永远慢半个更新"——那在直线航行时是一个恒定偏移，比抖动更难受。
+俯仰/横滚只插值不外推：那是浪给的，猜一个前倾会读成船自己在颠。
+
+这一层**纯表现**：客户端算出来的东西不回传，纠正永远是服务端位姿赢，不违反
+"不要预测复制型数据结构"。真正的输入预测（掌舵端本地积分 + 回执重放）是另一件事，
+前置条件是把船的 Owner 交给掌舵者、并解决乘客随平台回滚被拽的问题。
+
 ## 2. P0 硬规则 → 代码
 
 | 设计规则 | 落点 | 关键点 |

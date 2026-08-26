@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Components/ActorComponent.h"
+#include "Engine/NetSerialization.h"
 
 #include "NavalMovementComponent.generated.h"
 
@@ -11,11 +12,17 @@ class UNavalLoadComponent;
 class UNavalVesselComponent;
 
 /**
- * Turns helm intent into vessel motion, on the server only.
+ * Turns helm intent into vessel motion on the server, and keeps that motion smooth on clients.
  *
- * It writes planar translation and yaw and nothing else, because the host's buoyancy already
- * owns Z, pitch and roll. The two never fight: buoyancy preserves yaw and XY, this preserves
- * Z and tilt, and the replicated actor transform carries the result to clients.
+ * The server writes planar translation and yaw and nothing else, because the host's buoyancy
+ * already owns Z, pitch and roll. The two never fight: buoyancy preserves yaw and XY, this
+ * preserves Z and tilt.
+ *
+ * Clients do not simulate any of it. They receive the authoritative pose from this component
+ * rather than from AActor's movement replication, carry it forward by the velocity it was made
+ * with, and ease out whatever is left over -- so a hull moves continuously instead of stepping
+ * 30 times a second. That is presentation only: nothing a client computes here is ever sent
+ * back, and a correction is always the server's pose winning.
  *
  * Everything that degrades handling arrives from somewhere a player can attack: load bands
  * from the carry model, propulsion and rudder capability from parts, control authority from
@@ -115,6 +122,51 @@ protected:
 	UPROPERTY(Replicated)
 	float SpeedScale = 1.0f;
 
+	/**
+	 * How hard a client pulls the hull onto the authoritative pose, as an interpolation speed.
+	 *
+	 * This is the whole trade: too low and the boat lags behind what the server says during a
+	 * turn, too high and it inherits the 30Hz staircase this exists to remove. It only ever
+	 * corrects the residual after dead reckoning, so it can be gentle.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Client", meta = (ClampMin = "0.1"))
+	float ClientCorrectionSpeed = 12.0f;
+
+	/**
+	 * Past this much error a client stops correcting and teleports.
+	 *
+	 * A spawn, a respawn or a connection coming back leaves the hull an arbitrary distance from
+	 * where it belongs, and sliding a boat -- with people standing on it -- across that gap
+	 * would be far worse than a jump.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Client", meta = (ClampMin = "50.0", Units = "cm"))
+	float ClientSnapDistance = 800.0f;
+
+	/** Ceiling on dead reckoning, so a stalled connection coasts rather than sails away. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Client", meta = (ClampMin = "0.0", Units = "s"))
+	float ClientMaxExtrapolationSeconds = 0.4f;
+
+	/**
+	 * The authoritative pose, published by this component instead of by the engine's movement
+	 * replication.
+	 *
+	 * AActor's own replicated movement snaps a simulated proxy onto each update, which at 30Hz
+	 * is a visible staircase -- and every passenger standing on the deck rides that staircase.
+	 * Owning the pose here is what lets a client smooth it instead.
+	 */
+	UPROPERTY(ReplicatedUsing = OnRep_ServerPose)
+	FVector_NetQuantize100 ServerLocation = FVector::ZeroVector;
+
+	UPROPERTY(ReplicatedUsing = OnRep_ServerPose)
+	FRotator ServerRotation = FRotator::ZeroRotator;
+
+	/** Sent so a client can carry the hull forward between updates rather than trail behind. */
+	UPROPERTY(Replicated)
+	FVector_NetQuantize100 ServerPlanarVelocity = FVector::ZeroVector;
+
+	UPROPERTY(Replicated)
+	float ServerYawRateDegrees = 0.0f;
+
 private:
 	void ResolvePeers();
 
@@ -129,11 +181,27 @@ private:
 	 */
 	void EnsureOwnerCanMove();
 
+	/** Server: integrate the helm's intent into a new hull pose. */
+	void TickServerMovement(float DeltaTime);
+
+	/** Server: hand the clients the pose and the motion it was made with. */
+	void PublishServerPose();
+
+	/** Client: dead reckon from the last pose and ease the residual out. */
+	void TickClientSmoothing(float DeltaTime);
+
+	UFUNCTION()
+	void OnRep_ServerPose();
+
 	TWeakObjectPtr<UNavalHelmComponent> Helm;
 	TWeakObjectPtr<UNavalLoadComponent> Load;
 	TWeakObjectPtr<UNavalVesselComponent> Vessel;
 
-	/** Server-only world-space planar velocity; the actor transform is the replicated truth. */
+	/** Server-only world-space planar velocity. What clients see is ServerLocation, smoothed. */
 	FVector PlanarVelocity = FVector::ZeroVector;
 	float YawRateDegrees = 0.0f;
+
+	/** Client-side: when the last pose landed, and whether one ever has. */
+	double LastServerPoseTime = 0.0;
+	bool bHasServerPose = false;
 };
