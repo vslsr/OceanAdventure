@@ -1,10 +1,10 @@
-# 搬运系统 V1（按 B 抬起 / 放下）
+# 搬运系统 V1（按 F 抬起 / 放下）
 
 ## 这一版做了什么
 
-- 站在已架设的野战重武器旁按 `B`：武器附着到角色的搬运点，整个 Actor 关闭碰撞。
-- 再按一次 `B`：武器放到角色正前方的地面上，恢复碰撞；站在落点里的角色被水平轻推开。
-- 一次只能搬一个：手上有东西时 `B` 只会执行"放下"。
+- 站在已架设的野战重武器旁按 `F`：武器附着到角色的搬运点，整个 Actor 关闭碰撞。
+- 再按一次 `F`：武器放到角色正前方的地面上，恢复碰撞；站在落点里的角色被水平轻推开。
+- 一次只能搬一个：手上有东西时 `F` 只会执行"放下"。
 
 ## 为什么不进背包
 
@@ -34,10 +34,13 @@ GameFramework 组件接收者（与 `AOceanChunkActor` 同一写法），组件�
 OceanCarry_AddComponents (GameFeatureData)
 ├─ AOceanAdventurePawn      ← UCarrierComponent
 └─ ANavalHeavyWeaponActor   ← UCarryableComponent
-OceanCarry_AddInputMapping  ← IMC_OceanCarry (B)
+OceanCarry_AddInputMapping  ← IMC_OceanCarry (F)
 OceanCarry_AddInputBinding  ← DA_InputConfig_OceanCarry (InputTag.Carry)
 DA_AbilitySet_OceanCarry    ← 由 DA_OceanAdventure_PawnData 授予
 ```
+
+按键选 `F` 而不是 `B`：`B` 已经是 `IA_Build_Mode`（建造模式开关）。同一个物理键上挂两个能力，
+一次按下会把两个 ability 都激活，先后顺序取决于 spec 列表顺序，不可靠。
 
 由 `Content/Python/CreateOceanAdventureCarryAssets.py` 幂等生成，Action 名字固定，重跑只替换
 自己的条目。

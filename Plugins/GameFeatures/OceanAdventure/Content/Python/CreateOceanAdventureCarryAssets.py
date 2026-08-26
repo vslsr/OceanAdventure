@@ -1,6 +1,6 @@
-"""Create the carry gameplay layer: the B key, the ability, and the two injected components.
+"""Create the carry gameplay layer: the F key, the ability, and the two injected components.
 
-    IMC_OceanCarry / DA_InputConfig_OceanCarry   InputTag.Carry -> IA_Ocean_Carry (B)
+    IMC_OceanCarry / DA_InputConfig_OceanCarry   InputTag.Carry -> IA_Ocean_Carry (F)
     DA_AbilitySet_OceanCarry                     the toggle ability, granted by PawnData
     OceanCarry_AddComponents                     UCarrierComponent  -> AOceanAdventurePawn
                                                  UCarryableComponent -> ANavalHeavyWeaponActor
@@ -45,7 +45,9 @@ INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanCarry"
 ABILITY_SET_PATH = f"{CARRY_ROOT}/DA_AbilitySet_OceanCarry"
 
 CARRY_INPUT_TAG = "InputTag.Carry"
-CARRY_KEY = "B"
+# F, not B: B is already IA_Build_Mode. Two abilities on one InputTag would both
+# activate on the same press, in whatever order their specs happen to sit in.
+CARRY_KEY = "F"
 CARRY_ABILITY_PATH = "/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_Carry"
 
 # Named so a re-run replaces this script's own entries and leaves the naval ones, and any
@@ -218,7 +220,7 @@ def main():
 
     log(
         "Carry input, ability and component injection are configured. Restart the editor so "
-        "the game feature re-registers, then press B next to a deployed field gun."
+        "the game feature re-registers, then press F next to a deployed field gun."
     )
 
 
