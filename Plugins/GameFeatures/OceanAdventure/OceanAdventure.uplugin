@@ -59,6 +59,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "CarryCore",
+			"Enabled": true
+		},
+		{
 			"Name": "GameplayMessageRouter",
 			"Enabled": true
 		},

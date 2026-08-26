@@ -22,6 +22,8 @@ public class NavalCoreRuntime : ModuleRules
 				// Engine plugin, not a GameFeature: the reflection bridge that lets a host
 				// feature's authoring script build its own AddComponents action.
 				"GameFeatures",
+				// The component manager that makes an Actor injectable by a feature action.
+				"ModularGameplay",
 				"NetCore"
 			}
 		);

@@ -42,6 +42,9 @@ public class OceanAdventureRuntime : ModuleRules
 				// Naval framework: vessel state, the ballistic rule, heavy weapons. The
 				// gameplay layer here owns the GAS abilities, input and match rules on top.
 				"NavalCoreRuntime",
+				// Carry framework: who is holding what. The gameplay layer here owns the
+				// ability, the input tag and every game-specific rule about what may be lifted.
+				"CarryCoreRuntime",
 				"GameplayMessageRuntime",
 				"CommonUI",
 				"CommonGame",

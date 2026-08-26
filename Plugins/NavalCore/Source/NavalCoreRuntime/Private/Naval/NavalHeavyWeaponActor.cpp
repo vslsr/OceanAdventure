@@ -17,6 +17,7 @@
 #include "Naval/NavalProjectile.h"
 #include "Naval/NavalTeamStatics.h"
 #include "Naval/NavalTimeStatics.h"
+#include "Components/GameFrameworkComponentManager.h"
 #include "Naval/NavalVesselComponent.h"
 #include "NavalCoreRuntimeModule.h"
 #include "Net/UnrealNetwork.h"
@@ -82,6 +83,12 @@ ANavalHeavyWeaponActor::ANavalHeavyWeaponActor()
 		/*ConstructionSeconds=*/2.4f);
 }
 
+void ANavalHeavyWeaponActor::PreInitializeComponents()
+{
+	Super::PreInitializeComponents();
+	UGameFrameworkComponentManager::AddGameFrameworkComponentReceiver(this);
+}
+
 void ANavalHeavyWeaponActor::BeginPlay()
 {
 	Super::BeginPlay();
@@ -109,6 +116,7 @@ void ANavalHeavyWeaponActor::BeginPlay()
 
 void ANavalHeavyWeaponActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	UGameFrameworkComponentManager::RemoveGameFrameworkComponentReceiver(this);
 	UnbindOperatorDestroyed();
 	if (UWorld* World = GetWorld())
 	{

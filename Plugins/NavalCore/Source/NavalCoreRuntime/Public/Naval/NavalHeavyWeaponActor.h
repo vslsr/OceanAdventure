@@ -35,6 +35,13 @@ class NAVALCORERUNTIME_API ANavalHeavyWeaponActor : public AActor
 public:
 	ANavalHeavyWeaponActor();
 
+	/**
+	 * Registers the gun as a game framework component receiver, which is what lets a feature
+	 * inject a component onto it -- carrying, for one -- instead of the gun growing a default
+	 * subobject for every system that ever wants a say in it.
+	 */
+	virtual void PreInitializeComponents() override;
+
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
