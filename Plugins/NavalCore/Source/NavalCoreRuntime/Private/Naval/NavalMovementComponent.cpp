@@ -30,12 +30,40 @@ void UNavalMovementComponent::BeginPlay()
 	PlanarVelocity = FVector::ZeroVector;
 	YawRateDegrees = 0.0f;
 
-	if (!GetOwner() || !GetOwner()->HasAuthority())
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
 	{
-		// Clients receive the replicated transform; predicting a shared platform locally would
-		// fight the passengers standing on it.
-		SetComponentTickEnabled(false);
+		return;
 	}
+
+	// Engine movement replication snaps ordinary Actors. While this component is present it
+	// publishes one coherent pose sample instead, then restores the host setting on teardown.
+	bPreviousOwnerReplicateMovement = OwnerActor->IsReplicatingMovement();
+	bChangedOwnerReplicateMovement = bPreviousOwnerReplicateMovement;
+	OwnerActor->SetReplicateMovement(false);
+
+	if (OwnerActor->HasAuthority())
+	{
+		PublishAuthorityPose();
+		OwnerActor->ForceNetUpdate();
+	}
+}
+
+void UNavalMovementComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (bChangedOwnerReplicateMovement)
+	{
+		if (AActor* OwnerActor = GetOwner())
+		{
+			OwnerActor->SetReplicateMovement(bPreviousOwnerReplicateMovement);
+			if (OwnerActor->HasAuthority())
+			{
+				OwnerActor->ForceNetUpdate();
+			}
+		}
+	}
+
+	Super::EndPlay(EndPlayReason);
 }
 
 void UNavalMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
@@ -44,6 +72,7 @@ void UNavalMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 
 	DOREPLIFETIME(UNavalMovementComponent, CurrentSpeed);
 	DOREPLIFETIME(UNavalMovementComponent, SpeedScale);
+	DOREPLIFETIME(UNavalMovementComponent, ReplicatedPose);
 }
 
 void UNavalMovementComponent::ResolvePeers()
@@ -57,6 +86,27 @@ void UNavalMovementComponent::ResolvePeers()
 	Helm = OwnerActor->FindComponentByClass<UNavalHelmComponent>();
 	Load = OwnerActor->FindComponentByClass<UNavalLoadComponent>();
 	Vessel = OwnerActor->FindComponentByClass<UNavalVesselComponent>();
+}
+
+void UNavalMovementComponent::PublishAuthorityPose()
+{
+	const AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		return;
+	}
+
+	ReplicatedPose.Location = OwnerActor->GetActorLocation();
+	ReplicatedPose.Rotation = OwnerActor->GetActorRotation();
+	ReplicatedPose.PlanarVelocity = PlanarVelocity;
+	ReplicatedPose.YawRateDegrees = YawRateDegrees;
+}
+
+void UNavalMovementComponent::OnRep_ReplicatedPose()
+{
+	const UWorld* World = GetWorld();
+	LastReplicatedPoseTime = World ? World->GetTimeSeconds() : 0.0;
+	bHasReplicatedPose = true;
 }
 
 void UNavalMovementComponent::SetSpeedScale(float NewSpeedScale)
@@ -81,7 +131,26 @@ void UNavalMovementComponent::TickComponent(
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
 	AActor* OwnerActor = GetOwner();
-	if (!OwnerActor || !OwnerActor->HasAuthority() || DeltaTime <= 0.0f)
+	if (!OwnerActor || DeltaTime <= 0.0f)
+	{
+		return;
+	}
+
+	if (!OwnerActor->HasAuthority())
+	{
+		TickClientInterpolation(*OwnerActor, DeltaTime);
+		return;
+	}
+
+	TickAuthorityMovement(DeltaTime);
+	// Publish even while planar motion is idle: buoyancy still changes Z, pitch and roll.
+	PublishAuthorityPose();
+}
+
+void UNavalMovementComponent::TickAuthorityMovement(float DeltaTime)
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
 	{
 		return;
 	}
@@ -191,4 +260,54 @@ void UNavalMovementComponent::TickComponent(
 	// Not swept, matching the host's buoyancy: passengers must never become blockers for the
 	// platform that carries them. Hull-to-hull collision belongs to a later ramming pass.
 	OwnerActor->SetActorLocationAndRotation(NewLocation, NewRotation, false, nullptr, ETeleportType::None);
+}
+
+void UNavalMovementComponent::TickClientInterpolation(AActor& OwnerActor, float DeltaTime)
+{
+	const UWorld* World = GetWorld();
+	if (!World || !bHasReplicatedPose)
+	{
+		return;
+	}
+
+	const float ElapsedSincePose = FMath::Clamp(
+		static_cast<float>(World->GetTimeSeconds() - LastReplicatedPoseTime),
+		0.0f,
+		ClientMaxExtrapolationSeconds);
+	const FVector TargetLocation = FVector(ReplicatedPose.Location)
+		+ FVector(ReplicatedPose.PlanarVelocity) * ElapsedSincePose;
+	FRotator TargetRotation = ReplicatedPose.Rotation;
+	// Only powered yaw is safe to carry forward. Wave-authored pitch and roll are interpolated.
+	TargetRotation.Yaw = FRotator::NormalizeAxis(
+		TargetRotation.Yaw + ReplicatedPose.YawRateDegrees * ElapsedSincePose);
+	const FQuat TargetQuat = TargetRotation.Quaternion();
+
+	const FVector CurrentLocation = OwnerActor.GetActorLocation();
+	const FQuat CurrentQuat = OwnerActor.GetActorQuat();
+	const float DistanceToTarget = FVector::Distance(CurrentLocation, TargetLocation);
+	const float AngleToTargetDegrees = FMath::RadiansToDegrees(
+		CurrentQuat.AngularDistance(TargetQuat));
+	const bool bSnapLocation = ClientSnapDistance <= 0.0f || DistanceToTarget >= ClientSnapDistance;
+	const bool bSnapRotation = ClientSnapAngleDegrees <= 0.0f
+		|| AngleToTargetDegrees >= ClientSnapAngleDegrees;
+
+	const float LocationAlpha = bSnapLocation
+		? 1.0f
+		: 1.0f - FMath::Pow(
+			0.5f, DeltaTime / FMath::Max(ClientLocationSmoothingHalfLife, UE_SMALL_NUMBER));
+	const float RotationAlpha = bSnapRotation
+		? 1.0f
+		: 1.0f - FMath::Pow(
+			0.5f, DeltaTime / FMath::Max(ClientRotationSmoothingHalfLife, UE_SMALL_NUMBER));
+	const FVector NewLocation = FMath::Lerp(
+		CurrentLocation, TargetLocation, FMath::Clamp(LocationAlpha, 0.0f, 1.0f));
+	const FQuat NewRotation = FQuat::Slerp(
+		CurrentQuat, TargetQuat, FMath::Clamp(RotationAlpha, 0.0f, 1.0f)).GetNormalized();
+
+	OwnerActor.SetActorLocationAndRotation(
+		NewLocation,
+		NewRotation,
+		false,
+		nullptr,
+		(bSnapLocation || bSnapRotation) ? ETeleportType::TeleportPhysics : ETeleportType::None);
 }

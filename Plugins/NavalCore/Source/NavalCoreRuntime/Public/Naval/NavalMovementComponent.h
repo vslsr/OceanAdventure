@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Components/ActorComponent.h"
+#include "Engine/NetSerialization.h"
 
 #include "NavalMovementComponent.generated.h"
 
@@ -10,12 +11,32 @@ class UNavalHelmComponent;
 class UNavalLoadComponent;
 class UNavalVesselComponent;
 
+/** One coherent server movement sample consumed only by client-side presentation smoothing. */
+USTRUCT()
+struct NAVALCORERUNTIME_API FNavalReplicatedPose
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	FVector_NetQuantize100 Location = FVector::ZeroVector;
+
+	UPROPERTY()
+	FRotator Rotation = FRotator::ZeroRotator;
+
+	UPROPERTY()
+	FVector_NetQuantize100 PlanarVelocity = FVector::ZeroVector;
+
+	UPROPERTY()
+	float YawRateDegrees = 0.0f;
+};
+
 /**
- * Turns helm intent into vessel motion, on the server only.
+ * Turns helm intent into authoritative vessel motion and smooths replicated motion on clients.
  *
- * It writes planar translation and yaw and nothing else, because the host's buoyancy already
- * owns Z, pitch and roll. The two never fight: buoyancy preserves yaw and XY, this preserves
- * Z and tilt, and the replicated actor transform carries the result to clients.
+ * The server writes planar translation and yaw and nothing else, because the host's buoyancy
+ * already owns Z, pitch and roll. Clients do not simulate either system. This component sends
+ * a coherent pose/velocity sample and eases the client Actor toward it, avoiding the 30 Hz
+ * staircase caused by AActor::ReplicatedMovement without adding input prediction.
  *
  * Everything that degrades handling arrives from somewhere a player can attack: load bands
  * from the carry model, propulsion and rudder capability from parts, control authority from
@@ -30,6 +51,7 @@ public:
 	UNavalMovementComponent();
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void TickComponent(
 		float DeltaTime,
 		ELevelTick TickType,
@@ -109,20 +131,60 @@ protected:
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float MinSpeedFractionForTurn = 0.12f;
 
+	/** Half-life of the client-only location correction toward the latest server sample. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Smoothing",
+		meta = (ClampMin = "0.001", Units = "s"))
+	float ClientLocationSmoothingHalfLife = 0.05f;
+
+	/** Client-only rotation chase, kept separate because buoyancy also changes pitch and roll. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Smoothing",
+		meta = (ClampMin = "0.001", Units = "s"))
+	float ClientRotationSmoothingHalfLife = 0.06f;
+
+	/** Large corrections and deliberate teleports bypass interpolation. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Smoothing",
+		meta = (ClampMin = "0.0", Units = "cm"))
+	float ClientSnapDistance = 500.0f;
+
+	/** Large replicated rotation changes bypass interpolation. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Smoothing",
+		meta = (ClampMin = "0.0", ClampMax = "180.0", Units = "deg"))
+	float ClientSnapAngleDegrees = 45.0f;
+
+	/** Short dead-reckoning window; prevents steady lag without turning this into prediction. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Smoothing",
+		meta = (ClampMin = "0.0", ClampMax = "0.5", Units = "s"))
+	float ClientMaxExtrapolationSeconds = 0.2f;
+
 	UPROPERTY(Replicated)
 	float CurrentSpeed = 0.0f;
 
 	UPROPERTY(Replicated)
 	float SpeedScale = 1.0f;
 
+	/** Replaces AActor::ReplicatedMovement while this component owns vessel movement. */
+	UPROPERTY(ReplicatedUsing = OnRep_ReplicatedPose)
+	FNavalReplicatedPose ReplicatedPose;
+
 private:
 	void ResolvePeers();
+	void TickAuthorityMovement(float DeltaTime);
+	void PublishAuthorityPose();
+	void TickClientInterpolation(AActor& OwnerActor, float DeltaTime);
+
+	UFUNCTION()
+	void OnRep_ReplicatedPose();
 
 	TWeakObjectPtr<UNavalHelmComponent> Helm;
 	TWeakObjectPtr<UNavalLoadComponent> Load;
 	TWeakObjectPtr<UNavalVesselComponent> Vessel;
 
-	/** Server-only world-space planar velocity; the actor transform is the replicated truth. */
+	/** Server-only world-space planar velocity. */
 	FVector PlanarVelocity = FVector::ZeroVector;
 	float YawRateDegrees = 0.0f;
+
+	double LastReplicatedPoseTime = 0.0;
+	bool bHasReplicatedPose = false;
+	bool bPreviousOwnerReplicateMovement = true;
+	bool bChangedOwnerReplicateMovement = false;
 };

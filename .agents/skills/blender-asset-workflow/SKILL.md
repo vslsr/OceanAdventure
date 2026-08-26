@@ -1,6 +1,6 @@
 ---
 name: blender-asset-workflow
-description: 为 OceanAdventure 维护 Blender 原始模型与 Unreal 导入流水线。用户要求创建或修复 Blender 模型脚本、FBX/OBJ/GLB 导出路径、`blender/models` 资源规范，或遇到 Blender 文本块找不到 OceanAdventure 工程根目录时使用；不负责直接编辑 UE `.uasset` 二进制，不替代 `lyra-editor-asset-automation` 的 AbilitySet/InputConfig/GameFeatureData 配置，也不负责运行时 Actor/GameplayAbility 实现。
+description: 为 OceanAdventure 维护通用 Blender 原始模型与 Unreal 导入流水线。用户要求创建或修复道具、武器、场景模型脚本、FBX/OBJ/GLB 导出路径、`blender/models` 规范，或遇到 Blender 文本块找不到工程根目录时使用；新建 `/Raft/Vehicles/<HullName>` 船体资产族改用 raft-hull-asset-workflow，不负责直接编辑 UE `.uasset`、Lyra 专用资产或运行时玩法实现。
 ---
 
 # Blender 资源流水线
@@ -22,6 +22,8 @@ description: 为 OceanAdventure 维护 Blender 原始模型与 Unreal 导入流�
 4. 从 LyraStarterGame 或其他同级工程启动 Blender 时，向已发现的 `.uproject` 根目录的同级目录查找 OceanAdventure；也支持显式环境变量 `OCEAN_ADVENTURE_PROJECT_ROOT` 覆盖。
 5. 找不到工程根目录时停止并报告期望路径，不要把 FBX 导出到 LyraStarterGame、插件目录或磁盘临时目录。
 6. 导出的 FBX 应使用 UE 兼容单位与坐标设置，并在导出后检查文件存在且大小合理。
+7. Blender Text Editor 可能只提供 `\ScriptName.py`，同时未保存的 `.blend` 也没有路径。动态候选全部失败时，可使用经过上述项目结构验证的标准工作区作为最后回退；环境变量覆盖仍然优先，已定位到其它有效 checkout 时不得被标准路径抢占。
+8. 修改磁盘脚本后提醒用户执行 `Text → Reload` 或重新打开脚本；Blender 内存中的 Text Block 不会自动同步外部修改。
 
 ## Unreal 导入衔接
 
@@ -35,12 +37,13 @@ description: 为 OceanAdventure 维护 Blender 原始模型与 Unreal 导入流�
 ## 验证
 
 - 用 Python AST 解析脚本；
-- 在项目根目录和同级 `LyraStarterGame` 目录分别测试根目录解析结果；
+- 在项目根目录、同级 `LyraStarterGame` 和 `\ScriptName.py` 伪路径/未保存 `.blend` 三种条件下测试根目录解析结果；
 - 检查 FBX 输出路径为 `<project>/blender/models/`，UE 资产路径仍位于对应 GameFeature 的 Content；
 - 未经用户明确要求，不启动或连接 Blender；交付时说明未执行的 Blender/UE 生成步骤。
 
 ## 相邻技能边界
 
+- 需要创建独立 Raft 船体资产族、`DA_Raft_*` / `BP_Raft_*`、每船体独立构建脚本或 `/Raft/Vehicles/<HullName>` 目录：改用 `raft-hull-asset-workflow`；本技能只作为其通用 Blender 导出规则依赖。
 - 需要配置 Lyra AbilitySet、InputConfig 或 GameFeatureData：改用 `lyra-editor-asset-automation`。
 - 需要选择 GameplayAbility 与世界 Actor 的职责：改用 `gameplay-ability-selection`。
 - 需要实现 UE Actor、Projectile 或 GameplayAbility C++：改用对应 UE5 gameplay 技能。

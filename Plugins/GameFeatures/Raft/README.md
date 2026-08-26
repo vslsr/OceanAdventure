@@ -10,21 +10,44 @@ Runtime flow:
 2. A placed or spawned `ARaftActor` ticks buoyancy on authority only.
 3. Four pontoon samples query the active `UOceanWorldManagerComponent`/`AOceanChunkActor`.
 4. The server updates the stable deck collision transform.
-5. Standard `AActor::ReplicatedMovement` sends that transform to clients, where Lyra
-   characters can use `DeckCollision` as their CharacterMovement movement base.
+5. While `UNavalMovementComponent` is injected, it replaces snapping `AActor::ReplicatedMovement`
+   with a replicated pose/velocity sample; clients interpolate that sample every frame, so Lyra
+   characters can use the smoothly moving `DeckCollision` as their CharacterMovement movement base.
 
 Editor asset generation:
 
 ```text
-BuildRaftFeature.py            -> runs the complete sequence below
+BuildRaftFeature.py            -> runs the core Definition/test/build-piece pipeline
 CreateRaftGameFeatureData.py  -> /Raft/Raft
 CreateRaftTestActor.py        -> imports SM_Raft, creates Definition/Blueprint,
                                  places "Raft Test Actor" in L_OceanChunkTest
+CreateRaftLifeRaftAssets.py   -> focused emergency-raft pass; no cannon dependency
+CreateRaftNavalAssets.py      -> separate naval pass; imports SM_LifeRaft and creates the non-buildable
+                                 /Raft/Vehicles/LifeRaft asset family
 ValidateRaftFeature.py        -> read-only asset, replication, Experience, and map checks
 ```
 
 The scripts are idempotent. Driving, helm interaction, input, and GAS abilities are
 deliberately outside this first implementation.
+
+The two hull definitions intentionally have different responsibilities:
+
+```text
+DA_Raft_Default
+└─ BP_Raft_Default       buildable main wooden raft; owns the append-only build catalog
+
+DA_Raft_LifeRaft
+└─ BP_Raft_LifeRaft      compact emergency inflatable raft; BuildPieceCatalog is empty
+```
+
+All three emergency-hull assets (`SM_LifeRaft`, `DA_Raft_LifeRaft`, and
+`BP_Raft_LifeRaft`) live under `/Raft/Vehicles/LifeRaft`. The main wooden hull remains under
+`/Raft/Vehicles/Raft`.
+
+First execute `blender/script/python/SM_LifeRaft.py` in Blender. It regenerates
+`blender/models/SM_LifeRaft.blend` and `SM_LifeRaft.fbx` without touching unrelated objects.
+Then run `CreateRaftLifeRaftAssets.py` for the life raft alone. The full
+`CreateRaftNavalAssets.py` pass additionally requires `/NavalCore/Naval/BP_Naval_Cannon`.
 
 ## Creative building MVP
 

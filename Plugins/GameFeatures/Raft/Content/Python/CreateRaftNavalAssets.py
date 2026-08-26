@@ -18,10 +18,13 @@ Run after compiling BuildingCoreRuntime, NavalCoreRuntime and RaftRuntime, and a
 CreateRaftBuildPieceAssets.py, which owns the base module and the catalog. Safe to re-run.
 """
 
+from pathlib import Path
+
 import unreal
 
 
 FEATURE_ROOT = "/Raft"
+PROJECT_ROOT = Path(unreal.Paths.project_dir()).resolve()
 PIECES_ROOT = f"{FEATURE_ROOT}/Build/Pieces"
 NAVAL_ROOT = f"{FEATURE_ROOT}/Naval"
 CATALOG_PATH = f"{FEATURE_ROOT}/Build/DA_BuildPieceCatalog_Raft"
@@ -41,8 +44,23 @@ SHARED_CANNON_BLUEPRINT_PATH = "/NavalCore/Naval/BP_Naval_Cannon"
 SHARED_CANNON_MESH_PATH = "/NavalCore/Naval/Meshes/SM_Naval_Cannon"
 RAFT_ACTOR_CLASS_PATH = "/Script/RaftRuntime.RaftActor"
 RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_Default"
-LIFE_RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_LifeRaft"
-LIFE_RAFT_BLUEPRINT_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/BP_Raft_LifeRaft"
+LIFE_RAFT_ROOT = f"{FEATURE_ROOT}/Vehicles/LifeRaft"
+LIFE_RAFT_DEFINITION_PATH = f"{LIFE_RAFT_ROOT}/DA_Raft_LifeRaft"
+LIFE_RAFT_BLUEPRINT_PATH = f"{LIFE_RAFT_ROOT}/BP_Raft_LifeRaft"
+LIFE_RAFT_MESH_PATH = f"{LIFE_RAFT_ROOT}/SM_LifeRaft"
+LIFE_RAFT_SOURCE_FBX = PROJECT_ROOT / "blender" / "models" / "SM_LifeRaft.fbx"
+
+# The life raft keeps the shared building-module collision/origin convention so it can use
+# ARaftActor, but its visible tube and buoyancy samples are compact.  An empty build catalog,
+# rather than a special Blueprint branch, is what makes this hull non-buildable.
+LIFE_RAFT_DECK_BOX_EXTENT = unreal.Vector(100.0, 100.0, 75.0)
+LIFE_RAFT_VISUAL_MESH_OFFSET = unreal.Vector(0.0, 0.0, 0.0)
+LIFE_RAFT_PONTOON_OFFSETS = (
+    unreal.Vector(55.0, 40.0, 0.0),
+    unreal.Vector(-55.0, 40.0, 0.0),
+    unreal.Vector(55.0, -40.0, 0.0),
+    unreal.Vector(-55.0, -40.0, 0.0),
+)
 
 # 主舵台. The raft's helm component spawns one of these on its own deck at BeginPlay, so this
 # Blueprint is where art and snap-point tweaks go without touching NavalCore.
@@ -249,6 +267,41 @@ def split_path(asset_path):
     return asset_path.rsplit("/", 1)
 
 
+def import_life_raft_mesh():
+    """Import the Blender-authored emergency hull into the Raft GameFeature."""
+    require(
+        LIFE_RAFT_SOURCE_FBX.is_file(),
+        f"Missing life-raft FBX: {LIFE_RAFT_SOURCE_FBX}. Run SM_LifeRaft.py in Blender first",
+    )
+
+    options = unreal.FbxImportUI()
+    options.set_editor_property("import_mesh", True)
+    options.set_editor_property("import_as_skeletal", False)
+    options.set_editor_property("import_materials", True)
+    options.set_editor_property("import_textures", False)
+    options.set_editor_property("mesh_type_to_import", unreal.FBXImportType.FBXIT_STATIC_MESH)
+    static_options = options.get_editor_property("static_mesh_import_data")
+    static_options.set_editor_property("combine_meshes", True)
+
+    destination_path, destination_name = split_path(LIFE_RAFT_MESH_PATH)
+    task = unreal.AssetImportTask()
+    task.set_editor_property("filename", str(LIFE_RAFT_SOURCE_FBX))
+    task.set_editor_property("destination_path", destination_path)
+    task.set_editor_property("destination_name", destination_name)
+    task.set_editor_property("automated", True)
+    task.set_editor_property("replace_existing", True)
+    task.set_editor_property("save", True)
+    task.set_editor_property("options", options)
+    unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+
+    mesh = require(
+        unreal.EditorAssetLibrary.load_asset(LIFE_RAFT_MESH_PATH),
+        f"Unable to import {LIFE_RAFT_MESH_PATH} from {LIFE_RAFT_SOURCE_FBX}",
+    )
+    log(f"Imported compact emergency hull at {LIFE_RAFT_MESH_PATH}")
+    return mesh
+
+
 def save(asset):
     require(
         unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False),
@@ -298,6 +351,28 @@ def blueprint_class(blueprint, asset_path):
         unreal.EditorAssetLibrary.load_blueprint_class(asset_path),
         f"Unable to resolve the generated class of {asset_path}",
     )
+
+
+def enforce_movable_actor_root(actor_defaults, asset_path):
+    """Repair and validate the root mobility required by buoyancy-driven movement."""
+    get_root_component = getattr(actor_defaults, "get_root_component", None)
+    root_component = (
+        get_root_component()
+        if callable(get_root_component)
+        else actor_defaults.get_editor_property("root_component")
+    )
+    root_component = require(
+        root_component,
+        f"{asset_path} has no root component",
+    )
+    movable = unreal.ComponentMobility.MOVABLE
+    if root_component.get_editor_property("mobility") != movable:
+        root_component.set_editor_property("mobility", movable)
+    require(
+        root_component.get_editor_property("mobility") == movable,
+        f"{asset_path} root component must be Movable or UE will reject raft movement",
+    )
+    return root_component
 
 
 def enum_value(enum_type_name, value_name):
@@ -414,8 +489,10 @@ def configure_deck_cannon(piece_class, invalid_material):
     piece's tonnage, and the vessel the gun ends up attached to.
     """
     missing_cannon = (
-        f"Missing {SHARED_CANNON_BLUEPRINT_PATH}; run NavalCore's CreateNavalCoreCannon.py "
-        "(and MigrateSharedCannon.py once, if the old per-feature cannons are still around)"
+        f"Missing {SHARED_CANNON_BLUEPRINT_PATH}. For the life raft only, run "
+        "CreateRaftLifeRaftAssets.py. For the full naval pass, run NavalCore's "
+        "CreateNavalCoreCannon.py (and MigrateSharedCannon.py once, if the old "
+        "per-feature cannons are still around)"
     )
     require(unreal.EditorAssetLibrary.does_asset_exist(SHARED_CANNON_BLUEPRINT_PATH), missing_cannon)
     cannon_class = require(
@@ -498,7 +575,7 @@ def configure_base_module_load():
 
 
 def configure_life_raft():
-    """The 折叠救生筏 hull: the same shape, with nothing that makes a ship a ship.
+    """The compact emergency hull, with nothing that makes a buildable ship.
 
     It carries no build catalog, and that single omission is what enforces design 8.8's
     "no walls, no storage, no firing ports" -- UBuildStructureComponent refuses every
@@ -510,12 +587,13 @@ def configure_life_raft():
         unreal.EditorAssetLibrary.load_asset(RAFT_DEFINITION_PATH),
         f"Missing {RAFT_DEFINITION_PATH}; run CreateRaftTestActor.py first",
     )
+    life_raft_mesh = import_life_raft_mesh()
     life_raft_definition = get_or_create_data_asset(LIFE_RAFT_DEFINITION_PATH, definition_class)
+    life_raft_definition.set_editor_property("visual_mesh", life_raft_mesh)
+    life_raft_definition.set_editor_property("deck_box_extent", LIFE_RAFT_DECK_BOX_EXTENT)
+    life_raft_definition.set_editor_property("visual_mesh_offset", LIFE_RAFT_VISUAL_MESH_OFFSET)
+    life_raft_definition.set_editor_property("pontoon_offsets", list(LIFE_RAFT_PONTOON_OFFSETS))
     for property_name in (
-		"visual_mesh",
-		"deck_box_extent",
-		"visual_mesh_offset",
-        "pontoon_offsets",
         "waterline_offset",
         "max_tilt_degrees",
         "vertical_interp_speed",
@@ -534,10 +612,27 @@ def configure_life_raft():
     blueprint = get_or_create_blueprint(LIFE_RAFT_BLUEPRINT_PATH, raft_class)
     defaults = unreal.get_default_object(blueprint_class(blueprint, LIFE_RAFT_BLUEPRINT_PATH))
     defaults.set_editor_property("raft_definition", life_raft_definition)
+    enforce_movable_actor_root(defaults, LIFE_RAFT_BLUEPRINT_PATH)
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    compiled_defaults = unreal.get_default_object(
+        blueprint_class(blueprint, LIFE_RAFT_BLUEPRINT_PATH)
+    )
+    enforce_movable_actor_root(compiled_defaults, LIFE_RAFT_BLUEPRINT_PATH)
     save(blueprint)
+    require(
+        life_raft_definition.get_editor_property("visual_mesh") == life_raft_mesh,
+        f"{LIFE_RAFT_DEFINITION_PATH} did not retain {LIFE_RAFT_MESH_PATH}",
+    )
+    require(
+        life_raft_definition.get_editor_property("build_piece_catalog") is None,
+        f"{LIFE_RAFT_DEFINITION_PATH} must not expose a build catalog",
+    )
+    require(
+        compiled_defaults.get_editor_property("raft_definition") == life_raft_definition,
+        f"{LIFE_RAFT_BLUEPRINT_PATH} did not retain {LIFE_RAFT_DEFINITION_PATH}",
+    )
     log(
-        f"Life raft ready at {LIFE_RAFT_BLUEPRINT_PATH}; point "
+        f"Life raft ready at {LIFE_RAFT_BLUEPRINT_PATH} using {LIFE_RAFT_MESH_PATH}; point "
         "OceanAdventureNavalSettings.LifeRaftClass at it in Project Settings"
     )
 
@@ -624,6 +719,10 @@ def main():
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([FEATURE_ROOT], True, True)
 
     validate_gameplay_tags()
+    require(
+        LIFE_RAFT_SOURCE_FBX.is_file(),
+        f"Missing life-raft FBX: {LIFE_RAFT_SOURCE_FBX}. Run SM_LifeRaft.py in Blender first",
+    )
 
     piece_class = require_type("RaftBuildPieceDefinition", "RaftRuntime")
     catalog_class = require_type("BuildPieceCatalog", "BuildingCoreRuntime")
