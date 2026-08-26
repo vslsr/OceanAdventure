@@ -216,7 +216,8 @@ def main():
     bpy.ops.export_scene.fbx(
         filepath=str(output / "SM_Raft.fbx"), use_selection=True, object_types={"MESH"},
         global_scale=1.0, apply_unit_scale=True, apply_scale_options="FBX_SCALE_UNITS",
-        axis_forward="-Z", axis_up="Y", use_mesh_modifiers=True, use_tspace=False,
+        axis_forward="-Z", axis_up="Y", use_mesh_modifiers=True,
+        mesh_smooth_type="FACE", use_tspace=False,
         use_custom_props=True, add_leaf_bones=False, bake_anim=False, embed_textures=False,
     )
     print("[SM_Raft] Build complete: 200 x 200 x 150 cm")

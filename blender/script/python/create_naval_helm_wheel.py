@@ -269,6 +269,7 @@ def main():
         axis_forward="-Z",
         axis_up="Y",
         use_mesh_modifiers=True,
+        mesh_smooth_type="FACE",
         use_tspace=False,
         use_custom_props=True,
         add_leaf_bones=False,
