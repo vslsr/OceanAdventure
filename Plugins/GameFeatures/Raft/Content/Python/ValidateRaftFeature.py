@@ -62,24 +62,6 @@ def validate_assets():
 
     mesh = load(STATIC_MESH_PATH)
     definition = load(DEFINITION_PATH)
-    require(
-        definition.get_editor_property("visual_mesh") == mesh,
-        "Raft definition does not reference the imported static mesh",
-    )
-    require(
-        vector_nearly_equal(
-            definition.get_editor_property("deck_box_extent"),
-            EXPECTED_DECK_BOX_EXTENT,
-        ),
-        "Raft deck collision extent does not match the current mesh",
-    )
-    require(
-        vector_nearly_equal(
-            definition.get_editor_property("visual_mesh_offset"),
-            EXPECTED_VISUAL_MESH_OFFSET,
-        ),
-        "Raft visual offset does not compensate for the current mesh origin",
-    )
     pontoon_offsets = list(definition.get_editor_property("pontoon_offsets"))
     require(
         len(pontoon_offsets) == len(EXPECTED_PONTOON_OFFSETS),
@@ -102,6 +84,28 @@ def validate_assets():
     require(
         defaults.get_editor_property("raft_definition") == definition,
         "Raft Blueprint defaults do not reference DA_Raft_Default",
+    )
+    deck_collision = require(
+        defaults.get_deck_collision(), "BP_Raft_Default has no DeckCollision"
+    )
+    visual_pivot = require(defaults.get_visual_pivot(), "BP_Raft_Default has no VisualPivot")
+    visual_mesh = require(defaults.get_visual_mesh(), "BP_Raft_Default has no VisualMesh")
+    require(
+        visual_mesh.get_editor_property("static_mesh") == mesh,
+        "BP_Raft_Default VisualMesh does not reference the imported static mesh",
+    )
+    require(
+        vector_nearly_equal(
+            deck_collision.get_unscaled_box_extent(), EXPECTED_DECK_BOX_EXTENT
+        ),
+        "BP_Raft_Default DeckCollision extent does not match the current mesh",
+    )
+    require(
+        vector_nearly_equal(
+            visual_pivot.get_editor_property("relative_location"),
+            EXPECTED_VISUAL_MESH_OFFSET,
+        ),
+        "BP_Raft_Default VisualPivot does not match the current mesh origin",
     )
     require(defaults.get_editor_property("replicates"), "Raft Actor must replicate")
     require(

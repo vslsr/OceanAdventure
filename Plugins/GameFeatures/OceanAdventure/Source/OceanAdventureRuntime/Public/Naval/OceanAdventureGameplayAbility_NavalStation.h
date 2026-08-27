@@ -4,6 +4,7 @@
 
 #include "AbilitySystem/Abilities/LyraGameplayAbility.h"
 #include "ActiveGameplayEffectHandle.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "Naval/OceanAdventureNavalTargetData.h"
 
 #include "OceanAdventureGameplayAbility_NavalStation.generated.h"
@@ -117,5 +118,8 @@ private:
 	FDelegateHandle OnTargetDataReadyHandle;
 	FActiveGameplayEffectHandle StationLockHandle;
 	TWeakObjectPtr<UAbilitySystemComponent> StationLockAbilitySystem;
+	TEnumAsByte<EMovementMode> SavedMovementMode = MOVE_None;
+	uint8 SavedCustomMovementMode = 0;
+	bool bHasSavedMovementMode = false;
 	bool bStationEntered = false;
 };

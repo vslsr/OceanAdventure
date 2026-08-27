@@ -275,6 +275,14 @@ def split_path(asset_path):
     return asset_path.rsplit("/", 1)
 
 
+def vector_nearly_equal(actual, expected, tolerance=0.01):
+    return (
+        abs(actual.x - expected.x) <= tolerance
+        and abs(actual.y - expected.y) <= tolerance
+        and abs(actual.z - expected.z) <= tolerance
+    )
+
+
 def import_life_raft_mesh():
     """Import the Blender-authored emergency hull into the Raft GameFeature."""
     require(
@@ -400,6 +408,38 @@ def enforce_movable_actor_root(actor_defaults, asset_path):
         f"{asset_path} root component must be Movable or UE will reject raft movement",
     )
     return root_component
+
+
+def author_vessel_components(actor_defaults, asset_path, mesh, deck_extent, visual_offset):
+    """Write hull geometry to the Blueprint CDO components, never back into RaftDefinition."""
+    deck_collision = require(
+        actor_defaults.get_deck_collision(), f"{asset_path} has no DeckCollision"
+    )
+    visual_pivot = require(
+        actor_defaults.get_visual_pivot(), f"{asset_path} has no VisualPivot"
+    )
+    visual_mesh = require(
+        actor_defaults.get_visual_mesh(), f"{asset_path} has no VisualMesh"
+    )
+    deck_collision.set_box_extent(deck_extent, False)
+    # UE 5.7 exposes the complete SceneComponent transform signature: value, sweep, teleport.
+    visual_pivot.set_relative_location(visual_offset, False, True)
+    visual_mesh.set_static_mesh(mesh)
+    require(
+        vector_nearly_equal(deck_collision.get_unscaled_box_extent(), deck_extent),
+        f"{asset_path} did not retain its DeckCollision extent",
+    )
+    require(
+        vector_nearly_equal(
+            visual_pivot.get_editor_property("relative_location"), visual_offset
+        ),
+        f"{asset_path} did not retain its VisualPivot offset",
+    )
+    require(
+        visual_mesh.get_editor_property("static_mesh") == mesh,
+        f"{asset_path} did not retain {mesh.get_path_name()}",
+    )
+    return deck_collision, visual_pivot, visual_mesh
 
 
 def enum_value(enum_type_name, value_name):
@@ -627,9 +667,6 @@ def configure_life_raft():
     )
     life_raft_mesh = import_life_raft_mesh()
     life_raft_definition = get_or_create_data_asset(LIFE_RAFT_DEFINITION_PATH, definition_class)
-    life_raft_definition.set_editor_property("visual_mesh", life_raft_mesh)
-    life_raft_definition.set_editor_property("deck_box_extent", LIFE_RAFT_DECK_BOX_EXTENT)
-    life_raft_definition.set_editor_property("visual_mesh_offset", LIFE_RAFT_VISUAL_MESH_OFFSET)
     life_raft_definition.set_editor_property("pontoon_offsets", list(LIFE_RAFT_PONTOON_OFFSETS))
     for property_name in (
         "waterline_offset",
@@ -642,10 +679,6 @@ def configure_life_raft():
         )
     life_raft_definition.set_editor_property("build_piece_catalog", None)
     life_raft_definition.set_editor_property("allow_direct_helm_interaction", True)
-    life_raft_definition.set_editor_property(
-        "direct_helm_operator_local_offset", unreal.Vector(-35.0, 0.0, 163.0)
-    )
-    life_raft_definition.set_editor_property("direct_helm_operator_local_yaw", 0.0)
     life_raft_definition.set_editor_property("direct_helm_interaction_range", 260.0)
     save(life_raft_definition)
 
@@ -658,11 +691,26 @@ def configure_life_raft():
     defaults = unreal.get_default_object(blueprint_class(blueprint, LIFE_RAFT_BLUEPRINT_PATH))
     defaults.set_editor_property("raft_definition", life_raft_definition)
     enforce_movable_actor_root(defaults, LIFE_RAFT_BLUEPRINT_PATH)
+    author_vessel_components(
+        defaults,
+        LIFE_RAFT_BLUEPRINT_PATH,
+        life_raft_mesh,
+        LIFE_RAFT_DECK_BOX_EXTENT,
+        LIFE_RAFT_VISUAL_MESH_OFFSET,
+    )
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
     compiled_defaults = unreal.get_default_object(
         blueprint_class(blueprint, LIFE_RAFT_BLUEPRINT_PATH)
     )
+    compiled_defaults.set_editor_property("raft_definition", life_raft_definition)
     enforce_movable_actor_root(compiled_defaults, LIFE_RAFT_BLUEPRINT_PATH)
+    _, compiled_visual_pivot, compiled_visual_mesh = author_vessel_components(
+        compiled_defaults,
+        LIFE_RAFT_BLUEPRINT_PATH,
+        life_raft_mesh,
+        LIFE_RAFT_DECK_BOX_EXTENT,
+        LIFE_RAFT_VISUAL_MESH_OFFSET,
+    )
     get_component = getattr(compiled_defaults, "get_component_by_class", None)
     build_component_class = getattr(unreal, "BuildStructureComponent", None)
     build_visual_class = getattr(unreal, "BuildStructureVisualComponent", None)
@@ -677,8 +725,15 @@ def configure_life_raft():
     )
     save(blueprint)
     require(
-        life_raft_definition.get_editor_property("visual_mesh") == life_raft_mesh,
-        f"{LIFE_RAFT_DEFINITION_PATH} did not retain {LIFE_RAFT_MESH_PATH}",
+        compiled_visual_mesh.get_editor_property("static_mesh") == life_raft_mesh,
+        f"{LIFE_RAFT_BLUEPRINT_PATH} did not retain {LIFE_RAFT_MESH_PATH}",
+    )
+    require(
+        vector_nearly_equal(
+            compiled_visual_pivot.get_editor_property("relative_location"),
+            LIFE_RAFT_VISUAL_MESH_OFFSET,
+        ),
+        f"{LIFE_RAFT_BLUEPRINT_PATH} did not retain its VisualPivot offset",
     )
     require(
         life_raft_definition.get_editor_property("build_piece_catalog") is None,

@@ -82,12 +82,18 @@ void ARaftVesselActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 void ARaftVesselActor::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
+	BaseDeckExtent = DeckCollision
+		? DeckCollision->GetUnscaledBoxExtent().ComponentMax(FVector(1.0))
+		: RaftVesselDefaults::DeckExtent;
 	ApplyDefinition();
 }
 
 void ARaftVesselActor::PostInitializeComponents()
 {
 	Super::PostInitializeComponents();
+	BaseDeckExtent = DeckCollision
+		? DeckCollision->GetUnscaledBoxExtent().ComponentMax(FVector(1.0))
+		: RaftVesselDefaults::DeckExtent;
 
 	// Saved Blueprint/level overrides can outlive the constructor default. A static root makes
 	// both buoyancy and steering writes fail, so every vessel repairs the invariant here.
@@ -110,18 +116,14 @@ void ARaftVesselActor::ApplyDefinition()
 		return;
 	}
 
-	DeckCollision->SetBoxExtent(RaftDefinition->GetDeckBoxExtent());
-	VisualPivot->SetRelativeLocation(RaftDefinition->GetVisualMeshOffset());
-	VisualMesh->SetStaticMesh(RaftDefinition->GetVisualMesh());
-	HelmOperatorPoint->SetRelativeLocation(RaftDefinition->GetDirectHelmOperatorLocalOffset());
-	HelmOperatorPoint->SetRelativeRotation(
-		FRotator(0.0f, RaftDefinition->GetDirectHelmOperatorLocalYaw(), 0.0f));
+	// Component hierarchy, mesh, collision and authored points belong to the derived Blueprint.
+	// The definition only applies the shared tuning that has non-Actor consumers.
 	BuoyancyComponent->ApplyDefinition(RaftDefinition);
 }
 
 FVector ARaftVesselActor::GetBaseDeckExtent() const
 {
-	return RaftDefinition ? RaftDefinition->GetDeckBoxExtent() : RaftVesselDefaults::DeckExtent;
+	return BaseDeckExtent.ComponentMax(FVector(1.0));
 }
 
 UNavalHelmComponent* ARaftVesselActor::GetHelmComponent() const

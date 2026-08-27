@@ -45,13 +45,30 @@ namespace TopDownInputTrace
 		const ULyraCharacterMovementComponent* MovementComponent = Pawn
 			? Pawn->FindComponentByClass<ULyraCharacterMovementComponent>()
 			: nullptr;
-		UE_LOG(LogTopDownPawnComponent, Verbose,
-			TEXT("[TopDownInputTrace] phase=movement-action result=%s action=%s pawn=%s raw_value=%.3f applied_scale=%.3f movement_stopped_count=%d max_speed=%.3f attached_to=%s pending_input=%s"),
-			Result, Action, *GetNameSafe(Pawn), RawValue, AppliedScale,
-			AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
-			MovementComponent ? MovementComponent->GetMaxSpeed() : -1.0f,
-			*GetNameSafe(Pawn ? Pawn->GetAttachParentActor() : nullptr),
-			Pawn ? *Pawn->GetPendingMovementInputVector().ToCompactString() : TEXT("None"));
+		if (FCString::Stricmp(Result, TEXT("blocked")) == 0)
+		{
+			UE_LOG(LogTopDownPawnComponent, Display,
+				TEXT("[TopDownInputTrace] phase=movement-action result=%s action=%s pawn=%s raw_value=%.3f applied_scale=%.3f movement_stopped_count=%d max_speed=%.3f attach_parent=%s pending_input=%s last_input=%s"),
+				Result, Action, *GetNameSafe(Pawn), RawValue, AppliedScale,
+				AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
+				MovementComponent ? MovementComponent->GetMaxSpeed() : -1.0f,
+				*GetNameSafe(Pawn && Pawn->GetRootComponent()
+					? Pawn->GetRootComponent()->GetAttachParent() : nullptr),
+				Pawn ? *Pawn->GetPendingMovementInputVector().ToCompactString() : TEXT("None"),
+				Pawn ? *Pawn->GetLastMovementInputVector().ToCompactString() : TEXT("None"));
+		}
+		else
+		{
+			UE_LOG(LogTopDownPawnComponent, Verbose,
+				TEXT("[TopDownInputTrace] phase=movement-action result=%s action=%s pawn=%s raw_value=%.3f applied_scale=%.3f movement_stopped_count=%d max_speed=%.3f attach_parent=%s pending_input=%s last_input=%s"),
+				Result, Action, *GetNameSafe(Pawn), RawValue, AppliedScale,
+				AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
+				MovementComponent ? MovementComponent->GetMaxSpeed() : -1.0f,
+				*GetNameSafe(Pawn && Pawn->GetRootComponent()
+					? Pawn->GetRootComponent()->GetAttachParent() : nullptr),
+				Pawn ? *Pawn->GetPendingMovementInputVector().ToCompactString() : TEXT("None"),
+				Pawn ? *Pawn->GetLastMovementInputVector().ToCompactString() : TEXT("None"));
+		}
 	}
 }
 

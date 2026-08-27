@@ -2,7 +2,7 @@
 
 Run after compiling BuildingCoreRuntime and RaftRuntime. The assets stay inside the
 Raft GameFeature and may be regenerated safely. The piece copies the mesh and alignment
-from DA_Raft_Default, so building always adds another matching raft module.
+from BP_Raft_Default's authored components, so building adds another matching raft module.
 """
 
 import unreal
@@ -21,6 +21,7 @@ CUBE_MESH_PATH = "/Engine/BasicShapes/Cube.Cube"
 PLACED_ACTOR_CLASS_PATH = "/Script/BuildingCoreRuntime.BuildPlacedActor"
 CATALOG_PATH = "/Raft/Build/DA_BuildPieceCatalog_Raft"
 RAFT_DEFINITION_PATH = "/Raft/Vehicles/Raft/DA_Raft_Default"
+RAFT_BLUEPRINT_PATH = "/Raft/Vehicles/Raft/BP_Raft_Default"
 INVALID_PREVIEW_MATERIAL_PATH = "/Raft/Build/Materials/M_Raft_BuildPreview_Invalid"
 
 
@@ -282,15 +283,33 @@ def main():
         unreal.EditorAssetLibrary.load_asset(RAFT_DEFINITION_PATH),
         f"Missing {RAFT_DEFINITION_PATH}; run CreateRaftTestActor once first",
     )
-    raft_mesh = require(
-        raft_definition.get_editor_property("visual_mesh"),
-        f"{RAFT_DEFINITION_PATH} has no visual_mesh",
+    raft_blueprint = require(
+        unreal.EditorAssetLibrary.load_asset(RAFT_BLUEPRINT_PATH),
+        f"Missing {RAFT_BLUEPRINT_PATH}; run CreateRaftTestActor once first",
     )
-    deck_extent = raft_definition.get_editor_property("deck_box_extent")
-    visual_offset = raft_definition.get_editor_property("visual_mesh_offset")
+    generated_class = require(
+        raft_blueprint.generated_class(),
+        f"{RAFT_BLUEPRINT_PATH} has no generated class",
+    )
+    raft_defaults = unreal.get_default_object(generated_class)
+    deck_collision = require(
+        raft_defaults.get_deck_collision(), f"{RAFT_BLUEPRINT_PATH} has no DeckCollision"
+    )
+    visual_pivot = require(
+        raft_defaults.get_visual_pivot(), f"{RAFT_BLUEPRINT_PATH} has no VisualPivot"
+    )
+    visual_mesh_component = require(
+        raft_defaults.get_visual_mesh(), f"{RAFT_BLUEPRINT_PATH} has no VisualMesh"
+    )
+    raft_mesh = require(
+        visual_mesh_component.get_editor_property("static_mesh"),
+        f"{RAFT_BLUEPRINT_PATH} VisualMesh has no static mesh",
+    )
+    deck_extent = deck_collision.get_unscaled_box_extent()
+    visual_offset = visual_pivot.get_editor_property("relative_location")
     require(
         deck_extent.x > 0.0 and deck_extent.y > 0.0 and deck_extent.z > 0.0,
-        f"{RAFT_DEFINITION_PATH} has an invalid deck_box_extent",
+        f"{RAFT_BLUEPRINT_PATH} has an invalid DeckCollision extent",
     )
 
     # A build slot's Z is the deck top, while the base VisualMesh transform is relative to

@@ -459,7 +459,7 @@ void ULyraHeroComponent::Input_Move(const FInputActionValue& InputActionValue)
 			&& AbilitySystem->HasMatchingGameplayTag(TAG_Gameplay_MovementStopped))
 		{
 			Pawn->ConsumeMovementInputVector();
-			UE_LOG(LogLyra, Verbose,
+			UE_LOG(LogLyra, Display,
 				TEXT("[LyraInputTrace] phase=movement-action result=blocked pawn=%s value=(%.3f,%.3f) movement_stopped_count=%d max_speed=%.3f attached_to=%s pending_input=%s"),
 				*GetNameSafe(Pawn), Value.X, Value.Y,
 				AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped),

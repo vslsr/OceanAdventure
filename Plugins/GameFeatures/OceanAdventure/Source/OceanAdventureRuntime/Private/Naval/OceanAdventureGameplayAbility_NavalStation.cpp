@@ -306,6 +306,44 @@ void UOceanAdventureGameplayAbility_NavalStation::HandleControlSample(float /*De
 		return;
 	}
 
+	// Diagnostic only: the operator root should remain exactly relative-zero to the authored
+	// attachment point. Log only bad states; a normally attached pawn produces no sample noise.
+	ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo());
+	USceneComponent* CharacterRoot = Character ? Character->GetRootComponent() : nullptr;
+	USceneComponent* ExpectedAttachmentPoint = FindOperatorAttachmentPoint(Station);
+	if (Character && CharacterRoot && ExpectedAttachmentPoint)
+	{
+		const FTransform RelativeToPoint = CharacterRoot->GetComponentTransform().GetRelativeTransform(
+			ExpectedAttachmentPoint->GetComponentTransform());
+		const float RotationErrorDegrees = FMath::RadiansToDegrees(
+			RelativeToPoint.GetRotation().AngularDistance(FQuat::Identity));
+		const bool bAttachedToExpectedPoint =
+			CharacterRoot->GetAttachParent() == ExpectedAttachmentPoint;
+		if (!bAttachedToExpectedPoint
+			|| RelativeToPoint.GetLocation().SizeSquared() > FMath::Square(0.5)
+			|| RotationErrorDegrees > 0.5f)
+		{
+			const UCharacterMovementComponent* CharacterMovement = Character->GetCharacterMovement();
+			const UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo();
+			UE_LOG(LogOceanAdventure, Warning,
+				TEXT("[NavalStationTrace] phase=control-sample-presentation result=drift avatar=%s station=%s expected_point=%s attach_parent=%s attached_to_expected=%d relative_location=%s relative_rotation=%s avatar_location=%s point_location=%s velocity=%s acceleration=%s pending_input=%s last_input=%s movement_mode=%d movement_stopped_count=%d local=%d authority=%d"),
+				*GetNameSafe(Character), *GetNameSafe(Station), *GetNameSafe(ExpectedAttachmentPoint),
+				*GetNameSafe(CharacterRoot->GetAttachParent()), bAttachedToExpectedPoint,
+				*RelativeToPoint.GetLocation().ToCompactString(),
+				*RelativeToPoint.Rotator().ToCompactString(),
+				*Character->GetActorLocation().ToCompactString(),
+				*ExpectedAttachmentPoint->GetComponentLocation().ToCompactString(),
+				CharacterMovement ? *CharacterMovement->Velocity.ToCompactString() : TEXT("None"),
+				CharacterMovement ? *CharacterMovement->GetCurrentAcceleration().ToCompactString() : TEXT("None"),
+				*Character->GetPendingMovementInputVector().ToCompactString(),
+				*Character->GetLastMovementInputVector().ToCompactString(),
+				CharacterMovement ? static_cast<int32>(CharacterMovement->MovementMode) : -1,
+				AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
+				CurrentActorInfo && CurrentActorInfo->IsLocallyControlled(),
+				HasAuthority(&CurrentActivationInfo));
+		}
+	}
+
 	FOceanAdventureNavalTargetData ControlData;
 	ControlData.StationActor = Station;
 	ControlData.Request = ENavalStationRequest::Control;
@@ -346,15 +384,18 @@ void UOceanAdventureGameplayAbility_NavalStation::EnterStationPresentation(AActo
 	{
 		return;
 	}
+	bHasSavedMovementMode = false;
 
-	// CharacterMovement keeps its real mode (walking, falling, swimming, ...). The replicated
-	// GAS lock below makes Lyra return zero speed/rotation without corrupting that state.
+	// The GAS lock blocks input and other abilities. CharacterMovement must also be suspended:
+	// even at zero max speed its physics step can rewrite an attached root component's relative
+	// transform through floor adjustment, gravity, or movement-base handling.
 	if (!ApplyStationLock())
 	{
 		return;
 	}
 
-	if (UCharacterMovementComponent* CharacterMovement = Character->GetCharacterMovement())
+	UCharacterMovementComponent* CharacterMovement = Character->GetCharacterMovement();
+	if (CharacterMovement)
 	{
 		CharacterMovement->StopMovementImmediately();
 	}
@@ -392,12 +433,23 @@ void UOceanAdventureGameplayAbility_NavalStation::EnterStationPresentation(AActo
 		return;
 	}
 
+	if (CharacterMovement)
+	{
+		SavedMovementMode = CharacterMovement->MovementMode;
+		SavedCustomMovementMode = CharacterMovement->CustomMovementMode;
+		bHasSavedMovementMode = true;
+		CharacterMovement->DisableMovement();
+	}
+
 	const FGameplayTag StatusTag = GetStationStatusTag();
 	UE_LOG(LogOceanAdventure, Display,
-		TEXT("[NavalStation] Presentation entered avatar=%s station=%s status=%s attachment_point=%s attached_to=%s relative_location=%s"),
+		TEXT("[NavalStation] Presentation entered avatar=%s station=%s status=%s attachment_point=%s attached_to=%s relative_location=%s saved_movement_mode=%d saved_custom_mode=%d current_movement_mode=%d"),
 		*GetNameSafe(Character), *GetNameSafe(Station), *StatusTag.ToString(),
 		*GetNameSafe(AttachmentPoint), *GetNameSafe(Character->GetRootComponent()->GetAttachParent()),
-		*Character->GetRootComponent()->GetRelativeLocation().ToCompactString());
+		*Character->GetRootComponent()->GetRelativeLocation().ToCompactString(),
+		bHasSavedMovementMode ? static_cast<int32>(SavedMovementMode.GetValue()) : -1,
+		bHasSavedMovementMode ? static_cast<int32>(SavedCustomMovementMode) : -1,
+		CharacterMovement ? static_cast<int32>(CharacterMovement->MovementMode) : -1);
 
 	bStationEntered = true;
 }
@@ -413,10 +465,32 @@ void UOceanAdventureGameplayAbility_NavalStation::LeaveStationPresentation()
 	ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo());
 	if (!Character)
 	{
+		bHasSavedMovementMode = false;
 		return;
 	}
 
 	Character->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+
+	if (UCharacterMovementComponent* CharacterMovement = Character->GetCharacterMovement())
+	{
+		if (bHasSavedMovementMode)
+		{
+			const EMovementMode MovementModeBeforeRestore = CharacterMovement->MovementMode;
+			const EMovementMode RestoredMovementMode = SavedMovementMode == MOVE_None
+				? MOVE_Falling
+				: SavedMovementMode.GetValue();
+			CharacterMovement->SetMovementMode(RestoredMovementMode, SavedCustomMovementMode);
+			UE_LOG(LogOceanAdventure, Display,
+				TEXT("[NavalStationTrace] phase=movement-mode-restore avatar=%s before=%d saved=%d saved_custom=%d restored=%d restored_custom=%d"),
+				*GetNameSafe(Character), static_cast<int32>(MovementModeBeforeRestore),
+				static_cast<int32>(SavedMovementMode.GetValue()),
+				static_cast<int32>(SavedCustomMovementMode),
+				static_cast<int32>(CharacterMovement->MovementMode),
+				static_cast<int32>(CharacterMovement->CustomMovementMode));
+		}
+	}
+
+	bHasSavedMovementMode = false;
 }
 
 bool UOceanAdventureGameplayAbility_NavalStation::ApplyStationLock()

@@ -111,19 +111,27 @@ def main():
     load(GAME_FEATURE_DATA_PATH)
     invalid_preview_material = load(INVALID_PREVIEW_MATERIAL_PATH)
 
-    raft_mesh = require(
-        definition.get_editor_property("visual_mesh"),
-        "DA_Raft_Default has no visual mesh",
+    defaults = unreal.get_default_object(
+        require(blueprint.generated_class(), "BP_Raft_Default has no generated class")
     )
-    deck_extent = definition.get_editor_property("deck_box_extent")
-    visual_offset = definition.get_editor_property("visual_mesh_offset")
+    deck_collision = require(
+        defaults.get_deck_collision(), "BP_Raft_Default has no DeckCollision"
+    )
+    visual_pivot = require(defaults.get_visual_pivot(), "BP_Raft_Default has no VisualPivot")
+    visual_mesh = require(defaults.get_visual_mesh(), "BP_Raft_Default has no VisualMesh")
+    raft_mesh = require(
+        visual_mesh.get_editor_property("static_mesh"),
+        "BP_Raft_Default VisualMesh has no static mesh",
+    )
+    deck_extent = deck_collision.get_unscaled_box_extent()
+    visual_offset = visual_pivot.get_editor_property("relative_location")
     require(
         vector_nearly_equal(deck_extent, EXPECTED_DECK_BOX_EXTENT),
-        "DA_Raft_Default must use the 200 x 200 x 150 cm building/hull envelope",
+        "BP_Raft_Default must use the 200 x 200 x 150 cm DeckCollision envelope",
     )
     require(
         vector_nearly_equal(visual_offset, EXPECTED_VISUAL_MESH_OFFSET),
-        "DA_Raft_Default must keep SM_Raft at the collision-box centre",
+        "BP_Raft_Default must keep VisualPivot at the collision-box centre",
     )
     expected_mesh_offset = unreal.Vector(
         visual_offset.x,
@@ -204,9 +212,6 @@ def main():
         "DA_Raft_Default does not reference the Raft build catalog",
     )
 
-    defaults = unreal.get_default_object(
-        require(blueprint.generated_class(), "BP_Raft_Default has no generated class")
-    )
     require(
         defaults.get_component_by_class(unreal.BuildStructureComponent),
         "BP_Raft_Default has no BuildStructureComponent",

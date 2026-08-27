@@ -40,6 +40,9 @@ public:
 	UBoxComponent* GetDeckCollision() const { return DeckCollision; }
 
 	UFUNCTION(BlueprintPure, Category = "Raft")
+	USceneComponent* GetVisualPivot() const { return VisualPivot; }
+
+	UFUNCTION(BlueprintPure, Category = "Raft")
 	UStaticMeshComponent* GetVisualMesh() const { return VisualMesh; }
 
 	UFUNCTION(BlueprintPure, Category = "Raft")
@@ -82,4 +85,7 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy")
 	TObjectPtr<URaftBuoyancyComponent> BuoyancyComponent;
+
+	/** Blueprint-authored deck extent captured before runtime construction expands collision. */
+	FVector BaseDeckExtent = FVector(100.0, 100.0, 75.0);
 };

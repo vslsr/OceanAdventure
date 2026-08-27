@@ -43,6 +43,14 @@ def log(message):
     unreal.log(f"[RaftTestActorBuilder] {message}")
 
 
+def vector_nearly_equal(actual, expected, tolerance=0.01):
+    return (
+        abs(actual.x - expected.x) <= tolerance
+        and abs(actual.y - expected.y) <= tolerance
+        and abs(actual.z - expected.z) <= tolerance
+    )
+
+
 def split_asset_path(asset_path):
     return asset_path.rsplit("/", 1)
 
@@ -96,18 +104,15 @@ def get_or_create_data_asset(asset_path, asset_class):
     )
 
 
-def configure_definition(mesh):
+def configure_definition():
     definition_class = require(
         getattr(unreal, "RaftDefinition", None),
         "RaftDefinition is unavailable; compile RaftRuntime and restart the editor",
     )
     definition = get_or_create_data_asset(DEFINITION_PATH, definition_class)
-    definition.set_editor_property("visual_mesh", mesh)
     build_catalog = unreal.EditorAssetLibrary.load_asset(BUILD_CATALOG_PATH)
     if build_catalog is not None:
         definition.set_editor_property("build_piece_catalog", build_catalog)
-    definition.set_editor_property("deck_box_extent", DECK_BOX_EXTENT)
-    definition.set_editor_property("visual_mesh_offset", VISUAL_MESH_OFFSET)
     definition.set_editor_property("pontoon_offsets", list(PONTOON_OFFSETS))
     definition.set_editor_property("waterline_offset", 0.0)
     definition.set_editor_property("max_tilt_degrees", 5.0)
@@ -141,21 +146,66 @@ def get_or_create_blueprint(parent_class):
     )
 
 
-def configure_blueprint(definition):
+def get_vessel_components(actor_defaults):
+    deck_collision = require(
+        actor_defaults.get_deck_collision(), "ARaftVesselActor has no DeckCollision"
+    )
+    visual_pivot = require(
+        actor_defaults.get_visual_pivot(), "ARaftVesselActor has no VisualPivot"
+    )
+    visual_mesh = require(
+        actor_defaults.get_visual_mesh(), "ARaftVesselActor has no VisualMesh"
+    )
+    return deck_collision, visual_pivot, visual_mesh
+
+
+def author_vessel_components(actor_defaults, mesh):
+    deck_collision, visual_pivot, visual_mesh = get_vessel_components(actor_defaults)
+    deck_collision.set_box_extent(DECK_BOX_EXTENT, False)
+    # UE 5.7 exposes the complete SceneComponent transform signature: value, sweep, teleport.
+    visual_pivot.set_relative_location(VISUAL_MESH_OFFSET, False, True)
+    visual_mesh.set_static_mesh(mesh)
+    require(
+        vector_nearly_equal(deck_collision.get_unscaled_box_extent(), DECK_BOX_EXTENT),
+        f"{BLUEPRINT_PATH} did not retain its DeckCollision extent",
+    )
+    require(
+        vector_nearly_equal(
+            visual_pivot.get_editor_property("relative_location"), VISUAL_MESH_OFFSET
+        ),
+        f"{BLUEPRINT_PATH} did not retain its VisualPivot offset",
+    )
+    require(
+        visual_mesh.get_editor_property("static_mesh") == mesh,
+        f"{BLUEPRINT_PATH} did not retain {STATIC_MESH_PATH}",
+    )
+
+
+def configure_blueprint(definition, mesh):
     parent_class = require(
         getattr(unreal, "RaftActor", None),
         "RaftActor is unavailable; compile RaftRuntime and restart the editor",
     )
     blueprint = get_or_create_blueprint(parent_class)
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
-    defaults = unreal.get_default_object(blueprint.generated_class())
+    generated_class = require(
+        blueprint.generated_class(), f"Blueprint has no generated class: {BLUEPRINT_PATH}"
+    )
+    defaults = unreal.get_default_object(generated_class)
     defaults.set_editor_property("raft_definition", definition)
+    author_vessel_components(defaults, mesh)
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+    generated_class = require(
+        blueprint.generated_class(), f"Blueprint has no generated class: {BLUEPRINT_PATH}"
+    )
+    compiled_defaults = unreal.get_default_object(generated_class)
+    compiled_defaults.set_editor_property("raft_definition", definition)
+    author_vessel_components(compiled_defaults, mesh)
     require(
         unreal.EditorAssetLibrary.save_loaded_asset(blueprint, only_if_is_dirty=False),
         f"Unable to save {BLUEPRINT_PATH}",
     )
-    return blueprint.generated_class()
+    return generated_class
 
 
 def load_test_map():
@@ -198,8 +248,8 @@ def main():
         ["/Raft", "/OceanAdventure"], True, True
     )
     mesh = import_static_mesh()
-    definition = configure_definition(mesh)
-    raft_class = configure_blueprint(definition)
+    definition = configure_definition()
+    raft_class = configure_blueprint(definition, mesh)
     level_subsystem = load_test_map()
     place_test_actor(raft_class, level_subsystem)
     log("Done")
