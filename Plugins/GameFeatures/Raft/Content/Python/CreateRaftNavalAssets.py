@@ -6,9 +6,9 @@ Two things live here because both belong to the raft rather than to a game mode:
     rudder and a deck cannon -- all backed by ANavalBuildPieceActor and tuned entirely
     through NavalCore's piece fragments (the cannon piece spawns the shared gun from
     /NavalCore, not a raft-local copy);
-  * Blueprint component subclasses carrying the T0 raft's hull, tonnage and helm placement,
-    injected into ARaftActor by this feature's own GameFeatureData, plus BP_Raft_Helm -- the
-    console the helm component spawns on the deck for players to press E on.
+  * Blueprint component subclasses carrying the T0 hull, tonnage, helm state and movement,
+    injected into ARaftVesselActor by this feature's own GameFeatureData, plus BP_Raft_Helm --
+    a fixed console the player can build on an expandable raft.
 
 The vessel components are added by the Raft feature and not by a gameplay feature on purpose:
 a GameFeature may not reference another GameFeature's classes or assets, and "how much hull a
@@ -41,8 +41,10 @@ HELM_ACTOR_CLASS_PATH = "/Script/NavalCoreRuntime.NavalHelmActor"
 # gun and the field emplacement the same weapon, and a GameFeature may not reference another
 # feature's assets -- NavalCore is the only place both can name.
 SHARED_CANNON_BLUEPRINT_PATH = "/NavalCore/Naval/BP_Naval_Cannon"
-SHARED_CANNON_MESH_PATH = "/NavalCore/Naval/Meshes/SM_Naval_Cannon"
-RAFT_ACTOR_CLASS_PATH = "/Script/RaftRuntime.RaftActor"
+NAVAL_CORE_ROOT = "/NavalCore"
+SHARED_CANNON_MESH_NAME = "SM_Naval_Cannon"
+HELM_WHEEL_MESH_NAME = "SM_Naval_HelmWheel"
+RAFT_VESSEL_ACTOR_CLASS_PATH = "/Script/RaftRuntime.RaftVesselActor"
 RAFT_DEFINITION_PATH = f"{FEATURE_ROOT}/Vehicles/Raft/DA_Raft_Default"
 LIFE_RAFT_ROOT = f"{FEATURE_ROOT}/Vehicles/LifeRaft"
 LIFE_RAFT_DEFINITION_PATH = f"{LIFE_RAFT_ROOT}/DA_Raft_LifeRaft"
@@ -50,9 +52,8 @@ LIFE_RAFT_BLUEPRINT_PATH = f"{LIFE_RAFT_ROOT}/BP_Raft_LifeRaft"
 LIFE_RAFT_MESH_PATH = f"{LIFE_RAFT_ROOT}/SM_LifeRaft"
 LIFE_RAFT_SOURCE_FBX = PROJECT_ROOT / "blender" / "models" / "SM_LifeRaft.fbx"
 
-# The life raft keeps the shared building-module collision/origin convention so it can use
-# ARaftActor, but its visible tube and buoyancy samples are compact.  An empty build catalog,
-# rather than a special Blueprint branch, is what makes this hull non-buildable.
+# The life raft is a compact water vehicle, not a build host. Its Blueprint derives directly
+# from ARaftVesselActor, so it owns no structure or structure-visual component.
 LIFE_RAFT_DECK_BOX_EXTENT = unreal.Vector(100.0, 100.0, 75.0)
 LIFE_RAFT_VISUAL_MESH_OFFSET = unreal.Vector(0.0, 0.0, 0.0)
 LIFE_RAFT_PONTOON_OFFSETS = (
@@ -62,8 +63,7 @@ LIFE_RAFT_PONTOON_OFFSETS = (
     unreal.Vector(-55.0, -40.0, 0.0),
 )
 
-# 主舵台. The raft's helm component spawns one of these on its own deck at BeginPlay, so this
-# Blueprint is where art and snap-point tweaks go without touching NavalCore.
+# 主舵台. Expandable rafts build this fixed Actor on deck; life rafts never create one.
 HELM_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Raft_Helm"
 
 # Design 7.11's starting tonnage scale: floor 1, wall/window 2, pontoon +2/+15,
@@ -169,13 +169,26 @@ DECK_CANNON_PIECE = {
     "slot": "PROP",
     # Placement ghost. The real gun mesh when it is available, so what the player lines up is
     # the shape they get; the box is only a stand-in before the art has been migrated.
-    "mesh": SHARED_CANNON_MESH_PATH,
+    "mesh": SHARED_CANNON_MESH_NAME,
     "mesh_scale": (1.0, 1.0, 1.0),
     "mesh_offset": (0.0, 0.0, 0.0),
     "fallback_mesh": CUBE_MESH_PATH,
     "fallback_mesh_scale": (1.2, 0.6, 0.6),
     "fallback_mesh_offset": (0.0, 0.0, 30.0),
     "tonnage": 12.0,
+}
+
+HELM_PIECE = {
+    "asset": "DA_BuildPiece_Raft_Helm",
+    "tag": "Raft.Piece.Prop.Helm",
+    "slot": "PROP",
+    "mesh": HELM_WHEEL_MESH_NAME,
+    "mesh_scale": (1.0, 1.0, 1.0),
+    "mesh_offset": (0.0, 0.0, 0.0),
+    "fallback_mesh": CYLINDER_MESH_PATH,
+    "fallback_mesh_scale": (0.6, 0.6, 0.9),
+    "fallback_mesh_offset": (0.0, 0.0, 45.0),
+    "tonnage": 3.0,
 }
 
 # Vessel component Blueprints, and the properties that make a T0 raft a T0 raft.
@@ -203,13 +216,7 @@ COMPONENT_BLUEPRINTS = (
     {
         "asset": "BPC_NavalHelm_RaftT0",
         "parent": "/Script/NavalCoreRuntime.NavalHelmComponent",
-        "properties": {
-            # 初始甲板中后部的固定格, with two open approaches so it can be reached and contested.
-            "helm_local_offset": unreal.Vector(-20.0, 0.0, 75.0),
-            # The console faces the bow, so the operator snap point behind it does too.
-            "helm_local_yaw": 0.0,
-            "interaction_range": 260.0,
-        },
+        "properties": {},
     },
     {
         "asset": "BPC_NavalMovement_RaftT0",
@@ -258,6 +265,7 @@ def validate_gameplay_tags():
     """Fail before touching assets if the Raft module did not register its tag directory."""
     tag_names = [spec["tag"] for spec in PIECES]
     tag_names.append(DECK_CANNON_PIECE["tag"])
+    tag_names.append(HELM_PIECE["tag"])
     for tag_name in tag_names:
         gameplay_tag(tag_name)
     log(f"Validated {len(tag_names)} registered Raft naval piece tags")
@@ -341,6 +349,25 @@ def get_or_create_blueprint(asset_path, parent_class):
         ),
         f"Unable to create {asset_path}",
     )
+
+
+def ensure_blueprint_parent(blueprint, parent_class, asset_path):
+    """Idempotently migrate an existing Blueprint to the requested structural base."""
+    try:
+        current_parent = blueprint.get_editor_property("parent_class")
+    except Exception:
+        current_parent = None
+    if current_parent == parent_class:
+        return
+
+    reparent = getattr(unreal.BlueprintEditorLibrary, "reparent_blueprint", None)
+    require(
+        callable(reparent),
+        f"{asset_path} must be reparented to {parent_class.get_name()}, but this editor build "
+        "does not expose BlueprintEditorLibrary.reparent_blueprint",
+    )
+    reparent(blueprint, parent_class)
+    log(f"Reparented {asset_path} to {parent_class.get_name()}")
 
 
 def blueprint_class(blueprint, asset_path):
@@ -478,6 +505,65 @@ def configure_naval_piece(piece_class, spec, invalid_material, naval_actor_class
     return piece
 
 
+def find_naval_core_asset(asset_name):
+    """Resolve stable asset names without coupling Raft to NavalCore's art folders."""
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    for asset_data in registry.get_assets_by_path(NAVAL_CORE_ROOT, recursive=True):
+        if str(asset_data.asset_name) == asset_name:
+            return str(asset_data.package_name)
+    return None
+
+
+def resolve_ghost_mesh(spec):
+    mesh_path = find_naval_core_asset(spec["mesh"])
+    mesh = unreal.EditorAssetLibrary.load_asset(mesh_path) if mesh_path else None
+    if mesh is not None:
+        return mesh, spec["mesh_scale"], spec["mesh_offset"]
+
+    log(f"No {spec['mesh']} under {NAVAL_CORE_ROOT}; using its greybox placement mesh")
+    fallback = require(
+        unreal.EditorAssetLibrary.load_asset(spec["fallback_mesh"]),
+        f"Missing {spec['fallback_mesh']}",
+    )
+    return fallback, spec["fallback_mesh_scale"], spec["fallback_mesh_offset"]
+
+
+def configure_spawn_actor_piece(piece_class, spec, invalid_material, actor_class):
+    """Build a fixed deck piece whose authoritative presentation is a spawned Actor."""
+    ghost_mesh, mesh_scale, mesh_offset = resolve_ghost_mesh(spec)
+    asset_path = f"{PIECES_ROOT}/{spec['asset']}"
+    piece = get_or_create_data_asset(asset_path, piece_class)
+    piece.set_editor_property("piece_tag", gameplay_tag(spec["tag"]))
+    piece.set_editor_property("slot_type", enum_value("BuildSlotType", spec["slot"]))
+    piece.set_editor_property("mesh", ghost_mesh)
+    piece.set_editor_property("mesh_scale", unreal.Vector(*mesh_scale))
+    piece.set_editor_property("mesh_offset", unreal.Vector(*mesh_offset))
+    piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
+    piece.set_editor_property("override_materials", [])
+    piece.set_editor_property("invalid_preview_material", invalid_material)
+    piece.set_editor_property("costs", [])
+
+    spawn_fragment = make_fragment(
+        piece,
+        "BuildPieceFragment_SpawnActor",
+        {"actor_class": actor_class, "spawn_offset": unreal.Vector(0.0, 0.0, 0.0)},
+    )
+    load_fragment = make_fragment(
+        piece,
+        "BuildPieceFragment_NavalLoad",
+        {
+            "tonnage": spec["tonnage"],
+            "buoyancy_capacity": 0.0,
+            "thrust": 0.0,
+            "steering": 0.0,
+        },
+    )
+    piece.set_editor_property("fragments", [spawn_fragment, load_fragment])
+    save(piece)
+    log(f"{spec['asset']} spawns fixed actor {actor_class.get_name()}")
+    return piece
+
+
 def configure_deck_cannon(piece_class, invalid_material):
     """A deck-mounted heavy weapon: the shared cannon, built as a piece and owned by its ship.
 
@@ -499,58 +585,16 @@ def configure_deck_cannon(piece_class, invalid_material):
         unreal.EditorAssetLibrary.load_blueprint_class(SHARED_CANNON_BLUEPRINT_PATH), missing_cannon
     )
 
-    ghost_mesh = (
-        unreal.EditorAssetLibrary.load_asset(DECK_CANNON_PIECE["mesh"])
-        if unreal.EditorAssetLibrary.does_asset_exist(DECK_CANNON_PIECE["mesh"])
-        else None
+    return configure_spawn_actor_piece(
+        piece_class, DECK_CANNON_PIECE, invalid_material, cannon_class
     )
-    if ghost_mesh is not None:
-        mesh_scale = DECK_CANNON_PIECE["mesh_scale"]
-        mesh_offset = DECK_CANNON_PIECE["mesh_offset"]
-    else:
-        log(
-            f"{DECK_CANNON_PIECE['mesh']} is missing; the placement ghost falls back to a box"
-        )
-        ghost_mesh = require(
-            unreal.EditorAssetLibrary.load_asset(DECK_CANNON_PIECE["fallback_mesh"]),
-            f"Missing {DECK_CANNON_PIECE['fallback_mesh']}",
-        )
-        mesh_scale = DECK_CANNON_PIECE["fallback_mesh_scale"]
-        mesh_offset = DECK_CANNON_PIECE["fallback_mesh_offset"]
 
-    asset_path = f"{PIECES_ROOT}/{DECK_CANNON_PIECE['asset']}"
-    piece = get_or_create_data_asset(asset_path, piece_class)
-    piece.set_editor_property("piece_tag", gameplay_tag(DECK_CANNON_PIECE["tag"]))
-    piece.set_editor_property("slot_type", enum_value("BuildSlotType", DECK_CANNON_PIECE["slot"]))
-    piece.set_editor_property("mesh", ghost_mesh)
-    piece.set_editor_property("mesh_scale", unreal.Vector(*mesh_scale))
-    piece.set_editor_property("mesh_offset", unreal.Vector(*mesh_offset))
-    piece.set_editor_property("footprint", unreal.IntPoint(1, 1))
-    piece.set_editor_property("override_materials", [])
-    piece.set_editor_property("invalid_preview_material", invalid_material)
-    piece.set_editor_property("costs", [])
 
-    # The weapon Actor owns its own durability and construction window, so the piece only
-    # needs to say what it weighs.
-    spawn_fragment = make_fragment(
-        piece,
-        "BuildPieceFragment_SpawnActor",
-        {"actor_class": cannon_class, "spawn_offset": unreal.Vector(0.0, 0.0, 0.0)},
+def configure_helm_piece(piece_class, invalid_material, helm_actor_class):
+    """A fixed, buildable steering station for expandable ARaftActor vessels."""
+    return configure_spawn_actor_piece(
+        piece_class, HELM_PIECE, invalid_material, helm_actor_class
     )
-    load_fragment = make_fragment(
-        piece,
-        "BuildPieceFragment_NavalLoad",
-        {
-            "tonnage": DECK_CANNON_PIECE["tonnage"],
-            "buoyancy_capacity": 0.0,
-            "thrust": 0.0,
-            "steering": 0.0,
-        },
-    )
-    piece.set_editor_property("fragments", [spawn_fragment, load_fragment])
-    save(piece)
-    log(f"Deck cannon piece spawns {SHARED_CANNON_BLUEPRINT_PATH}")
-    return piece
 
 
 def configure_base_module_load():
@@ -575,13 +619,7 @@ def configure_base_module_load():
 
 
 def configure_life_raft():
-    """The compact emergency hull, with nothing that makes a buildable ship.
-
-    It carries no build catalog, and that single omission is what enforces design 8.8's
-    "no walls, no storage, no firing ports" -- UBuildStructureComponent refuses every
-    placement when its catalog is missing, so there is no second rule to keep in sync.
-    Hull and speed are scaled down by the ability that spawns it.
-    """
+    """Compact water vehicle: direct E driving and structurally no construction system."""
     definition_class = require_type("RaftDefinition", "RaftRuntime")
     source = require(
         unreal.EditorAssetLibrary.load_asset(RAFT_DEFINITION_PATH),
@@ -603,13 +641,20 @@ def configure_life_raft():
             property_name, source.get_editor_property(property_name)
         )
     life_raft_definition.set_editor_property("build_piece_catalog", None)
+    life_raft_definition.set_editor_property("allow_direct_helm_interaction", True)
+    life_raft_definition.set_editor_property(
+        "direct_helm_operator_local_offset", unreal.Vector(-35.0, 0.0, 163.0)
+    )
+    life_raft_definition.set_editor_property("direct_helm_operator_local_yaw", 0.0)
+    life_raft_definition.set_editor_property("direct_helm_interaction_range", 260.0)
     save(life_raft_definition)
 
-    raft_class = require(
-        unreal.load_class(None, RAFT_ACTOR_CLASS_PATH),
-        f"Failed to load {RAFT_ACTOR_CLASS_PATH}; compile RaftRuntime first",
+    vessel_class = require(
+        unreal.load_class(None, RAFT_VESSEL_ACTOR_CLASS_PATH),
+        f"Failed to load {RAFT_VESSEL_ACTOR_CLASS_PATH}; compile RaftRuntime first",
     )
-    blueprint = get_or_create_blueprint(LIFE_RAFT_BLUEPRINT_PATH, raft_class)
+    blueprint = get_or_create_blueprint(LIFE_RAFT_BLUEPRINT_PATH, vessel_class)
+    ensure_blueprint_parent(blueprint, vessel_class, LIFE_RAFT_BLUEPRINT_PATH)
     defaults = unreal.get_default_object(blueprint_class(blueprint, LIFE_RAFT_BLUEPRINT_PATH))
     defaults.set_editor_property("raft_definition", life_raft_definition)
     enforce_movable_actor_root(defaults, LIFE_RAFT_BLUEPRINT_PATH)
@@ -618,6 +663,18 @@ def configure_life_raft():
         blueprint_class(blueprint, LIFE_RAFT_BLUEPRINT_PATH)
     )
     enforce_movable_actor_root(compiled_defaults, LIFE_RAFT_BLUEPRINT_PATH)
+    get_component = getattr(compiled_defaults, "get_component_by_class", None)
+    build_component_class = getattr(unreal, "BuildStructureComponent", None)
+    build_visual_class = getattr(unreal, "BuildStructureVisualComponent", None)
+    require(
+        callable(get_component) and build_component_class and build_visual_class,
+        "BuildingCore component reflection is unavailable; compile BuildingCoreRuntime first",
+    )
+    require(
+        not get_component(build_component_class)
+        and not get_component(build_visual_class),
+        f"{LIFE_RAFT_BLUEPRINT_PATH} must not contain construction components",
+    )
     save(blueprint)
     require(
         life_raft_definition.get_editor_property("visual_mesh") == life_raft_mesh,
@@ -628,28 +685,50 @@ def configure_life_raft():
         f"{LIFE_RAFT_DEFINITION_PATH} must not expose a build catalog",
     )
     require(
+        life_raft_definition.get_editor_property("allow_direct_helm_interaction"),
+        f"{LIFE_RAFT_DEFINITION_PATH} must allow direct E helm interaction",
+    )
+    require(
         compiled_defaults.get_editor_property("raft_definition") == life_raft_definition,
         f"{LIFE_RAFT_BLUEPRINT_PATH} did not retain {LIFE_RAFT_DEFINITION_PATH}",
     )
     log(
-        f"Life raft ready at {LIFE_RAFT_BLUEPRINT_PATH} using {LIFE_RAFT_MESH_PATH}; point "
+        f"Life raft water vehicle ready at {LIFE_RAFT_BLUEPRINT_PATH} using "
+        f"{LIFE_RAFT_MESH_PATH}; point "
         "OceanAdventureNavalSettings.LifeRaftClass at it in Project Settings"
     )
 
 
 def configure_helm_blueprint():
-    """The console the player walks up to and presses E on.
-
-    ANavalHelmActor already greyboxes itself, so this Blueprint exists purely as the art and
-    tuning hook: assign the wheel and pedestal meshes here, nudge OperatorPoint, and the raft
-    spawns it instead of the bare C++ class.
-    """
+    """Fixed console built onto an expandable raft; never auto-generated by the helm core."""
     helm_class = require(
         unreal.load_class(None, HELM_ACTOR_CLASS_PATH),
         f"Failed to load {HELM_ACTOR_CLASS_PATH}; compile NavalCoreRuntime first",
     )
     blueprint = get_or_create_blueprint(HELM_BLUEPRINT_PATH, helm_class)
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+
+    wheel_mesh_path = find_naval_core_asset(HELM_WHEEL_MESH_NAME)
+    wheel_mesh = unreal.EditorAssetLibrary.load_asset(wheel_mesh_path) if wheel_mesh_path else None
+    if wheel_mesh is not None:
+        defaults = unreal.get_default_object(blueprint_class(blueprint, HELM_BLUEPRINT_PATH))
+        wheel_component = require(
+            defaults.get_editor_property("wheel_mesh"),
+            "ANavalHelmActor has no WheelMesh component",
+        )
+        wheel_component.set_static_mesh(wheel_mesh)
+        wheel_component.set_relative_scale3d(unreal.Vector(1.0, 1.0, 1.0))
+        # UE 5.7's Python binding exposes the full SceneComponent signature: rotation,
+        # sweep and teleport are all positional parameters. This is CDO authoring, so there
+        # is nothing to sweep and the transform may be applied as a teleport.
+        wheel_component.set_relative_rotation(
+            unreal.Rotator(0.0, 0.0, 0.0), False, True
+        )
+        unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+        log(f"{HELM_BLUEPRINT_PATH} uses {wheel_mesh_path}")
+    else:
+        log(f"No {HELM_WHEEL_MESH_NAME} under {NAVAL_CORE_ROOT}; keeping greybox wheel")
+
     save(blueprint)
     return blueprint_class(blueprint, HELM_BLUEPRINT_PATH)
 
@@ -683,9 +762,9 @@ def configure_game_feature_data(component_classes):
         unreal.EditorAssetLibrary.load_asset(GAME_FEATURE_DATA_PATH),
         f"Missing {GAME_FEATURE_DATA_PATH}; run CreateRaftGameFeatureData.py first",
     )
-    raft_class = require(
-        unreal.load_class(None, RAFT_ACTOR_CLASS_PATH),
-        f"Failed to load {RAFT_ACTOR_CLASS_PATH}; compile RaftRuntime first",
+    vessel_class = require(
+        unreal.load_class(None, RAFT_VESSEL_ACTOR_CLASS_PATH),
+        f"Failed to load {RAFT_VESSEL_ACTOR_CLASS_PATH}; compile RaftRuntime first",
     )
 
     # Named so a re-run replaces this action instead of appending a duplicate, and so any
@@ -699,7 +778,7 @@ def configure_game_feature_data(component_classes):
         require(
             unreal.NavalCoreAssetLibrary.create_add_components_action(
                 game_feature_data,
-                [raft_class] * len(component_classes),
+                [vessel_class] * len(component_classes),
                 component_classes,
                 True,
                 True,
@@ -716,7 +795,9 @@ def configure_game_feature_data(component_classes):
 
 
 def main():
-    unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([FEATURE_ROOT], True, True)
+    unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous(
+        [FEATURE_ROOT, NAVAL_CORE_ROOT], True, True
+    )
 
     validate_gameplay_tags()
     require(
@@ -735,11 +816,16 @@ def main():
         f"Missing {INVALID_PREVIEW_MATERIAL_PATH}; run CreateRaftBuildPieceAssets.py first",
     )
 
+    helm_actor_class = configure_helm_blueprint()
+
     managed_pieces = [
         configure_naval_piece(piece_class, spec, invalid_material, naval_actor_class)
         for spec in PIECES
     ]
     managed_pieces.append(configure_deck_cannon(piece_class, invalid_material))
+    managed_pieces.append(
+        configure_helm_piece(piece_class, invalid_material, helm_actor_class)
+    )
     configure_base_module_load()
 
     catalog = get_or_create_data_asset(CATALOG_PATH, catalog_class)
@@ -753,12 +839,7 @@ def main():
     save(catalog)
 
     configure_life_raft()
-    helm_actor_class = configure_helm_blueprint()
-    configure_game_feature_data(
-        configure_component_blueprints(
-            {"BPC_NavalHelm_RaftT0": {"helm_actor_class": helm_actor_class}}
-        )
-    )
+    configure_game_feature_data(configure_component_blueprints())
 
     log(
         f"Added {len(managed_pieces)} naval pieces to the raft catalog, authored "

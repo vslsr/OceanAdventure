@@ -113,6 +113,7 @@ def configure_definition(mesh):
     definition.set_editor_property("max_tilt_degrees", 5.0)
     definition.set_editor_property("vertical_interp_speed", 3.0)
     definition.set_editor_property("rotation_interp_speed", 2.0)
+    definition.set_editor_property("allow_direct_helm_interaction", False)
     require(
         unreal.EditorAssetLibrary.save_loaded_asset(definition, only_if_is_dirty=False),
         f"Unable to save {DEFINITION_PATH}",

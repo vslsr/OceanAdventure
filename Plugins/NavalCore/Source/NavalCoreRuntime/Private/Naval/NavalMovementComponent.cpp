@@ -3,12 +3,14 @@
 #include "Naval/NavalMovementComponent.h"
 
 #include "Engine/World.h"
+#include "Components/SceneComponent.h"
 #include "GameFramework/Actor.h"
 #include "Math/RotationMatrix.h"
 #include "Naval/NavalCoreTypes.h"
 #include "Naval/NavalHelmComponent.h"
 #include "Naval/NavalLoadComponent.h"
 #include "Naval/NavalVesselComponent.h"
+#include "NavalCoreRuntimeModule.h"
 #include "Net/UnrealNetwork.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NavalMovementComponent)
@@ -27,6 +29,7 @@ void UNavalMovementComponent::BeginPlay()
 	Super::BeginPlay();
 
 	ResolvePeers();
+	EnsureOwnerCanMove();
 	PlanarVelocity = FVector::ZeroVector;
 	YawRateDegrees = 0.0f;
 
@@ -88,6 +91,25 @@ void UNavalMovementComponent::ResolvePeers()
 	Vessel = OwnerActor->FindComponentByClass<UNavalVesselComponent>();
 }
 
+void UNavalMovementComponent::EnsureOwnerCanMove()
+{
+	AActor* OwnerActor = GetOwner();
+	USceneComponent* RootComponent = OwnerActor ? OwnerActor->GetRootComponent() : nullptr;
+	if (!RootComponent || RootComponent->Mobility == EComponentMobility::Movable)
+	{
+		return;
+	}
+
+	UE_LOG(
+		LogNavalCore,
+		Warning,
+		TEXT("[Movement] %s : %s was not Movable, so steering and buoyancy writes were "
+			 "discarded. Forcing Movable; clear the stale Blueprint or instance override."),
+		*GetPathNameSafe(OwnerActor),
+		*RootComponent->GetName());
+	RootComponent->SetMobility(EComponentMobility::Movable);
+}
+
 void UNavalMovementComponent::PublishAuthorityPose()
 {
 	const AActor* OwnerActor = GetOwner();
@@ -140,6 +162,13 @@ void UNavalMovementComponent::TickComponent(
 	{
 		TickClientInterpolation(*OwnerActor, DeltaTime);
 		return;
+	}
+
+	// GameFeature component injection order is not deterministic. Retry only while a required
+	// peer is missing, so an awkward registration order cannot permanently disable steering.
+	if (!Helm.IsValid() || !Load.IsValid() || !Vessel.IsValid())
+	{
+		ResolvePeers();
 	}
 
 	TickAuthorityMovement(DeltaTime);

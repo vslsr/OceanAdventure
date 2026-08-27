@@ -82,6 +82,13 @@ public:
 		float Radius,
 		TSubclassOf<AActor> StationClass);
 
+	/** Nearest fixed helm or directly-drivable hull that accepts this operator. */
+	static AActor* FindNearestUsableHelmStation(
+		const UObject* WorldContextObject,
+		const FVector& Origin,
+		float Radius,
+		const AActor* Operator);
+
 	UFUNCTION(BlueprintPure, Category = "OceanAdventure|Naval")
 	static UNavalVesselComponent* FindVesselForActor(AActor* Actor);
 

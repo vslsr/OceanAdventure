@@ -40,8 +40,9 @@ import unreal
 
 PLUGIN_ROOT = "/NavalCore"
 NAVAL_ROOT = f"{PLUGIN_ROOT}/Naval"
-MESH_ROOT = f"{NAVAL_ROOT}/Meshes"
-MATERIAL_ROOT = f"{NAVAL_ROOT}/Materials"
+ART_ROOT = f"{PLUGIN_ROOT}/NavalArts"
+MESH_ROOT = f"{ART_ROOT}/Cannon/Meshes"
+MATERIAL_ROOT = f"{ART_ROOT}/Cannon/Materials"
 
 CANNON_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Naval_Cannon"
 PROJECTILE_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Naval_CannonballProjectile"
@@ -103,7 +104,23 @@ def require(value, message):
     return value
 
 
+def find_asset_by_name(asset_name):
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    for asset_data in registry.get_assets_by_path(PLUGIN_ROOT, recursive=True):
+        if str(asset_data.asset_name) == asset_name:
+            return str(asset_data.package_name)
+    return None
+
+
 def move_asset(source, destination):
+    landed = find_asset_by_name(destination.rpartition("/")[2])
+    if landed and landed != destination:
+        if unreal.EditorAssetLibrary.does_asset_exist(source):
+            warn(f"{source} still exists even though {landed} is already in place; delete one")
+        else:
+            log(f"Already migrated, filed at {landed}")
+        return False
+
     if unreal.EditorAssetLibrary.does_asset_exist(destination):
         if unreal.EditorAssetLibrary.does_asset_exist(source):
             warn(
@@ -183,6 +200,7 @@ def resave_migrated_assets():
     this has to run before the editor is restarted.
     """
     for _, destination in MOVES:
+        destination = find_asset_by_name(destination.rpartition("/")[2]) or destination
         asset = (
             unreal.EditorAssetLibrary.load_asset(destination)
             if unreal.EditorAssetLibrary.does_asset_exist(destination)
@@ -299,7 +317,8 @@ def verify():
         if defaults.get_editor_property("projectile_class") is None:
             problems.append(f"{CANNON_BLUEPRINT_PATH} has no ProjectileClass")
 
-    for mesh_path in (CANNON_MESH_PATH, CANNONBALL_MESH_PATH):
+    for default_path in (CANNON_MESH_PATH, CANNONBALL_MESH_PATH):
+        mesh_path = find_asset_by_name(default_path.rpartition("/")[2]) or default_path
         if not unreal.EditorAssetLibrary.does_asset_exist(mesh_path):
             problems.append(f"{mesh_path} is missing")
             continue

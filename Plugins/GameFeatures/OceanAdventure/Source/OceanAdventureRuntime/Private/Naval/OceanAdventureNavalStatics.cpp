@@ -9,6 +9,7 @@
 #include "GameFramework/Pawn.h"
 #include "GameFramework/PlayerController.h"
 #include "Naval/NavalHelmComponent.h"
+#include "Naval/NavalHelmStation.h"
 #include "Naval/NavalLoadComponent.h"
 #include "Naval/NavalMovementComponent.h"
 #include "Naval/NavalPartComponent.h"
@@ -52,6 +53,60 @@ AActor* UOceanAdventureNavalStatics::FindNearestStationActor(
 		}
 
 		const double DistanceSquared = FVector::DistSquared(Origin, Candidate->GetActorLocation());
+		if (DistanceSquared < NearestDistanceSquared)
+		{
+			NearestDistanceSquared = DistanceSquared;
+			Nearest = Candidate;
+		}
+	}
+
+	return Nearest;
+}
+
+AActor* UOceanAdventureNavalStatics::FindNearestUsableHelmStation(
+	const UObject* WorldContextObject,
+	const FVector& Origin,
+	float Radius,
+	const AActor* Operator)
+{
+	const UWorld* World = GEngine
+		? GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::ReturnNull)
+		: nullptr;
+	if (!World || !Operator)
+	{
+		return nullptr;
+	}
+
+	FCollisionObjectQueryParams ObjectQueryParams;
+	ObjectQueryParams.AddObjectTypesToQuery(ECC_WorldDynamic);
+
+	TArray<FOverlapResult> Overlaps;
+	World->OverlapMultiByObjectType(
+		Overlaps,
+		Origin,
+		FQuat::Identity,
+		ObjectQueryParams,
+		FCollisionShape::MakeSphere(FMath::Max(10.0f, Radius)));
+
+	AActor* Nearest = nullptr;
+	double NearestDistanceSquared = TNumericLimits<double>::Max();
+	for (const FOverlapResult& Overlap : Overlaps)
+	{
+		AActor* Candidate = Overlap.GetActor();
+		const INavalHelmStation* Station = Candidate ? Cast<INavalHelmStation>(Candidate) : nullptr;
+		if (!Station)
+		{
+			continue;
+		}
+
+		FGameplayTag FailReason;
+		if (!Station->CanOperate(Operator, FailReason))
+		{
+			continue;
+		}
+
+		const double DistanceSquared = FVector::DistSquared(
+			Origin, Station->GetInteractionLocation());
 		if (DistanceSquared < NearestDistanceSquared)
 		{
 			NearestDistanceSquared = DistanceSquared;

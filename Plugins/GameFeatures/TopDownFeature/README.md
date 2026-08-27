@@ -1,9 +1,10 @@
 # Top Down Feature
 
-This GameFeature provides two reusable runtime classes:
+This GameFeature provides three reusable runtime classes:
 
 - `ULyraCameraMode_TopDownFollow`: smooth zoomable/orbiting camera centered on the current Lyra camera target.
-- `UTopDownPawnComponent`: mouse-facing WASD movement plus local camera input using the pawn's existing Lyra input component.
+- `UTopDownGameplayAbility_Move`: player-ASC movement intent, granted once per directional InputTag.
+- `UTopDownPawnComponent`: movement executor, mouse-facing presentation and local camera input.
 
 ## Generated assets
 
@@ -12,30 +13,33 @@ The following assets are included in the plugin:
 1. `/TopDownFeature/TopDownFeature` (`UGameFeatureData`).
 2. `/TopDownFeature/Input/IA_TopDownMove*` plus zoom, rotate-hold and pointer-delta `UInputAction` assets.
 3. `/TopDownFeature/Input/IMC_TopDown`, mapping W/A/S/D, mouse wheel, right click and mouse delta.
-4. `/TopDownFeature/Input/DA_TopDown_InputConfig`, registering the movement and camera actions by native `InputTag`.
-5. `/TopDownFeature/Pawn/DA_TopDown_PawnData`, using the project-owned default hero pawn and `ULyraCameraMode_TopDownFollow` as `DefaultCameraMode`.
+4. `/TopDownFeature/Input/DA_TopDown_InputConfig`: movement in `AbilityInputActions`, camera in `NativeInputActions`.
+5. `/TopDownFeature/Abilities/DA_AbilitySet_TopDownMovement`, granting the same movement Ability for the four direction tags.
+6. `/TopDownFeature/Pawn/DA_TopDown_PawnData`, using the project-owned default hero pawn and `ULyraCameraMode_TopDownFollow` as `DefaultCameraMode`.
 
-The generated PawnData intentionally has no AbilitySets. This keeps the reusable
-GameFeature free of illegal references to a sibling feature such as `SimpleExperience`.
-A gameplay-specific consumer should own a derived PawnData when it needs that feature's
-pawn class or AbilitySets.
+The generated PawnData intentionally has no feature AbilitySet. `TopDownFeature` grants it to
+`ALyraPlayerState` through `GameFeatureAction_AddAbilities`, so consuming PawnData assets do not
+need sibling-GameFeature asset references and cannot accidentally grant duplicate specs.
 
 `Content/Python/create_top_down_assets.py` recreates or updates these assets and is safe to run repeatedly after compiling the runtime module.
 
-## Editor configuration
-
-The GameFeature actions remain project-specific because `ActorClass` must match the pawn used by the selected Experience. Configure `/TopDownFeature/TopDownFeature` as follows:
-
-Configure the GameFeatureData actions as follows:
+The script idempotently configures `/TopDownFeature/TopDownFeature` as follows:
 
 ```text
 Add Components
-  ActorClass     = actual player pawn class (ALyraCharacter or the concrete vehicle/boat pawn)
+  ActorClass     = ALyraCharacter
   ComponentClass = UTopDownPawnComponent
 
 Add Input Mapping
   InputMapping = IMC_TopDown
-  Priority     = 0
+  Priority     = 1
+
+Add Input Binding
+  InputConfig = DA_TopDown_InputConfig
+
+Add Abilities
+  ActorClass        = ALyraPlayerState
+  GrantedAbilitySet = DA_AbilitySet_TopDownMovement
 ```
 
 Duplicate the Experience currently used by the target game mode, set its `DefaultPawnData` to `DA_TopDown_PawnData`, and add `TopDownFeature` to `GameFeaturesToEnable`. Preserve the source Experience's existing Actions and ActionSets. If the target uses a pawn other than the SimpleExperience pawn, also update `DA_TopDown_PawnData.PawnClass` before assigning the Add Components action.
@@ -44,6 +48,6 @@ The target pawn must be a ModularGameplay component receiver and own a `ULyraCam
 
 ## Runtime behavior
 
-The component waits for Lyra's `BindInputsNow` extension event before binding its native actions. If the component is injected after that event, it uses `ULyraHeroComponent::IsReadyToBindInputs()` to bind immediately. Mouse-wheel zoom is clamped and smoothed by the camera mode. Holding right mouse pushes a CommonUI game-capture policy; horizontal pointer delta rotates the camera until release, when the prior CommonUI policy is restored. Input handles and UI state are also restored when the component or GameFeature is removed.
+The component waits for Lyra's `BindInputsNow` extension event before binding only the camera-native actions. If injected after that event, it uses `ULyraHeroComponent::IsReadyToBindInputs()` immediately. Mouse-wheel zoom is clamped and smoothed by the camera mode. Holding right mouse pushes a CommonUI game-capture policy; horizontal pointer delta rotates the camera until release, when the prior CommonUI policy is restored.
 
-WASD movement is camera-relative and is bound as four 1D native actions, so the editor script does not depend on writing per-mapping Enhanced Input modifiers. The local pawn's actor yaw follows the deprojected mouse ray intersected with the pawn's XY plane; holding right mouse for camera rotation temporarily pauses facing updates. The old target-movement Blueprint functions remain as compatibility APIs, but no click action is mapped or bound.
+WASD is camera-relative, but the component no longer owns those bindings. Each held direction activates a predicted movement Ability that sets one executor intent and ends on release. `Gameplay.MovementStopped` both blocks new activation and cancels active directions, which lets naval/building station abilities take movement ownership without hard-coded input switching. The old target-movement Blueprint functions remain compatibility APIs; no click action is mapped or bound.

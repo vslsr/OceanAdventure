@@ -168,6 +168,9 @@ protected:
 
 private:
 	void ResolvePeers();
+
+	/** Repairs stale Blueprint/instance mobility that would silently discard every move. */
+	void EnsureOwnerCanMove();
 	void TickAuthorityMovement(float DeltaTime);
 	void PublishAuthorityPose();
 	void TickClientInterpolation(AActor& OwnerActor, float DeltaTime);

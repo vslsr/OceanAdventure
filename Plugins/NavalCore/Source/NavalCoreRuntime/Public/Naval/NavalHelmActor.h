@@ -4,6 +4,7 @@
 
 #include "GameFramework/Actor.h"
 #include "GameplayTagContainer.h"
+#include "Naval/NavalHelmStation.h"
 
 #include "NavalHelmActor.generated.h"
 
@@ -25,11 +26,11 @@ class UStaticMeshComponent;
  * Everything a player touches is here, mirroring ANavalHeavyWeaponActor: the seat body is
  * what the station search overlaps, OperatorPoint is where the character is pinned once it
  * takes the wheel, and the wheel turns with the steering the helm is actually applying.
- * Ownership, capture and control still live on UNavalHelmComponent, which spawns one of these
- * per vessel -- this Actor never becomes a second source of truth for who is steering.
+ * Ownership, capture and control still live on UNavalHelmComponent. Expandable vessels build
+ * one of these as a fixed deck piece; this Actor never becomes a second steering truth.
  */
 UCLASS(BlueprintType, Blueprintable)
-class NAVALCORERUNTIME_API ANavalHelmActor : public AActor
+class NAVALCORERUNTIME_API ANavalHelmActor : public AActor, public INavalHelmStation
 {
 	GENERATED_BODY()
 
@@ -44,6 +45,7 @@ public:
 	virtual void PreInitializeComponents() override;
 
 	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void Tick(float DeltaTime) override;
 
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
@@ -60,7 +62,8 @@ public:
 
 	/** The helm component on the vessel this console belongs to. */
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
-	UNavalHelmComponent* GetHelmComponent() const;
+	virtual UNavalHelmComponent* GetHelmComponent() const override;
+	virtual UNavalPartComponent* GetHelmCorePart() const override { return CorePart; }
 
 	/** Whoever the helm believes is steering, or null. */
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
@@ -71,11 +74,20 @@ public:
 	 * Actor the player actually walked up to, so a preview and the server share one rule set.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Naval|Helm")
-	bool CanOperate(const AActor* Candidate, FGameplayTag& OutFailReason) const;
+	virtual bool CanOperate(const AActor* Candidate, FGameplayTag& OutFailReason) const override;
+
+	/** Takes this placed wheel on the server after re-running the same validation. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
+	virtual bool TryOccupy(AActor* NewOperator) override;
+
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
+	virtual void ReleaseOperator(AActor* LeavingOperator) override;
 
 	/** Where the character is placed and pinned while it holds the wheel. */
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
-	FTransform GetOperatorTransform() const;
+	virtual FTransform GetOperatorTransform() const override;
+	virtual FVector GetInteractionLocation() const override { return GetActorLocation(); }
+	virtual bool IsWithinInteractionRange(const AActor* Candidate) const override;
 
 protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Naval|Helm")
@@ -113,6 +125,10 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (ClampMin = "0.1"))
 	float WheelInterpSpeed = 6.0f;
+
+	/** Reach belongs to this placed station, not to the vessel-wide helm component. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (ClampMin = "50.0", Units = "cm"))
+	float InteractionRange = 260.0f;
 
 private:
 	/** Current visual angle of the wheel, interpolated towards the helm's steer intent. */

@@ -27,7 +27,9 @@ public class TopDownFeatureRuntime : ModuleRules
 			{
 				"CommonGame",
 				"EnhancedInput",
-				"GameplayAbilities"
+				"GameplayAbilities",
+				"GameplayTasks",
+				"GameFeatures"
 			}
 		);
 	}

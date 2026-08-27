@@ -3,42 +3,25 @@
 #pragma once
 
 #include "Building/BuildStructureHost.h"
-#include "CoreMinimal.h"
-#include "GameFramework/Actor.h"
+#include "Raft/RaftVesselActor.h"
 
 #include "RaftActor.generated.h"
 
 class UBoxComponent;
 class UBuildStructureComponent;
 class UBuildStructureVisualComponent;
-class URaftBuoyancyComponent;
-class URaftDefinition;
 class USceneComponent;
-class UStaticMeshComponent;
 
-/** Replicated moving platform whose transform is authored by server-only buoyancy. */
+/** Expandable raft: the water-vehicle base plus construction and attachable content. */
 UCLASS(BlueprintType, Blueprintable)
-class RAFTRUNTIME_API ARaftActor : public AActor, public IBuildStructureHost
+class RAFTRUNTIME_API ARaftActor : public ARaftVesselActor, public IBuildStructureHost
 {
 	GENERATED_BODY()
 
 public:
 	ARaftActor();
 
-	virtual void PreInitializeComponents() override;
-	virtual void BeginPlay() override;
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
-	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void PostInitializeComponents() override;
-
-	UFUNCTION(BlueprintPure, Category = "Raft")
-	UBoxComponent* GetDeckCollision() const { return DeckCollision; }
-
-	UFUNCTION(BlueprintPure, Category = "Raft")
-	UStaticMeshComponent* GetVisualMesh() const { return VisualMesh; }
-
-	UFUNCTION(BlueprintPure, Category = "Raft")
-	URaftBuoyancyComponent* GetBuoyancyComponent() const { return BuoyancyComponent; }
 
 	UFUNCTION(BlueprintPure, Category = "Raft|Build")
 	UBuildStructureComponent* GetBuildStructureComponent() const { return BuildStructureComponent; }
@@ -53,20 +36,7 @@ public:
 	virtual void OnStructureBoundsChanged(const FBox& LocalBounds) override;
 
 protected:
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft")
-	TObjectPtr<URaftDefinition> RaftDefinition;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Collision")
-	TObjectPtr<UBoxComponent> DeckCollision;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Presentation")
-	TObjectPtr<USceneComponent> VisualPivot;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Presentation")
-	TObjectPtr<UStaticMeshComponent> VisualMesh;
-
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy")
-	TObjectPtr<URaftBuoyancyComponent> BuoyancyComponent;
+	virtual void ApplyDefinition() override;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Build")
 	TObjectPtr<UBuildStructureComponent> BuildStructureComponent;
@@ -86,10 +56,6 @@ protected:
 	FIntPoint AnchorMax = FIntPoint(-1, -1);
 
 private:
-	void ApplyDefinition();
-
 	/** Aligns the fixed 200 cm building/hull snap grid and caches its anchor range. */
 	void RecomputeGridAlignment();
-
-	FVector GetBaseDeckExtent() const;
 };

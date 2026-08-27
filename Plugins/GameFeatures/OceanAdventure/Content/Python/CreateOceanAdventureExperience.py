@@ -17,11 +17,11 @@ that turns it into the mode's player, and the wiring that injects everything els
                               AOceanAdventurePawn  gets UOceanChunkInvokerComponent
                               AOceanChunkActor     gets UOceanChunkPresentationComponent
 
-    TopDownFeature (GameFeatureData, already configured)
+    TopDownFeature (GameFeatureData, configured by create_top_down_assets.py)
       AddComponents        -> UTopDownPawnComponent
-
-    OceanAdventure (GameFeatureData)
-      AddInputMapping      -> IMC_OceanAdventure_Base (owned WASD/camera actions)
+      AddInputMapping      -> IMC_TopDown
+      AddInputBinding      -> DA_TopDown_InputConfig
+      AddAbilities         -> DA_AbilitySet_TopDownMovement on ALyraPlayerState
 
 The chunk components live in OceanCore, a plain plugin. GameFeatureAction_AddComponents
 takes any TSubclassOf<UActorComponent>, so OceanCore does not have to be a game feature
@@ -41,8 +41,8 @@ To run again in the same editor session:
     import importlib, CreateOceanAdventureExperience
     importlib.reload(CreateOceanAdventureExperience)
 
-Requires the OceanAdventureRuntime module to be compiled, and CreateGameFeatureData to
-have been run first so /OceanAdventure/OceanAdventure exists.
+Requires OceanAdventureRuntime and TopDownFeatureRuntime to be compiled, and
+CreateGameFeatureData to have been run first so /OceanAdventure/OceanAdventure exists.
 
 Idempotent: assets are created if missing, and owned properties are repaired on re-run.
 Named base GameFeature actions are replaced while unrelated actions and PawnData AbilitySets
@@ -75,13 +75,6 @@ TOP_DOWN_INPUT_SPECS = [
 
 BASE_COMPONENTS_ACTION_NAME = "OceanBase_AddComponents"
 BASE_INPUT_MAPPING_ACTION_NAME = "OceanBase_AddInputMapping"
-
-# LSA_Shared_Input adds /Game/Input/IMC_Base at priority 0, and IMC_Base maps W/A/S/D to
-# IA_Move and Mouse2D to IA_Look_Mouse. At equal priority IMC_Base wins the key, so the
-# mode's own move and camera-rotate actions never fire -- `showdebug enhancedinput` reports
-# them as "OVERRIDDEN BY IMC_Base:IA_Move". Sit above it, where IMC_OceanBuild and
-# IMC_OceanNaval already sit; none of those three map the keys this one claims.
-BASE_INPUT_MAPPING_PRIORITY = 1
 
 ACTION_SET_PATHS = [
     "/Game/ActionSet/LSA_Standard_Components",
@@ -191,12 +184,6 @@ def load_or_duplicate(source_path, destination_path):
     )
 
 
-def make_key(key_name):
-    key = unreal.Key()
-    key.set_editor_property("key_name", unreal.Name(key_name))
-    return key
-
-
 def gameplay_tag(tag_name):
     """Resolve a registered tag across UE 5.7 Python wrapper variants."""
     request_tag = getattr(unreal.GameplayTagLibrary, "request_gameplay_tag", None)
@@ -214,16 +201,6 @@ def gameplay_tag(tag_name):
     return tag
 
 
-def asset_path(asset):
-    """Return a stable asset path for UE Python wrappers (object equality is unreliable)."""
-    if asset is None:
-        return ""
-    get_path_name = getattr(asset, "get_path_name", None)
-    if get_path_name is None:
-        return str(asset)
-    return str(get_path_name()).split(".", 1)[0]
-
-
 def gameplay_tags_equal(left, right):
     """Compare FGameplayTag values; Python's generated ``==`` wrapper compares identity."""
     equal_tag = getattr(unreal.GameplayTagLibrary, "equal_equal_gameplay_tag", None)
@@ -237,45 +214,9 @@ def gameplay_tags_equal(left, right):
     return left == right
 
 
-def has_native_input_action(entries, action, input_tag):
-    """Check a Lyra input entry without comparing wrapped UObject identity."""
-    expected_action_path = asset_path(action)
-    return any(
-        asset_path(entry.get_editor_property("input_action")) == expected_action_path
-        and gameplay_tags_equal(entry.get_editor_property("input_tag"), input_tag)
-        for entry in entries
-    )
-
-
 def configure_input_assets():
-    """Own the mouse-facing WASD and camera actions used by this feature's PawnData."""
+    """Keep PawnData on base Lyra input; TopDownFeature injects its own tagged config."""
     input_config = load_or_duplicate(BASE_INPUT_CONFIG_PATH, INPUT_CONFIG_PATH)
-    input_actions = []
-    for asset_name, value_type, _, _ in TOP_DOWN_INPUT_SPECS:
-        action = get_or_create_data_asset(
-            f"{INPUT_ROOT}/{asset_name}",
-            unreal.InputAction,
-            unreal.InputActionFactory() if hasattr(unreal, "InputActionFactory") else None,
-        )
-        action.set_editor_property("value_type", value_type)
-        input_actions.append(action)
-
-    input_mapping = get_or_create_data_asset(
-        INPUT_MAPPING_PATH,
-        unreal.InputMappingContext,
-        unreal.InputMappingContext_Factory()
-        if hasattr(unreal, "InputMappingContext_Factory")
-        else None,
-    )
-    for action, (_, _, _, key_name) in zip(input_actions, TOP_DOWN_INPUT_SPECS):
-        input_mapping.unmap_all_keys_from_action(action)
-        input_mapping.map_key(action, make_key(key_name))
-
-    # Remove the old click mapping if this script is upgrading an existing asset. The
-    # asset remains on disk for reference, but no click action is registered or mapped.
-    legacy_click_action = load_existing(f"{INPUT_ROOT}/IA_OceanAdventure_TopDownClick")
-    if legacy_click_action is not None:
-        input_mapping.unmap_all_keys_from_action(legacy_click_action)
 
     component_class = require_type("TopDownPawnComponent", "the TopDownFeature plugin")
     component_cdo = unreal.get_default_object(component_class)
@@ -287,39 +228,50 @@ def configure_input_assets():
         for _, _, tag_property, _ in TOP_DOWN_INPUT_SPECS
     ]
     legacy_tags = [gameplay_tag("InputTag.TopDownClick"), gameplay_tag("InputTag.Move")]
-    # Every tag this script is responsible for: the ones it re-adds below, plus the
-    # superseded ones it must strip. ``in`` would compare the wrapped structs by
-    # identity, which silently keeps InputTag.Move alive alongside the top-down
-    # actions -- and then both ULyraHeroComponent::Input_Move and
-    # UTopDownPawnComponent feed AddMovementInput on the same key press.
+    # Migration cleanup: OceanAdventure used to duplicate the TopDownFeature actions in its
+    # PawnData config. Leaving them here would bypass the new movement Ability or bind it twice.
     replaced_tags = list(owned_tags) + legacy_tags
-    native_actions = [
-        action
-        for action in input_config.get_editor_property("native_input_actions")
-        if not any(
-            gameplay_tags_equal(action.get_editor_property("input_tag"), replaced_tag)
-            for replaced_tag in replaced_tags
-        )
-    ]
-    for action, input_tag in zip(input_actions, owned_tags):
-        native_actions.append(
-            unreal.LyraInputAction(input_action=action, input_tag=input_tag)
-        )
-    input_config.set_editor_property("native_input_actions", native_actions)
-
-    configured_native_actions = input_config.get_editor_property("native_input_actions")
-    for action, input_tag in zip(input_actions, owned_tags):
-        if not has_native_input_action(configured_native_actions, action, input_tag):
-            raise RuntimeError(
-                f"InputConfig did not retain {action.get_name()} -> {input_tag}"
+    for property_name in ("native_input_actions", "ability_input_actions"):
+        filtered_actions = [
+            action
+            for action in input_config.get_editor_property(property_name)
+            if not any(
+                gameplay_tags_equal(action.get_editor_property("input_tag"), replaced_tag)
+                for replaced_tag in replaced_tags
             )
+        ]
+        input_config.set_editor_property(property_name, filtered_actions)
 
-    for asset_name, _, _, _ in TOP_DOWN_INPUT_SPECS:
-        save(f"{INPUT_ROOT}/{asset_name}")
-    save(INPUT_MAPPING_PATH)
+    # Remove every obsolete mapping from the old OceanAdventure-owned context. The asset is
+    # retained for migration safety but its GameFeature action is removed below.
+    input_mapping = load_existing(INPUT_MAPPING_PATH)
+    old_actions = [
+        load_existing(f"{INPUT_ROOT}/{asset_name}")
+        for asset_name, _, _, _ in TOP_DOWN_INPUT_SPECS
+    ]
+    old_actions.append(load_existing(f"{INPUT_ROOT}/IA_OceanAdventure_TopDownClick"))
+    if input_mapping is not None:
+        for action in old_actions:
+            if action is not None:
+                input_mapping.unmap_all_keys_from_action(action)
+
+    for property_name in ("native_input_actions", "ability_input_actions"):
+        require(
+            not any(
+                any(
+                    gameplay_tags_equal(entry.get_editor_property("input_tag"), tag)
+                    for tag in replaced_tags
+                )
+                for entry in input_config.get_editor_property(property_name)
+            ),
+            f"{property_name} still contains an OceanAdventure-owned TopDown tag",
+        )
+
+    if input_mapping is not None:
+        save(INPUT_MAPPING_PATH)
     save(INPUT_CONFIG_PATH)
-    log("Configured OceanAdventure-owned mouse-facing WASD and camera actions, mapping and InputConfig")
-    return input_config, input_mapping
+    log("Removed legacy OceanAdventure TopDown input; TopDownFeature now owns mapping, tags and movement Ability")
+    return input_config
 
 
 def get_blueprint_class(blueprint, asset_path):
@@ -404,7 +356,7 @@ def create_pawn_data(pawn_blueprint_class, input_config):
     return pawn_data
 
 
-def configure_game_feature_data(pawn_class, input_mapping):
+def configure_game_feature_data(pawn_class):
     game_feature_data = require(
         load_existing(GAME_FEATURE_DATA_PATH),
         f"Missing GameFeatureData: {GAME_FEATURE_DATA_PATH}. Run CreateGameFeatureData first.",
@@ -452,23 +404,12 @@ def configure_game_feature_data(pawn_class, input_mapping):
             BASE_COMPONENTS_ACTION_NAME,
         )
     )
-    actions.append(
-        require(
-            unreal.OceanAdventureAssetLibrary.create_add_input_context_mapping_action(
-                game_feature_data,
-                input_mapping,
-                BASE_INPUT_MAPPING_PRIORITY,
-                unreal.Name(BASE_INPUT_MAPPING_ACTION_NAME),
-            ),
-            "Failed to create OceanAdventure base input mapping action",
-        )
-    )
     game_feature_data.set_editor_property("actions", actions)
 
     save(GAME_FEATURE_DATA_PATH)
     log(
         "GameFeatureData injects the ocean world manager, Lyra hero bridge, "
-        "chunk invoker, chunk presentation, and mouse-facing WASD mapping"
+        "chunk invoker and chunk presentation; TopDownFeature owns its input mapping"
     )
 
 
@@ -521,7 +462,7 @@ def main():
 
     pawn_class = require_type("OceanAdventurePawn", "the OceanAdventureRuntime module")
 
-    input_config, input_mapping = configure_input_assets()
+    input_config = configure_input_assets()
 
     blueprint = get_or_create_blueprint(PAWN_BLUEPRINT_PATH, pawn_class)
     unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
@@ -530,7 +471,7 @@ def main():
     save(PAWN_BLUEPRINT_PATH)
 
     pawn_data = create_pawn_data(pawn_blueprint_class, input_config)
-    configure_game_feature_data(pawn_class, input_mapping)
+    configure_game_feature_data(pawn_class)
     configure_experience(pawn_data)
 
     log("Done. Restart the editor so the game features re-register with the new actions.")

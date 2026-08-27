@@ -10,6 +10,7 @@
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalHelmComponent.h"
 #include "Naval/NavalPartComponent.h"
+#include "NavalCoreRuntimeModule.h"
 #include "UObject/ConstructorHelpers.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NavalHelmActor)
@@ -28,6 +29,7 @@ ANavalHelmActor::ANavalHelmActor()
 
 	SceneRoot = CreateDefaultSubobject<USceneComponent>(TEXT("SceneRoot"));
 	SetRootComponent(SceneRoot);
+	SceneRoot->SetMobility(EComponentMobility::Movable);
 
 	// Greybox shapes so a vessel has a console a player can see and walk up to before any art
 	// exists. A helm Blueprint replaces both meshes without touching the layout below.
@@ -110,6 +112,21 @@ void ANavalHelmActor::BeginPlay()
 	}
 }
 
+void ANavalHelmActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (HasAuthority())
+	{
+		if (UNavalHelmComponent* Helm = GetHelmComponent(); Helm && Helm->GetActiveStation() == this)
+		{
+			Helm->EndCapture(nullptr);
+			Helm->ReleaseHelm(nullptr);
+			Helm->InterruptCapture(1.0f);
+		}
+	}
+	UGameFrameworkComponentManager::RemoveGameFrameworkComponentReceiver(this);
+	Super::EndPlay(EndPlayReason);
+}
+
 void ANavalHelmActor::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
@@ -145,6 +162,12 @@ AActor* ANavalHelmActor::GetHelmOperator() const
 
 bool ANavalHelmActor::CanOperate(const AActor* Candidate, FGameplayTag& OutFailReason) const
 {
+	if (!Candidate)
+	{
+		OutFailReason = NavalGameplayTags::Fail_WrongTeam;
+		return false;
+	}
+
 	const UNavalHelmComponent* Helm = GetHelmComponent();
 	if (!Helm)
 	{
@@ -152,11 +175,63 @@ bool ANavalHelmActor::CanOperate(const AActor* Candidate, FGameplayTag& OutFailR
 		OutFailReason = NavalGameplayTags::Fail_NotOperational;
 		return false;
 	}
+	if (CorePart && !CorePart->IsFunctional())
+	{
+		OutFailReason = NavalGameplayTags::Fail_NotOperational;
+		return false;
+	}
+	if (!IsWithinInteractionRange(Candidate))
+	{
+		OutFailReason = NavalGameplayTags::Fail_TooFar;
+		return false;
+	}
 
 	return Helm->CanOccupy(Candidate, OutFailReason);
+}
+
+bool ANavalHelmActor::TryOccupy(AActor* NewOperator)
+{
+	if (!HasAuthority())
+	{
+		return false;
+	}
+
+	FGameplayTag FailReason;
+	if (!CanOperate(NewOperator, FailReason))
+	{
+		UE_LOG(
+			LogNavalCore,
+			Verbose,
+			TEXT("[Helm] Occupy refused station=%s candidate=%s reason=%s"),
+			*GetNameSafe(this),
+			*GetNameSafe(NewOperator),
+			*FailReason.ToString());
+		return false;
+	}
+
+	UNavalHelmComponent* Helm = GetHelmComponent();
+	return Helm && Helm->TryOccupyFromStation(NewOperator, this);
+}
+
+void ANavalHelmActor::ReleaseOperator(AActor* LeavingOperator)
+{
+	if (HasAuthority())
+	{
+		if (UNavalHelmComponent* Helm = GetHelmComponent(); Helm && Helm->GetActiveStation() == this)
+		{
+			Helm->ReleaseHelm(LeavingOperator);
+		}
+	}
 }
 
 FTransform ANavalHelmActor::GetOperatorTransform() const
 {
 	return OperatorPoint ? OperatorPoint->GetComponentTransform() : GetActorTransform();
+}
+
+bool ANavalHelmActor::IsWithinInteractionRange(const AActor* Candidate) const
+{
+	return Candidate
+		&& FVector::DistSquared(Candidate->GetActorLocation(), GetInteractionLocation())
+			<= FMath::Square(static_cast<double>(InteractionRange));
 }

@@ -8,6 +8,7 @@
 #include "GameFramework/Pawn.h"
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalHelmActor.h"
+#include "Naval/NavalHelmStation.h"
 #include "Naval/NavalMessages.h"
 #include "Naval/NavalPartComponent.h"
 #include "Naval/NavalTeamStatics.h"
@@ -26,9 +27,6 @@ UNavalHelmComponent::UNavalHelmComponent()
 	// Only capture progress needs this tick, and it is a multi-second interaction.
 	PrimaryComponentTick.TickInterval = 0.1f;
 	SetIsReplicatedByDefault(true);
-
-	// The base console works with no authored asset, so a vessel always has a helm to take.
-	HelmActorClass = ANavalHelmActor::StaticClass();
 }
 
 void UNavalHelmComponent::BeginPlay()
@@ -37,8 +35,6 @@ void UNavalHelmComponent::BeginPlay()
 
 	if (GetOwner() && GetOwner()->HasAuthority())
 	{
-		SpawnHelmActor();
-
 		if (UWorld* World = GetWorld(); World && OrphanCheckInterval > 0.0f)
 		{
 			World->GetTimerManager().SetTimer(
@@ -61,11 +57,7 @@ void UNavalHelmComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		World->GetTimerManager().ClearTimer(OrphanCheckTimerHandle);
 	}
 
-	if (GetOwner() && GetOwner()->HasAuthority() && HelmActor)
-	{
-		HelmActor->Destroy();
-	}
-	HelmActor = nullptr;
+	ActiveStation = nullptr;
 	Operator = nullptr;
 	CaptureChallenger = nullptr;
 
@@ -77,40 +69,11 @@ void UNavalHelmComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& 
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
 
 	DOREPLIFETIME(UNavalHelmComponent, Operator);
-	DOREPLIFETIME(UNavalHelmComponent, HelmActor);
+	DOREPLIFETIME(UNavalHelmComponent, ActiveStation);
 	DOREPLIFETIME(UNavalHelmComponent, CaptureProgress);
 	DOREPLIFETIME(UNavalHelmComponent, CapturingTeamId);
 	DOREPLIFETIME(UNavalHelmComponent, ThrottleIntent);
 	DOREPLIFETIME(UNavalHelmComponent, SteerIntent);
-}
-
-void UNavalHelmComponent::SpawnHelmActor()
-{
-	AActor* OwnerActor = GetOwner();
-	UWorld* World = GetWorld();
-	if (!OwnerActor || !World || !HelmActorClass || HelmActor)
-	{
-		return;
-	}
-
-	FActorSpawnParameters SpawnParameters;
-	SpawnParameters.Owner = OwnerActor;
-	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-	const FTransform HostSpace = OwnerActor->GetActorTransform();
-	const FTransform LocalTransform(FRotator(0.0f, HelmLocalYaw, 0.0f), HelmLocalOffset);
-	HelmActor = World->SpawnActor<ANavalHelmActor>(
-		HelmActorClass, LocalTransform * HostSpace, SpawnParameters);
-	if (!HelmActor)
-	{
-		UE_LOG(LogNavalCore, Error, TEXT("[Helm] Failed to spawn helm actor for vessel=%s"), *GetNameSafe(OwnerActor));
-		return;
-	}
-
-	// The helm rides the deck; it is never re-placed, which is what makes "you cannot move
-	// or dismantle the core at sea" a structural fact rather than a rule players must obey.
-	HelmActor->AttachToActor(OwnerActor, FAttachmentTransformRules::KeepWorldTransform);
-	OwnerActor->ForceNetUpdate();
 }
 
 bool UNavalHelmComponent::CanOccupy(const AActor* Candidate, FGameplayTag& OutFailReason) const
@@ -143,17 +106,17 @@ bool UNavalHelmComponent::CanOccupy(const AActor* Candidate, FGameplayTag& OutFa
 		return false;
 	}
 
-	const double DistanceSquared = FVector::DistSquared(Candidate->GetActorLocation(), GetHelmWorldLocation());
-	if (DistanceSquared > FMath::Square(static_cast<double>(InteractionRange)))
-	{
-		OutFailReason = NavalGameplayTags::Fail_TooFar;
-		return false;
-	}
-
+	// Reach and station damage belong to the concrete INavalHelmStation. This component owns
+	// only vessel-wide team, wreck and occupancy truth.
 	return true;
 }
 
 bool UNavalHelmComponent::TryOccupy(AActor* NewOperator)
+{
+	return TryOccupyFromStation(NewOperator, GetOwner());
+}
+
+bool UNavalHelmComponent::TryOccupyFromStation(AActor* NewOperator, AActor* StationActor)
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
@@ -161,7 +124,9 @@ bool UNavalHelmComponent::TryOccupy(AActor* NewOperator)
 	}
 
 	FGameplayTag FailReason;
-	if (!CanOccupy(NewOperator, FailReason))
+	const INavalHelmStation* Station = StationActor ? Cast<INavalHelmStation>(StationActor) : nullptr;
+	if (!Station || Station->GetHelmComponent() != this
+		|| !Station->CanOperate(NewOperator, FailReason))
 	{
 		UE_LOG(
 			LogNavalCore,
@@ -175,6 +140,7 @@ bool UNavalHelmComponent::TryOccupy(AActor* NewOperator)
 
 	UnbindOperatorDestroyed();
 	Operator = NewOperator;
+	ActiveStation = StationActor;
 	OperatorLostControllerTime = 0.0;
 	BindOperatorDestroyed(NewOperator);
 	ThrottleIntent = 0.0f;
@@ -198,6 +164,10 @@ void UNavalHelmComponent::ReleaseHelm(AActor* LeavingOperator)
 
 	UnbindOperatorDestroyed();
 	Operator = nullptr;
+	if (CaptureChallenger == nullptr && CaptureProgress <= 0.0f)
+	{
+		ActiveStation = nullptr;
+	}
 	OperatorLostControllerTime = 0.0;
 	// Design 8.3.1: the ship keeps its heading and coasts down. No autopilot, no snap to zero.
 	ThrottleIntent = 0.0f;
@@ -341,7 +311,18 @@ ENavalHelmState UNavalHelmComponent::GetHelmState() const
 
 bool UNavalHelmComponent::BeginCapture(AActor* InChallenger)
 {
+	return BeginCaptureAtStation(InChallenger, ActiveStation ? ActiveStation.Get() : GetOwner());
+}
+
+bool UNavalHelmComponent::BeginCaptureAtStation(AActor* InChallenger, AActor* StationActor)
+{
 	if (!GetOwner() || !GetOwner()->HasAuthority() || !InChallenger)
+	{
+		return false;
+	}
+
+	const INavalHelmStation* Station = StationActor ? Cast<INavalHelmStation>(StationActor) : nullptr;
+	if (!Station || Station->GetHelmComponent() != this || !Station->IsWithinInteractionRange(InChallenger))
 	{
 		return false;
 	}
@@ -357,12 +338,6 @@ bool UNavalHelmComponent::BeginCapture(AActor* InChallenger)
 		return false;
 	}
 
-	const double DistanceSquared = FVector::DistSquared(InChallenger->GetActorLocation(), GetHelmWorldLocation());
-	if (DistanceSquared > FMath::Square(static_cast<double>(InteractionRange)))
-	{
-		return false;
-	}
-
 	// A second team taking over an in-progress capture starts from scratch rather than
 	// inheriting the first team's work.
 	if (NavalTeam::IsValidTeam(CapturingTeamId) && CapturingTeamId != ChallengerTeam)
@@ -372,6 +347,7 @@ bool UNavalHelmComponent::BeginCapture(AActor* InChallenger)
 	}
 
 	CaptureChallenger = InChallenger;
+	ActiveStation = StationActor;
 	CapturingTeamId = ChallengerTeam;
 	UpdateTickEnabled();
 
@@ -419,6 +395,10 @@ void UNavalHelmComponent::InterruptCapture(float ProgressPenalty)
 	{
 		CapturingTeamId = INDEX_NONE;
 		CaptureChallenger = nullptr;
+		if (Operator == nullptr)
+		{
+			ActiveStation = nullptr;
+		}
 	}
 	GetOwner()->ForceNetUpdate();
 	UpdateTickEnabled();
@@ -444,9 +424,8 @@ void UNavalHelmComponent::TickComponent(
 void UNavalHelmComponent::UpdateCapture(float DeltaTime)
 {
 	const AActor* ActiveChallenger = CaptureChallenger;
-	const bool bInRange = ActiveChallenger
-		&& FVector::DistSquared(ActiveChallenger->GetActorLocation(), GetHelmWorldLocation())
-			<= FMath::Square(static_cast<double>(InteractionRange));
+	const INavalHelmStation* Station = ActiveStation ? Cast<INavalHelmStation>(ActiveStation) : nullptr;
+	const bool bInRange = Station && Station->IsWithinInteractionRange(ActiveChallenger);
 
 	if (bInRange)
 	{
@@ -471,6 +450,10 @@ void UNavalHelmComponent::UpdateCapture(float DeltaTime)
 		if (CaptureProgress <= 0.0f)
 		{
 			CapturingTeamId = INDEX_NONE;
+			if (Operator == nullptr)
+			{
+				ActiveStation = nullptr;
+			}
 			UpdateTickEnabled();
 		}
 	}
@@ -489,7 +472,9 @@ void UNavalHelmComponent::CompleteCapture()
 	CaptureChallenger = nullptr;
 	ContestContactSeconds = 0.0f;
 	// Whoever was steering for the old owner is no longer authorised to.
+	UnbindOperatorDestroyed();
 	Operator = nullptr;
+	ActiveStation = nullptr;
 	UpdateTickEnabled();
 
 	if (VesselComponent)
@@ -518,7 +503,13 @@ void UNavalHelmComponent::UpdateTickEnabled()
 
 UNavalPartComponent* UNavalHelmComponent::GetCorePart() const
 {
-	return HelmActor ? HelmActor->GetCorePart() : nullptr;
+	const INavalHelmStation* Station = ActiveStation ? Cast<INavalHelmStation>(ActiveStation) : nullptr;
+	return Station ? Station->GetHelmCorePart() : nullptr;
+}
+
+ANavalHelmActor* UNavalHelmComponent::GetHelmActor() const
+{
+	return Cast<ANavalHelmActor>(ActiveStation);
 }
 
 UNavalVesselComponent* UNavalHelmComponent::GetVessel() const
@@ -528,13 +519,13 @@ UNavalVesselComponent* UNavalHelmComponent::GetVessel() const
 
 FVector UNavalHelmComponent::GetHelmWorldLocation() const
 {
-	if (HelmActor)
+	if (const INavalHelmStation* Station = ActiveStation ? Cast<INavalHelmStation>(ActiveStation) : nullptr)
 	{
-		return HelmActor->GetActorLocation();
+		return Station->GetInteractionLocation();
 	}
 
 	const AActor* OwnerActor = GetOwner();
-	return OwnerActor ? OwnerActor->GetActorTransform().TransformPosition(HelmLocalOffset) : FVector::ZeroVector;
+	return OwnerActor ? OwnerActor->GetActorLocation() : FVector::ZeroVector;
 }
 
 void UNavalHelmComponent::BroadcastHelmState() const

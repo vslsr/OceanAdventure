@@ -4,6 +4,14 @@ import unreal
 PLUGIN_ROOT = "/TopDownFeature"
 INPUT_ROOT = f"{PLUGIN_ROOT}/Input"
 PAWN_ROOT = f"{PLUGIN_ROOT}/Pawn"
+ABILITY_ROOT = f"{PLUGIN_ROOT}/Abilities"
+MOVE_ABILITY_CLASS_PATH = "/Script/TopDownFeatureRuntime.TopDownGameplayAbility_Move"
+OWNED_ACTION_CLASSES = {
+    "TopDown_AddComponents": "GameFeatureAction_AddComponents",
+    "TopDown_AddInputMapping": "GameFeatureAction_AddInputContextMapping",
+    "TopDown_AddInputBinding": "GameFeatureAction_AddInputBinding",
+    "TopDown_AddAbilities": "GameFeatureAction_AddAbilities",
+}
 DEFAULT_PAWN_CLASS_PATH = (
     "/Game/Character/BP_Character_Hero_Default.BP_Character_Hero_Default_C"
 )
@@ -38,36 +46,10 @@ def load_or_create_data_asset(asset_name, package_path, asset_class):
     )
 
 
-def load_or_duplicate(source_path, destination_path):
-    destination_package_path = destination_path.rsplit("/", 1)[0]
-    scan_asset_directory(destination_package_path)
-    if unreal.EditorAssetLibrary.does_asset_exist(destination_path):
-        return unreal.EditorAssetLibrary.load_asset(destination_path)
-
-    source_package_path = source_path.rsplit("/", 1)[0]
-    scan_asset_directory(source_package_path)
-    return unreal.EditorAssetLibrary.duplicate_asset(source_path, destination_path)
-
-
 def require(value, message):
     if not value:
         raise RuntimeError(message)
     return value
-
-
-def gameplay_tag(tag_name):
-    """Resolve a registered tag across UE 5.7 Python wrapper variants."""
-    request_tag = getattr(unreal.GameplayTagLibrary, "request_gameplay_tag", None)
-    if request_tag is not None:
-        tag = request_tag(unreal.Name(tag_name), False)
-    else:
-        tag = unreal.GameplayTag()
-        tag.import_text(tag_name)
-
-    is_valid = getattr(unreal.GameplayTagLibrary, "is_gameplay_tag_valid", None)
-    if tag == unreal.GameplayTag() or (is_valid is not None and not is_valid(tag)):
-        raise RuntimeError(f"GameplayTag is not registered: {tag_name}")
-    return tag
 
 
 def asset_path(asset):
@@ -93,7 +75,7 @@ def gameplay_tags_equal(left, right):
     return left == right
 
 
-def has_native_input_action(entries, action, input_tag):
+def has_input_action(entries, action, input_tag):
     """Check a Lyra input entry without comparing wrapped UObject identity."""
     expected_action_path = asset_path(action)
     return any(
@@ -133,6 +115,9 @@ for asset_name, value_type, _, _ in input_action_specs:
         f"Failed to create {asset_name}.",
     )
     action.set_editor_property("value_type", value_type)
+    # Held movement needs Triggered for the full key-down lifetime and Completed on release.
+    # A stale Pressed trigger would complete one frame after activation and end the Ability.
+    action.set_editor_property("triggers", [])
     input_actions.append(action)
 
 input_mapping = require(
@@ -149,12 +134,17 @@ legacy_click_action = load_existing(f"{INPUT_ROOT}/IA_TopDownClick")
 if legacy_click_action is not None:
     input_mapping.unmap_all_keys_from_action(legacy_click_action)
 
+input_config_class = require(
+    unreal.load_class(None, "/Script/LyraGame.LyraInputConfig"),
+    "Failed to load ULyraInputConfig.",
+)
 input_config = require(
-    load_or_duplicate(
-        "/Game/Input/DA_InputConfig_Base",
-        f"{INPUT_ROOT}/DA_TopDown_InputConfig",
+    load_or_create_data_asset(
+        "DA_TopDown_InputConfig",
+        INPUT_ROOT,
+        input_config_class,
     ),
-    "Failed to duplicate the base Lyra InputConfig.",
+    "Failed to create the feature-owned Lyra InputConfig.",
 )
 component_class = require(
     unreal.load_class(None, "/Script/TopDownFeatureRuntime.TopDownPawnComponent"),
@@ -168,29 +158,57 @@ owned_tags = [
     )
     for _, _, tag_property, _ in input_action_specs
 ]
-legacy_tags = [gameplay_tag("InputTag.TopDownClick"), gameplay_tag("InputTag.Move")]
-# Every tag this script owns, plus the superseded ones it must strip. ``in`` would
-# compare the wrapped structs by identity, so nothing matched and each run appended
-# a fresh copy of the owned actions on top of the previous ones.
-replaced_tags = list(owned_tags) + legacy_tags
+# This config is injected as an additional Lyra config. It must contain only entries owned
+# by TopDownFeature; duplicating DA_InputConfig_Base here would bind every base Ability twice.
 native_actions = [
-    action
-    for action in input_config.get_editor_property("native_input_actions")
-    if not any(
-        gameplay_tags_equal(action.get_editor_property("input_tag"), replaced_tag)
-        for replaced_tag in replaced_tags
-    )
+    unreal.LyraInputAction(input_action=action, input_tag=input_tag)
+    for action, input_tag in zip(input_actions[4:], owned_tags[4:])
 ]
-for action, input_tag in zip(input_actions, owned_tags):
-    native_actions.append(unreal.LyraInputAction(input_action=action, input_tag=input_tag))
+ability_actions = [
+    unreal.LyraInputAction(input_action=action, input_tag=input_tag)
+    for action, input_tag in zip(input_actions[:4], owned_tags[:4])
+]
 input_config.set_editor_property("native_input_actions", native_actions)
+input_config.set_editor_property("ability_input_actions", ability_actions)
 
 configured_native_actions = input_config.get_editor_property("native_input_actions")
-for action, input_tag in zip(input_actions, owned_tags):
+configured_ability_actions = input_config.get_editor_property("ability_input_actions")
+for action, input_tag in zip(input_actions[4:], owned_tags[4:]):
     require(
-        has_native_input_action(configured_native_actions, action, input_tag),
-        f"InputConfig did not retain {action.get_name()} -> {input_tag}.",
+        has_input_action(configured_native_actions, action, input_tag),
+        f"InputConfig did not retain native {action.get_name()} -> {input_tag}.",
     )
+for action, input_tag in zip(input_actions[:4], owned_tags[:4]):
+    require(
+        has_input_action(configured_ability_actions, action, input_tag),
+        f"InputConfig did not retain ability {action.get_name()} -> {input_tag}.",
+    )
+
+ability_set_class = require(
+    unreal.load_class(None, "/Script/LyraGame.LyraAbilitySet"),
+    "Failed to load ULyraAbilitySet.",
+)
+ability_set = require(
+    load_or_create_data_asset(
+        "DA_AbilitySet_TopDownMovement",
+        ABILITY_ROOT,
+        ability_set_class,
+    ),
+    "Failed to create the TopDown movement AbilitySet.",
+)
+move_ability_class = require(
+    unreal.load_class(None, MOVE_ABILITY_CLASS_PATH),
+    "Failed to load UTopDownGameplayAbility_Move; compile TopDownFeatureRuntime first.",
+)
+require(
+    unreal.TopDownFeatureAssetLibrary.configure_ability_set_gameplay_abilities(
+        ability_set,
+        [move_ability_class] * 4,
+        [1] * 4,
+        owned_tags[:4],
+    ),
+    "Failed to configure DA_AbilitySet_TopDownMovement.",
+)
 
 pawn_data_class = require(
     unreal.load_class(None, "/Script/LyraGame.LyraPawnData"),
@@ -213,14 +231,92 @@ camera_class = require(
     "Failed to load ULyraCameraMode_TopDownFollow.",
 )
 pawn_data.set_editor_property("pawn_class", pawn_class)
+# TopDownFeature's GameFeatureData grants the movement set and injects its additional input
+# config. Keeping them out of PawnData prevents duplicate specs/bindings in consuming modes.
 pawn_data.set_editor_property("ability_sets", [])
-pawn_data.set_editor_property("input_config", input_config)
+pawn_data.set_editor_property(
+    "input_config",
+    require(
+        load_existing("/Game/Input/DA_InputConfig_Base"),
+        "Missing /Game/Input/DA_InputConfig_Base.",
+    ),
+)
 pawn_data.set_editor_property("default_camera_mode", camera_class)
 
-assets_to_save = [game_feature_data, *input_actions, input_mapping, input_config, pawn_data]
+lyra_character_class = require(
+    unreal.load_class(None, "/Script/LyraGame.LyraCharacter"),
+    "Failed to load ALyraCharacter.",
+)
+lyra_player_state_class = require(
+    unreal.load_class(None, "/Script/LyraGame.LyraPlayerState"),
+    "Failed to load ALyraPlayerState.",
+)
+actions = [
+    action
+    for action in game_feature_data.get_editor_property("actions")
+    if action is not None and str(action.get_name()) not in OWNED_ACTION_CLASSES
+]
+actions.extend(
+    [
+        require(
+            unreal.TopDownFeatureAssetLibrary.create_add_components_action(
+                game_feature_data,
+                lyra_character_class,
+                component_class,
+                unreal.Name("TopDown_AddComponents"),
+            ),
+            "Failed to create TopDown AddComponents action.",
+        ),
+        require(
+            unreal.TopDownFeatureAssetLibrary.create_add_input_context_mapping_action(
+                game_feature_data,
+                input_mapping,
+                1,
+                unreal.Name("TopDown_AddInputMapping"),
+            ),
+            "Failed to create TopDown AddInputMapping action.",
+        ),
+        require(
+            unreal.TopDownFeatureAssetLibrary.create_add_input_binding_action(
+                game_feature_data,
+                input_config,
+                unreal.Name("TopDown_AddInputBinding"),
+            ),
+            "Failed to create TopDown AddInputBinding action.",
+        ),
+        require(
+            unreal.TopDownFeatureAssetLibrary.create_add_abilities_action(
+                game_feature_data,
+                lyra_player_state_class,
+                ability_set,
+                unreal.Name("TopDown_AddAbilities"),
+            ),
+            "Failed to create TopDown AddAbilities action.",
+        ),
+    ]
+)
+game_feature_data.set_editor_property("actions", actions)
+configured_actions = {
+    str(action.get_name()): str(action.get_class().get_name())
+    for action in game_feature_data.get_editor_property("actions")
+    if action is not None
+}
+for action_name, expected_class in OWNED_ACTION_CLASSES.items():
+    require(
+        configured_actions.get(action_name) == expected_class,
+        f"TopDownFeature did not retain {action_name} as {expected_class}.",
+    )
+
+assets_to_save = [
+    game_feature_data,
+    *input_actions,
+    input_mapping,
+    input_config,
+    ability_set,
+    pawn_data,
+]
 for asset in assets_to_save:
     save_asset(asset)
 
 unreal.log_warning("TOPDOWN_ASSETS_CREATED")
-unreal.log_warning("DA_TopDown_PawnData intentionally has no AbilitySets; add gameplay-specific sets in the consuming feature.")
-unreal.log_warning("Configure Add Components and Add Input Mapping actions on /TopDownFeature/TopDownFeature before activation.")
+unreal.log_warning("TopDown movement is GAS-owned; the PawnComponent now executes movement and camera presentation only.")

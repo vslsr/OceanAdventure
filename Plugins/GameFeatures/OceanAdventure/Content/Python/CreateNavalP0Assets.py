@@ -64,8 +64,8 @@ ACTIONS = (
 )
 
 HELM_ACTION_SPECS = (
-    ("IA_Ocean_Helm_Throttle", "W/S"),
-    ("IA_Ocean_Helm_Steer", "A/D"),
+    ("IA_Ocean_Helm_Throttle", "InputTag.Naval.Helm.Throttle"),
+    ("IA_Ocean_Helm_Steer", "InputTag.Naval.Helm.Steer"),
 )
 
 
@@ -82,8 +82,8 @@ ABILITIES = (
 OWNED_ACTION_CLASSES = {
     "OceanNaval_AddInputMapping": "GameFeatureAction_AddInputContextMapping",
     "OceanNaval_AddInputBinding": "GameFeatureAction_AddInputBinding",
-    "OceanNaval_AddHelmInputComponent": "GameFeatureAction_AddComponents",
 }
+LEGACY_ACTION_NAMES = {"OceanNaval_AddHelmInputComponent"}
 EXPERIENCE_ACTION_NAME = "NavalP0_AddMatchComponent"
 # The reconnect anchor table and the spawning manager that reads it. Server-only: nothing
 # here is replicated, and the client learns where it came back by being put there.
@@ -265,10 +265,11 @@ def configure_input_assets():
     input_config.set_editor_property("ability_input_actions", ability_actions)
     save(input_config)
 
-    # The helm controls are continuous Axis1D actions, not ability activators. They are bound
-    # by UOceanAdventureHelmInputComponent only while the helm ability owns IMC_OceanHelm.
+    # The temporary DriveHelm ability is granted with both tags. It owns the high-priority
+    # context and samples these continuous actions while active.
     helm_actions = []
-    for action_name, _ in HELM_ACTION_SPECS:
+    helm_input_tags = []
+    for action_name, tag_name in HELM_ACTION_SPECS:
         action = load_or_create(
             f"{INPUT_ROOT}/{action_name}",
             unreal.InputAction,
@@ -278,45 +279,53 @@ def configure_input_assets():
         action.set_editor_property("triggers", [])
         save(action)
         helm_actions.append(action)
-
-    # Lyra's native input path owns the action lookup. The helm actions are not ability
-    # activators, but they still live in PawnData's InputConfig and are selected by explicit
-    # InputTags rather than by physical keys or asset paths at runtime.
-    base_input_config = require(
-        unreal.EditorAssetLibrary.load_asset(BASE_INPUT_CONFIG_PATH),
-        f"Missing {BASE_INPUT_CONFIG_PATH}; run CreateOceanAdventureExperience.py first",
-    )
-    helm_input_tags = [
-        gameplay_tag("InputTag.Naval.Helm.Throttle"),
-        gameplay_tag("InputTag.Naval.Helm.Steer"),
-    ]
-    replaced_tags = list(helm_input_tags)
-    native_actions = [
-        entry
-        for entry in base_input_config.get_editor_property("native_input_actions")
-        if not any(
-            gameplay_tags_equal(entry.get_editor_property("input_tag"), replaced_tag)
-            for replaced_tag in replaced_tags
+        helm_input_tags.append(gameplay_tag(tag_name))
+        ability_actions.append(
+            unreal.LyraInputAction(
+                input_action=action,
+                input_tag=helm_input_tags[-1],
+            )
         )
-    ]
-    preserved_native_count = len(native_actions)
-    for action, input_tag in zip(helm_actions, helm_input_tags):
-        native_actions.append(unreal.LyraInputAction(input_action=action, input_tag=input_tag))
-    base_input_config.set_editor_property("native_input_actions", native_actions)
-    configured_native_actions = base_input_config.get_editor_property("native_input_actions")
-    require(
-        len(configured_native_actions) == preserved_native_count + len(helm_actions),
-        "Base InputConfig native actions changed by an unexpected amount while adding helm actions",
-    )
+
+    input_config.set_editor_property("ability_input_actions", ability_actions)
+    configured_ability_actions = input_config.get_editor_property("ability_input_actions")
     for action, input_tag in zip(helm_actions, helm_input_tags):
         require(
             any(
                 asset_path(entry.get_editor_property("input_action")) == asset_path(action)
                 and gameplay_tags_equal(entry.get_editor_property("input_tag"), input_tag)
-                for entry in configured_native_actions
+                for entry in configured_ability_actions
             ),
-            f"InputConfig did not retain {action.get_name()} -> {input_tag}",
+            f"Naval InputConfig did not retain {action.get_name()} -> {input_tag}",
         )
+    save(input_config)
+
+    # Migration cleanup: these two entries used to be native actions in PawnData for the
+    # always-present HelmInputComponent. Keeping them would leave a second control path alive.
+    base_input_config = require(
+        unreal.EditorAssetLibrary.load_asset(BASE_INPUT_CONFIG_PATH),
+        f"Missing {BASE_INPUT_CONFIG_PATH}; run CreateOceanAdventureExperience.py first",
+    )
+    native_actions = [
+        entry
+        for entry in base_input_config.get_editor_property("native_input_actions")
+        if not any(
+            gameplay_tags_equal(entry.get_editor_property("input_tag"), input_tag)
+            for input_tag in helm_input_tags
+        )
+    ]
+    base_input_config.set_editor_property("native_input_actions", native_actions)
+    configured_native_actions = base_input_config.get_editor_property("native_input_actions")
+    require(
+        not any(
+            any(
+                gameplay_tags_equal(entry.get_editor_property("input_tag"), input_tag)
+                for input_tag in helm_input_tags
+            )
+            for entry in configured_native_actions
+        ),
+        "Base InputConfig still contains a legacy native helm action",
+    )
     save(base_input_config)
 
     helm_mapping = load_or_create(
@@ -362,38 +371,6 @@ def configure_ability_set():
     return ability_set
 
 
-def configure_helm_input_component(helm_mapping):
-    """Set/validate editor-session CDO defaults; the native class also has a path fallback."""
-    component_class = require_type(
-        "OceanAdventureHelmInputComponent", "the OceanAdventureRuntime module"
-    )
-    component_cdo = unreal.get_default_object(component_class)
-    throttle_tag = gameplay_tag("InputTag.Naval.Helm.Throttle")
-    steer_tag = gameplay_tag("InputTag.Naval.Helm.Steer")
-    component_cdo.set_editor_property("throttle_input_tag", throttle_tag)
-    component_cdo.set_editor_property("steer_input_tag", steer_tag)
-    component_cdo.set_editor_property("helm_mapping_priority", 2)
-
-    configured_throttle = component_cdo.get_editor_property("throttle_input_tag")
-    configured_steer = component_cdo.get_editor_property("steer_input_tag")
-    configured_priority = int(component_cdo.get_editor_property("helm_mapping_priority"))
-    require(
-        gameplay_tags_equal(configured_throttle, throttle_tag),
-        "Helm input component did not retain InputTag.Naval.Helm.Throttle",
-    )
-    require(
-        gameplay_tags_equal(configured_steer, steer_tag),
-        "Helm input component did not retain InputTag.Naval.Helm.Steer",
-    )
-    require(
-        asset_path(helm_mapping) == f"{FEATURE_ROOT}/Input/IMC_OceanHelm",
-        "Helm mapping asset path changed; native component fallback would not resolve it",
-    )
-    require(configured_priority == 2, "Helm input component did not retain mapping priority 2")
-    log("Configured OceanAdventureHelmInputComponent with IMC_OceanHelm and both actions")
-    return component_class
-
-
 def configure_beacon_blueprint():
     """The sudden-death beacon, as a Blueprint designers can drop into a level.
 
@@ -413,7 +390,7 @@ def configure_beacon_blueprint():
     return beacon
 
 
-def configure_game_feature_data(input_mapping, input_config, helm_component_class):
+def configure_game_feature_data(input_mapping, input_config):
     game_feature_data = require(
         unreal.EditorAssetLibrary.load_asset(GAME_FEATURE_DATA_PATH),
         f"Missing {GAME_FEATURE_DATA_PATH}; run CreateGameFeatureData.py first",
@@ -423,7 +400,9 @@ def configure_game_feature_data(input_mapping, input_config, helm_component_clas
     actions = [
         action
         for action in game_feature_data.get_editor_property("actions")
-        if action is not None and str(action.get_name()) not in OWNED_ACTION_CLASSES
+        if action is not None
+        and str(action.get_name()) not in OWNED_ACTION_CLASSES
+        and str(action.get_name()) not in LEGACY_ACTION_NAMES
     ]
     actions.append(
         require(
@@ -439,23 +418,6 @@ def configure_game_feature_data(input_mapping, input_config, helm_component_clas
                 game_feature_data, [input_config], unreal.Name("OceanNaval_AddInputBinding")
             ),
             "Failed to create the naval Add Input Binding action",
-        )
-    )
-    pawn_class = require(
-        unreal.load_class(None, "/Script/OceanAdventureRuntime.OceanAdventurePawn"),
-        "Failed to load AOceanAdventurePawn for helm input component injection",
-    )
-    actions.append(
-        require(
-            unreal.OceanAdventureAssetLibrary.create_add_components_action(
-                game_feature_data,
-                [pawn_class],
-                [helm_component_class],
-                True,
-                True,
-                unreal.Name("OceanNaval_AddHelmInputComponent"),
-            ),
-            "Failed to create the helm input component Add Components action",
         )
     )
     game_feature_data.set_editor_property("actions", actions)
@@ -594,9 +556,8 @@ def main():
 
     input_mapping, input_config, helm_mapping = configure_input_assets()
     ability_set = configure_ability_set()
-    helm_component_class = configure_helm_input_component(helm_mapping)
     configure_beacon_blueprint()
-    configure_game_feature_data(input_mapping, input_config, helm_component_class)
+    configure_game_feature_data(input_mapping, input_config)
     pawn_data = configure_pawn_data(ability_set)
     configure_experience(pawn_data)
 

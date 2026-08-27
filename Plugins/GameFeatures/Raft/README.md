@@ -1,13 +1,13 @@
 # Raft GameFeature
 
-`RaftRuntime` owns the default raft definition, replicated moving-platform actor, and
+`RaftRuntime` owns the water-vehicle base, expandable raft actor, and
 server-only kinematic buoyancy. `OceanCoreRuntime` remains the source of deterministic
 water height/normal/velocity samples; Raft depends on OceanCore, never on OceanAdventure.
 
 Runtime flow:
 
 1. `BP_Experience_Ocean` activates the registered `Raft` GameFeature.
-2. A placed or spawned `ARaftActor` ticks buoyancy on authority only.
+2. A placed or spawned `ARaftVesselActor` ticks buoyancy on authority only.
 3. Four pontoon samples query the active `UOceanWorldManagerComponent`/`AOceanChunkActor`.
 4. The server updates the stable deck collision transform.
 5. While `UNavalMovementComponent` is injected, it replaces snapping `AActor::ReplicatedMovement`
@@ -22,22 +22,22 @@ CreateRaftGameFeatureData.py  -> /Raft/Raft
 CreateRaftTestActor.py        -> imports SM_Raft, creates Definition/Blueprint,
                                  places "Raft Test Actor" in L_OceanChunkTest
 CreateRaftLifeRaftAssets.py   -> focused emergency-raft pass; no cannon dependency
-CreateRaftNavalAssets.py      -> separate naval pass; imports SM_LifeRaft and creates the non-buildable
-                                 /Raft/Vehicles/LifeRaft asset family
+CreateRaftNavalAssets.py      -> naval pass; creates the fixed helm build piece and reparents the
+                                 /Raft/Vehicles/LifeRaft family to the non-buildable vessel base
 ValidateRaftFeature.py        -> read-only asset, replication, Experience, and map checks
 ```
 
-The scripts are idempotent. Driving, helm interaction, input, and GAS abilities are
-deliberately outside this first implementation.
+The scripts are idempotent. Input and GAS abilities remain in OceanAdventure; hull/build
+ownership remains in Raft.
 
 The two hull definitions intentionally have different responsibilities:
 
 ```text
 DA_Raft_Default
-└─ BP_Raft_Default       buildable main wooden raft; owns the append-only build catalog
+└─ BP_Raft_Default       ARaftActor: buildable main raft with append-only build catalog
 
 DA_Raft_LifeRaft
-└─ BP_Raft_LifeRaft      compact emergency inflatable raft; BuildPieceCatalog is empty
+└─ BP_Raft_LifeRaft      ARaftVesselActor: direct E driving, no build interface/components
 ```
 
 All three emergency-hull assets (`SM_LifeRaft`, `DA_Raft_LifeRaft`, and
@@ -48,6 +48,11 @@ First execute `blender/script/python/SM_LifeRaft.py` in Blender. It regenerates
 `blender/models/SM_LifeRaft.blend` and `SM_LifeRaft.fbx` without touching unrelated objects.
 Then run `CreateRaftLifeRaftAssets.py` for the life raft alone. The full
 `CreateRaftNavalAssets.py` pass additionally requires `/NavalCore/Naval/BP_Naval_Cannon`.
+
+The main raft does not receive a helm automatically. In a server console, select the fixed
+helm with `BuildSelect Raft.Piece.Prop.Helm` and place it with `BuildPlace X Y Level`.
+The life raft is the intentional exception: press `E` near its hull to drive it directly; no
+helm Actor is spawned or built.
 
 ## Creative building MVP
 

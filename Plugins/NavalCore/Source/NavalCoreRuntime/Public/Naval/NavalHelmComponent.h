@@ -6,7 +6,6 @@
 #include "Engine/TimerHandle.h"
 #include "GameplayTagContainer.h"
 #include "Naval/NavalCoreTypes.h"
-#include "Templates/SubclassOf.h"
 
 #include "NavalHelmComponent.generated.h"
 
@@ -23,8 +22,8 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FOnNavalHelmChanged, UNavalHelmComponent* /*
  * boat can end it: the wheel on deck is where a player enters control and where an enemy
  * starts a capture, the reinforced core seat below deck is the actual damage body, and the
  * rudder blades astern are separate parts again. This component owns the control and
- * ownership half; the seat's durability lives on the helm Actor's part component, and turn
- * efficiency comes from rudder parts.
+ * ownership half; when a fixed helm is active its seat durability lives on that Actor's part
+ * component, while a direct-interaction life raft has no separate damageable helm body.
  *
  * The core never manufactures mobility on its own: with propulsion gone it can only drift,
  * with rudders gone it only gets a weak emergency correction.
@@ -49,8 +48,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Naval|Helm")
 	bool CanOccupy(const AActor* Candidate, FGameplayTag& OutFailReason) const;
 
+	/** Direct-interaction owner entry; fixed ANavalHelmActor uses TryOccupyFromStation. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
 	bool TryOccupy(AActor* NewOperator);
+
+	/** Same vessel-wide occupancy, associated with the concrete station the player used. */
+	bool TryOccupyFromStation(AActor* NewOperator, AActor* StationActor);
 
 	/** Frees the wheel. Passing null releases whoever holds it. */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
@@ -85,6 +88,10 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
 	bool BeginCapture(AActor* Challenger);
 
+	/** Capture entry that identifies the concrete fixed or direct-interaction station. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
+	bool BeginCaptureAtStation(AActor* Challenger, AActor* StationActor);
+
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
 	void EndCapture(AActor* Challenger);
 
@@ -99,7 +106,10 @@ public:
 	int32 GetCapturingTeamId() const { return CapturingTeamId; }
 
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
-	ANavalHelmActor* GetHelmActor() const { return HelmActor; }
+	ANavalHelmActor* GetHelmActor() const;
+
+	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
+	AActor* GetActiveStation() const { return ActiveStation; }
 
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
 	UNavalPartComponent* GetCorePart() const;
@@ -107,27 +117,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
 	UNavalVesselComponent* GetVessel() const;
 
-	/** World-space location of the wheel; interaction range checks use it, not the hull. */
+	/** World-space location of the active fixed station or direct-interaction hull point. */
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
 	FVector GetHelmWorldLocation() const;
 
 	FOnNavalHelmChanged OnHelmChanged;
 
 protected:
-	/** Deck console spawned and attached at BeginPlay; carries the reinforced core seat. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm")
-	TSubclassOf<ANavalHelmActor> HelmActorClass;
-
-	/** 初始甲板中后部的固定格. Authored in host space, never moved at runtime. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (Units = "cm"))
-	FVector HelmLocalOffset = FVector(-140.0, 0.0, 0.0);
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (Units = "deg"))
-	float HelmLocalYaw = 0.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (ClampMin = "50.0", Units = "cm"))
-	float InteractionRange = 260.0f;
-
 	/** Design 8.6: about 4 seconds of contact before the flag change even starts. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Helm", meta = (ClampMin = "0.0", Units = "s"))
 	float ContestEntrySeconds = 4.0f;
@@ -163,8 +159,9 @@ protected:
 	UPROPERTY(Replicated)
 	TObjectPtr<AActor> Operator = nullptr;
 
+	/** The placed helm or direct-interaction hull currently being operated/captured. */
 	UPROPERTY(Replicated)
-	TObjectPtr<ANavalHelmActor> HelmActor = nullptr;
+	TObjectPtr<AActor> ActiveStation = nullptr;
 
 	UPROPERTY(Replicated)
 	float CaptureProgress = 0.0f;
@@ -188,7 +185,6 @@ private:
 	void BindOperatorDestroyed(AActor* NewOperator);
 	void UnbindOperatorDestroyed();
 
-	void SpawnHelmActor();
 	void UpdateCapture(float DeltaTime);
 	void CompleteCapture();
 	void UpdateTickEnabled();

@@ -1,4 +1,4 @@
-"""Import and configure only the compact, non-buildable emergency life raft.
+"""Import and configure only the compact emergency water vehicle.
 
 This is the focused entry point for regenerating:
 
@@ -6,9 +6,9 @@ This is the focused entry point for regenerating:
     /Raft/Vehicles/LifeRaft/DA_Raft_LifeRaft
     /Raft/Vehicles/LifeRaft/BP_Raft_LifeRaft
 
-It deliberately does not build the deck cannon, naval build pieces, helm, or vessel
-component Blueprints.  Run the full CreateRaftNavalAssets.py pipeline only when those
-dependencies (including /NavalCore/Naval/BP_Naval_Cannon) are available.
+It reparents BP_Raft_LifeRaft to ARaftVesselActor, verifies that no construction components
+remain, and enables direct E-to-drive interaction on the hull. It deliberately does not
+build the deck cannon, fixed helm piece, or vessel component Blueprints.
 
 Prerequisites:
 

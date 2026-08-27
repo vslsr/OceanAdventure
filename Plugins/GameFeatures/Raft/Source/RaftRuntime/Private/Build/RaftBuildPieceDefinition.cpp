@@ -17,6 +17,7 @@ namespace RaftBuildTags
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(PiecePropThruster, "Raft.Piece.Prop.Thruster");
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(PiecePropRudder, "Raft.Piece.Prop.Rudder");
 	UE_DEFINE_GAMEPLAY_TAG_STATIC(PiecePropHeavyCannon, "Raft.Piece.Prop.HeavyCannon");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(PiecePropHelm, "Raft.Piece.Prop.Helm");
 }
 
 URaftBuildPieceDefinition::URaftBuildPieceDefinition()

@@ -34,12 +34,15 @@ import unreal
 
 PLUGIN_ROOT = "/NavalCore"
 NAVAL_ROOT = f"{PLUGIN_ROOT}/Naval"
-MESH_ROOT = f"{NAVAL_ROOT}/Meshes"
+ART_ROOT = f"{PLUGIN_ROOT}/NavalArts"
+CANNON_ART_ROOT = f"{ART_ROOT}/Cannon"
 
 CANNON_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Naval_Cannon"
 PROJECTILE_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Naval_CannonballProjectile"
-CANNON_MESH_PATH = f"{MESH_ROOT}/SM_Naval_Cannon"
-CANNONBALL_MESH_PATH = f"{MESH_ROOT}/SM_Naval_Cannonball"
+CANNON_MESH_NAME = "SM_Naval_Cannon"
+CANNONBALL_MESH_NAME = "SM_Naval_Cannonball"
+CANNON_MESH_IMPORT_PATH = f"{CANNON_ART_ROOT}/Meshes/{CANNON_MESH_NAME}"
+CANNONBALL_MESH_IMPORT_PATH = f"{CANNON_ART_ROOT}/Meshes/{CANNONBALL_MESH_NAME}"
 
 PROJECT_ROOT = Path(unreal.Paths.project_dir()).resolve()
 BLENDER_MODELS = PROJECT_ROOT / "blender" / "models"
@@ -118,7 +121,16 @@ def blueprint_class(blueprint, asset_path):
     )
 
 
-def import_or_reuse_mesh(asset_path, source_fbx):
+def find_asset_by_name(asset_name):
+    """Resolve an asset by stable name so NavalCore art can be regrouped freely."""
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    for asset_data in registry.get_assets_by_path(PLUGIN_ROOT, recursive=True):
+        if str(asset_data.asset_name) == asset_name:
+            return str(asset_data.package_name)
+    return None
+
+
+def import_or_reuse_mesh(asset_name, import_path, source_fbx):
     """Re-import from blender/models when the source is there, else keep what exists.
 
     A content-only checkout has no FBX, and the cannon's own source has never been exported
@@ -126,13 +138,14 @@ def import_or_reuse_mesh(asset_path, source_fbx):
     source is normal rather than an error -- the asset moved here by the migration is used
     as-is. Re-importing on every run is what stops a Blender revision from being ignored.
     """
+    asset_path = find_asset_by_name(asset_name) or import_path
     existing = (
         unreal.EditorAssetLibrary.load_asset(asset_path)
         if unreal.EditorAssetLibrary.does_asset_exist(asset_path)
         else None
     )
     if not source_fbx.is_file():
-        return existing
+        return existing, asset_path
 
     options = unreal.FbxImportUI()
     options.set_editor_property("import_mesh", True)
@@ -157,10 +170,10 @@ def import_or_reuse_mesh(asset_path, source_fbx):
         unreal.EditorAssetLibrary.load_asset(asset_path), f"Unable to import {asset_path}"
     )
     log(f"Imported {source_fbx.name} into {asset_path}")
-    return mesh
+    return mesh, asset_path
 
 
-def configure_projectile_blueprint(mesh):
+def configure_projectile_blueprint(mesh, mesh_path):
     projectile_parent = require(
         unreal.load_class(None, "/Script/NavalCoreRuntime.NavalProjectile"),
         "Failed to load ANavalProjectile; compile NavalCoreRuntime first",
@@ -186,7 +199,7 @@ def configure_projectile_blueprint(mesh):
             "projectile_mesh"
         ).get_editor_property("static_mesh")
         require(
-            package_of(configured_mesh) == CANNONBALL_MESH_PATH,
+            package_of(configured_mesh) == mesh_path,
             "Projectile Blueprint did not retain the cannonball static mesh",
         )
     return configured_class
@@ -248,23 +261,27 @@ def main():
     )
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([PLUGIN_ROOT], True, True)
 
-    cannonball_mesh = import_or_reuse_mesh(CANNONBALL_MESH_PATH, CANNONBALL_SOURCE_FBX)
+    cannonball_mesh, cannonball_mesh_path = import_or_reuse_mesh(
+        CANNONBALL_MESH_NAME, CANNONBALL_MESH_IMPORT_PATH, CANNONBALL_SOURCE_FBX
+    )
     if cannonball_mesh is None:
         warn(
-            f"No cannonball mesh at {CANNONBALL_MESH_PATH} and no {CANNONBALL_SOURCE_FBX.name} "
-            "in blender/models. Run blender/script/python/create_naval_cannonball.py, or "
-            "MigrateSharedCannon.py if the asset is still under a GameFeature."
+            f"No {CANNONBALL_MESH_NAME} under {PLUGIN_ROOT} and no "
+            f"{CANNONBALL_SOURCE_FBX.name} in blender/models. Run "
+            "blender/script/python/create_naval_cannonball.py, or MigrateSharedCannon.py."
         )
 
-    cannon_mesh = import_or_reuse_mesh(CANNON_MESH_PATH, CANNON_SOURCE_FBX)
+    cannon_mesh, _ = import_or_reuse_mesh(
+        CANNON_MESH_NAME, CANNON_MESH_IMPORT_PATH, CANNON_SOURCE_FBX
+    )
     if cannon_mesh is None:
         warn(
-            f"No cannon mesh at {CANNON_MESH_PATH}. The gun will be invisible until one is "
+            f"No {CANNON_MESH_NAME} under {PLUGIN_ROOT}. The gun will be invisible until one is "
             "assigned by hand in BP_Naval_Cannon; export blender/cannon.blend to "
             f"blender/models/{CANNON_SOURCE_FBX.name} to have this script import it."
         )
 
-    projectile_class = configure_projectile_blueprint(cannonball_mesh)
+    projectile_class = configure_projectile_blueprint(cannonball_mesh, cannonball_mesh_path)
     configure_cannon_blueprint(projectile_class)
 
     log(

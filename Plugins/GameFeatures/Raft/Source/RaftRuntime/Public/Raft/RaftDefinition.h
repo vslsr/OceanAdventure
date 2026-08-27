@@ -28,6 +28,10 @@ public:
 	float GetMaxTiltDegrees() const { return FMath::Clamp(MaxTiltDegrees, 0.0f, 20.0f); }
 	float GetVerticalInterpSpeed() const { return FMath::Max(0.0f, VerticalInterpSpeed); }
 	float GetRotationInterpSpeed() const { return FMath::Max(0.0f, RotationInterpSpeed); }
+	bool AllowsDirectHelmInteraction() const { return bAllowDirectHelmInteraction; }
+	FVector GetDirectHelmOperatorLocalOffset() const { return DirectHelmOperatorLocalOffset; }
+	float GetDirectHelmOperatorLocalYaw() const { return DirectHelmOperatorLocalYaw; }
+	float GetDirectHelmInteractionRange() const { return FMath::Max(50.0f, DirectHelmInteractionRange); }
 
 protected:
 	/** Raft-owned append-only network catalog for all pieces this family can build. */
@@ -60,4 +64,18 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy", meta = (ClampMin = "0.0"))
 	float RotationInterpSpeed = 2.0f;
+
+	/** Compact vessels can expose their hull as the helm station without spawning a console. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Helm")
+	bool bAllowDirectHelmInteraction = false;
+
+	/** Where the operator is held in vessel-local space while directly driving the hull. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Helm", meta = (Units = "cm"))
+	FVector DirectHelmOperatorLocalOffset = FVector(-35.0, 0.0, 163.0);
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Helm", meta = (Units = "deg"))
+	float DirectHelmOperatorLocalYaw = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Helm", meta = (ClampMin = "50.0", Units = "cm"))
+	float DirectHelmInteractionRange = 260.0f;
 };

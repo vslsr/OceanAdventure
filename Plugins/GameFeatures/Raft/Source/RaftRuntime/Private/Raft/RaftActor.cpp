@@ -5,10 +5,6 @@
 #include "Building/BuildStructureComponent.h"
 #include "Building/BuildStructureVisualComponent.h"
 #include "Components/BoxComponent.h"
-#include "Components/GameFrameworkComponentManager.h"
-#include "Components/SceneComponent.h"
-#include "Components/StaticMeshComponent.h"
-#include "Engine/CollisionProfile.h"
 #include "Raft/RaftBuoyancyComponent.h"
 #include "Raft/RaftDefinition.h"
 
@@ -19,103 +15,28 @@ namespace RaftBuildModuleSpec
 	constexpr float WidthCm = 200.0f;
 	constexpr float DepthCm = 200.0f;
 	constexpr float HeightCm = 150.0f;
-	constexpr float HalfWidthCm = WidthCm * 0.5f;
-	constexpr float HalfDepthCm = DepthCm * 0.5f;
-	constexpr float HalfHeightCm = HeightCm * 0.5f;
 }
 
 ARaftActor::ARaftActor()
 {
-	PrimaryActorTick.bCanEverTick = false;
-
-	DeckCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("DeckCollision"));
-	SetRootComponent(DeckCollision);
-	DeckCollision->SetMobility(EComponentMobility::Movable);
-	DeckCollision->SetBoxExtent(FVector(RaftBuildModuleSpec::HalfWidthCm, RaftBuildModuleSpec::HalfDepthCm, RaftBuildModuleSpec::HalfHeightCm));
-	DeckCollision->SetCollisionProfileName(UCollisionProfile::BlockAllDynamic_ProfileName);
-	DeckCollision->SetGenerateOverlapEvents(false);
-	DeckCollision->SetCanEverAffectNavigation(false);
-	DeckCollision->CanCharacterStepUpOn = ECB_Yes;
-
-	VisualPivot = CreateDefaultSubobject<USceneComponent>(TEXT("VisualPivot"));
-	VisualPivot->SetupAttachment(DeckCollision);
-	VisualPivot->SetRelativeLocation(FVector::ZeroVector);
-
-	VisualMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("VisualMesh"));
-	VisualMesh->SetupAttachment(VisualPivot);
-	VisualMesh->SetMobility(EComponentMobility::Movable);
-	VisualMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	VisualMesh->SetGenerateOverlapEvents(false);
-	VisualMesh->SetCanEverAffectNavigation(false);
-
-	BuoyancyComponent = CreateDefaultSubobject<URaftBuoyancyComponent>(TEXT("BuoyancyComponent"));
 	BuildStructureComponent = CreateDefaultSubobject<UBuildStructureComponent>(TEXT("BuildStructureComponent"));
 	BuildStructureVisualComponent =
 		CreateDefaultSubobject<UBuildStructureVisualComponent>(TEXT("BuildStructureVisualComponent"));
-
-	bReplicates = true;
-	bNetLoadOnClient = true;
-	SetReplicateMovement(true);
-	SetNetUpdateFrequency(30.0f);
-	SetMinNetUpdateFrequency(10.0f);
-	SetNetCullDistanceSquared(FMath::Square(150000.0f));
-	NetDormancy = DORM_Awake;
-}
-
-void ARaftActor::PreInitializeComponents()
-{
-	Super::PreInitializeComponents();
-	UGameFrameworkComponentManager::AddGameFrameworkComponentReceiver(this);
-}
-
-void ARaftActor::BeginPlay()
-{
-	Super::BeginPlay();
-	UGameFrameworkComponentManager::SendGameFrameworkComponentExtensionEvent(
-		this, UGameFrameworkComponentManager::NAME_GameActorReady);
-}
-
-void ARaftActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
-{
-	UGameFrameworkComponentManager::RemoveGameFrameworkComponentReceiver(this);
-	Super::EndPlay(EndPlayReason);
-}
-
-void ARaftActor::OnConstruction(const FTransform& Transform)
-{
-	Super::OnConstruction(Transform);
-	ApplyDefinition();
 }
 
 void ARaftActor::PostInitializeComponents()
 {
+	Super::PostInitializeComponents();
 	// The build component caches grid settings in its BeginPlay, which runs after this.
 	RecomputeGridAlignment();
-	Super::PostInitializeComponents();
 }
 
 void ARaftActor::ApplyDefinition()
 {
-	if (!RaftDefinition)
-	{
-		return;
-	}
-
-	DeckCollision->SetBoxExtent(RaftDefinition->GetDeckBoxExtent());
-	VisualPivot->SetRelativeLocation(RaftDefinition->GetVisualMeshOffset());
-	VisualMesh->SetStaticMesh(RaftDefinition->GetVisualMesh());
-	BuoyancyComponent->ApplyDefinition(RaftDefinition);
-	BuildStructureComponent->SetPieceCatalog(RaftDefinition->GetBuildPieceCatalog());
+	Super::ApplyDefinition();
+	BuildStructureComponent->SetPieceCatalog(
+		RaftDefinition ? RaftDefinition->GetBuildPieceCatalog() : nullptr);
 	RecomputeGridAlignment();
-}
-
-FVector ARaftActor::GetBaseDeckExtent() const
-{
-	// Always the authored deck, never DeckCollision's current extent: that one grows with
-	// the built structure, and feeding it back in would make the anchor area self-expand.
-	return RaftDefinition
-		? RaftDefinition->GetDeckBoxExtent()
-		: FVector(RaftBuildModuleSpec::HalfWidthCm, RaftBuildModuleSpec::HalfDepthCm, RaftBuildModuleSpec::HalfHeightCm);
 }
 
 void ARaftActor::RecomputeGridAlignment()

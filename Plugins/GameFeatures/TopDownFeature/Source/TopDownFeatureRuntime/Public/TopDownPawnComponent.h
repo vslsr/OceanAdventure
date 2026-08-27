@@ -5,16 +5,18 @@
 #include "Components/PawnComponent.h"
 #include "Engine/EngineTypes.h"
 #include "GameplayTagContainer.h"
+#include "UObject/SoftObjectPtr.h"
 
 #include "TopDownPawnComponent.generated.h"
 
 class APlayerController;
 class UCommonActivatableWidget;
 class UEnhancedInputComponent;
+class ULyraInputConfig;
 struct FComponentRequestHandle;
 struct FInputActionValue;
 
-/** Adds mouse-facing WASD movement and local camera input to an existing Lyra pawn. */
+/** Executes GAS-owned top-down movement intent and owns mouse-facing/camera presentation. */
 UCLASS(Blueprintable, ClassGroup = (TopDown), meta = (BlueprintSpawnableComponent))
 class TOPDOWNFEATURERUNTIME_API UTopDownPawnComponent : public UPawnComponent
 {
@@ -43,6 +45,9 @@ public:
 	float GetCameraDistance() const { return CameraDistance; }
 	float GetCameraYawOffset() const { return CameraYawOffset; }
 
+	/** Called by the TopDown movement Ability; the component executes but does not own input. */
+	void SetAbilityMoveInput(FGameplayTag InputTag, bool bPressed);
+
 protected:
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
@@ -52,10 +57,6 @@ private:
 	void HandlePawnExtension(AActor* Actor, FName EventName);
 	void BindInputIfReady();
 	void UnbindInput();
-	void Input_MoveForward(const FInputActionValue& InputActionValue);
-	void Input_MoveBackward(const FInputActionValue& InputActionValue);
-	void Input_MoveRight(const FInputActionValue& InputActionValue);
-	void Input_MoveLeft(const FInputActionValue& InputActionValue);
 	void Input_CameraZoom(const FInputActionValue& InputActionValue);
 	void Input_CameraRotateStarted(const FInputActionValue& InputActionValue);
 	void Input_CameraRotateCompleted(const FInputActionValue& InputActionValue);
@@ -90,6 +91,10 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
 	FGameplayTag CameraRotateInputTag;
+
+	/** Feature-owned config used only to resolve camera-native actions by tag. */
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input")
+	TSoftObjectPtr<ULyraInputConfig> TopDownInputConfig;
 
 	/** CommonUI policy widget that keeps the cursor visible without touching PlayerController state. */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input")
@@ -152,6 +157,7 @@ private:
 
 	TArray<uint32> InputBindingHandles;
 	TSharedPtr<FComponentRequestHandle> ExtensionRequestHandle;
+	FGameplayTagContainer ActiveAbilityMoveInputs;
 	FVector MoveTarget;
 	float CameraDistance;
 	float CameraYawOffset;
