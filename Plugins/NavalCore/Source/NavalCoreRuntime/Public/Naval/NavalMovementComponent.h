@@ -2,14 +2,18 @@
 
 #pragma once
 
-#include "Components/ActorComponent.h"
+#include "Engine/EngineTypes.h"
 #include "Engine/NetSerialization.h"
+#include "GameFramework/MovementComponent.h"
 
 #include "NavalMovementComponent.generated.h"
 
 class UNavalHelmComponent;
 class UNavalLoadComponent;
 class UNavalVesselComponent;
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnNavalHullBlocked, const FHitResult&, Hit, float, ImpactSpeed);
 
 /** One coherent server movement sample consumed only by client-side presentation smoothing. */
 USTRUCT()
@@ -43,7 +47,7 @@ struct NAVALCORERUNTIME_API FNavalReplicatedPose
  * the helm core. There is no separate "engine damage" number hidden here.
  */
 UCLASS(BlueprintType, Blueprintable, ClassGroup = (Naval), meta = (BlueprintSpawnableComponent))
-class NAVALCORERUNTIME_API UNavalMovementComponent : public UActorComponent
+class NAVALCORERUNTIME_API UNavalMovementComponent : public UMovementComponent
 {
 	GENERATED_BODY()
 
@@ -73,6 +77,10 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Movement")
 	void SetSpeedScale(float NewSpeedScale);
+
+	/** Server-only notification emitted when authoritative planar movement hits the world. */
+	UPROPERTY(BlueprintAssignable, Category = "Naval|Movement|Collision")
+	FOnNavalHullBlocked OnHullBlocked;
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "0.0", Units = "cm/s"))
@@ -168,6 +176,8 @@ protected:
 
 private:
 	void ResolvePeers();
+	void RefreshMoveIgnoreActors();
+	void ClearManagedMoveIgnoreActors();
 
 	/** Repairs stale Blueprint/instance mobility that would silently discard every move. */
 	void EnsureOwnerCanMove();
@@ -182,8 +192,9 @@ private:
 	TWeakObjectPtr<UNavalLoadComponent> Load;
 	TWeakObjectPtr<UNavalVesselComponent> Vessel;
 
-	/** Server-only world-space planar velocity. */
-	FVector PlanarVelocity = FVector::ZeroVector;
+	/** Actors this component added to UpdatedPrimitive's move-ignore list. */
+	TArray<TWeakObjectPtr<AActor>> ManagedMoveIgnoreActors;
+
 	float YawRateDegrees = 0.0f;
 
 	double LastReplicatedPoseTime = 0.0;

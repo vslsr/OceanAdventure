@@ -2,9 +2,13 @@
 
 #include "Naval/NavalMovementComponent.h"
 
-#include "Engine/World.h"
+#include "CollisionQueryParams.h"
+#include "CollisionShape.h"
+#include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
 #include "Math/RotationMatrix.h"
 #include "Naval/NavalCoreTypes.h"
 #include "Naval/NavalHelmComponent.h"
@@ -21,6 +25,9 @@ UNavalMovementComponent::UNavalMovementComponent()
 	PrimaryComponentTick.bStartWithTickEnabled = true;
 	// Same group as buoyancy: both write the host transform before physics, on different axes.
 	PrimaryComponentTick.TickGroup = TG_PrePhysics;
+	// This component owns only XY movement. Penetration recovery must not steal Z from buoyancy.
+	SetPlaneConstraintNormal(FVector::UpVector);
+	SetPlaneConstraintEnabled(true);
 	SetIsReplicatedByDefault(true);
 }
 
@@ -30,13 +37,25 @@ void UNavalMovementComponent::BeginPlay()
 
 	ResolvePeers();
 	EnsureOwnerCanMove();
-	PlanarVelocity = FVector::ZeroVector;
+	Velocity = FVector::ZeroVector;
 	YawRateDegrees = 0.0f;
 
 	AActor* OwnerActor = GetOwner();
 	if (!OwnerActor)
 	{
 		return;
+	}
+
+	SetUpdatedComponent(OwnerActor->GetRootComponent());
+	if (!UpdatedPrimitive)
+	{
+		UE_LOG(
+			LogNavalCore,
+			Error,
+			TEXT("[Movement] %s : root component %s is not a UPrimitiveComponent; safe hull "
+				 "movement is disabled."),
+			*GetPathNameSafe(OwnerActor),
+			*GetNameSafe(OwnerActor->GetRootComponent()));
 	}
 
 	// Engine movement replication snaps ordinary Actors. While this component is present it
@@ -54,6 +73,8 @@ void UNavalMovementComponent::BeginPlay()
 
 void UNavalMovementComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	ClearManagedMoveIgnoreActors();
+
 	if (bChangedOwnerReplicateMovement)
 	{
 		if (AActor* OwnerActor = GetOwner())
@@ -91,6 +112,78 @@ void UNavalMovementComponent::ResolvePeers()
 	Vessel = OwnerActor->FindComponentByClass<UNavalVesselComponent>();
 }
 
+void UNavalMovementComponent::ClearManagedMoveIgnoreActors()
+{
+	if (UpdatedPrimitive)
+	{
+		for (const TWeakObjectPtr<AActor>& IgnoredActor : ManagedMoveIgnoreActors)
+		{
+			if (AActor* Actor = IgnoredActor.Get())
+			{
+				UpdatedPrimitive->IgnoreActorWhenMoving(Actor, false);
+			}
+		}
+	}
+
+	ManagedMoveIgnoreActors.Reset();
+}
+
+void UNavalMovementComponent::RefreshMoveIgnoreActors()
+{
+	ClearManagedMoveIgnoreActors();
+
+	AActor* OwnerActor = GetOwner();
+	UWorld* World = GetWorld();
+	if (!OwnerActor || !World || !UpdatedPrimitive)
+	{
+		return;
+	}
+
+	const auto AddManagedIgnore = [this](AActor* Actor)
+	{
+		if (!Actor || UpdatedPrimitive->GetMoveIgnoreActors().Contains(Actor))
+		{
+			return;
+		}
+
+		UpdatedPrimitive->IgnoreActorWhenMoving(Actor, true);
+		ManagedMoveIgnoreActors.Add(Actor);
+	};
+
+	TArray<AActor*> AttachedActors;
+	OwnerActor->GetAttachedActors(AttachedActors, /*bResetArray=*/true, /*bRecursively=*/true);
+	for (AActor* AttachedActor : AttachedActors)
+	{
+		AddManagedIgnore(AttachedActor);
+	}
+
+	// Free-moving passengers are based on the deck rather than attached to it. A minimally
+	// inflated local overlap finds only touching pawns; the base check then excludes swimmers
+	// and actors beside the hull without iterating every pawn in the world.
+	TArray<FOverlapResult> PawnOverlaps;
+	const FCollisionQueryParams QueryParams(
+		SCENE_QUERY_STAT(NavalPassengerMoveIgnore), /*bTraceComplex=*/false, OwnerActor);
+	World->OverlapMultiByObjectType(
+		PawnOverlaps,
+		UpdatedPrimitive->GetComponentLocation(),
+		UpdatedPrimitive->GetComponentQuat(),
+		FCollisionObjectQueryParams(ECC_Pawn),
+		// CMC deliberately floats walking capsules roughly 2 cm above the floor.
+		UpdatedPrimitive->GetCollisionShape(/*Inflation=*/5.0f),
+		QueryParams);
+
+	for (const FOverlapResult& Overlap : PawnOverlaps)
+	{
+		APawn* Pawn = Cast<APawn>(Overlap.GetActor());
+		const UPrimitiveComponent* MovementBase = Pawn ? Pawn->GetMovementBase() : nullptr;
+		const AActor* BaseActor = MovementBase ? MovementBase->GetOwner() : nullptr;
+		if (BaseActor == OwnerActor || (BaseActor && BaseActor->IsAttachedTo(OwnerActor)))
+		{
+			AddManagedIgnore(Pawn);
+		}
+	}
+}
+
 void UNavalMovementComponent::EnsureOwnerCanMove()
 {
 	AActor* OwnerActor = GetOwner();
@@ -120,7 +213,7 @@ void UNavalMovementComponent::PublishAuthorityPose()
 
 	ReplicatedPose.Location = OwnerActor->GetActorLocation();
 	ReplicatedPose.Rotation = OwnerActor->GetActorRotation();
-	ReplicatedPose.PlanarVelocity = PlanarVelocity;
+	ReplicatedPose.PlanarVelocity = Velocity;
 	ReplicatedPose.YawRateDegrees = YawRateDegrees;
 }
 
@@ -128,6 +221,9 @@ void UNavalMovementComponent::OnRep_ReplicatedPose()
 {
 	const UWorld* World = GetWorld();
 	LastReplicatedPoseTime = World ? World->GetTimeSeconds() : 0.0;
+	Velocity = FVector(ReplicatedPose.PlanarVelocity);
+	Velocity.Z = 0.0;
+	UpdateComponentVelocity();
 	bHasReplicatedPose = true;
 }
 
@@ -222,7 +318,7 @@ void UNavalMovementComponent::TickAuthorityMovement(float DeltaTime)
 	// Resolve force in the vessel's current frame. Unlike a target-speed interpolation this
 	// preserves momentum while W/S is released and lets the direction lag behind the hull when
 	// AD turns it, after which lateral water drag slowly aligns the velocity with the bow.
-	float ForwardSpeed = FVector::DotProduct(PlanarVelocity, Forward);
+	float ForwardSpeed = FVector::DotProduct(Velocity, Forward);
 	const float AccelerationRate = Acceleration * Handling.Acceleration * PropulsionCapability;
 	if (FMath::IsNearlyZero(ThrottleIntent))
 	{
@@ -270,25 +366,53 @@ void UNavalMovementComponent::TickAuthorityMovement(float DeltaTime)
 	// perpendicular to the new bow is damped, so the travel direction converges gradually
 	// instead of rotating by the full hull yaw every frame.
 	const FVector ForceIntegratedVelocity = Forward * ForwardSpeed
-		+ Right * FVector::DotProduct(PlanarVelocity, Right);
+		+ Right * FVector::DotProduct(Velocity, Right);
 	const float NewForwardSpeed = FVector::DotProduct(ForceIntegratedVelocity, NewForward);
 	const float NewLateralSpeed = FMath::FInterpConstantTo(
 		FVector::DotProduct(ForceIntegratedVelocity, NewRight), 0.0f, DeltaTime, LateralDrag);
-	PlanarVelocity = NewForward * NewForwardSpeed + NewRight * NewLateralSpeed;
-	CurrentSpeed = FVector::DotProduct(PlanarVelocity, NewForward);
+	Velocity = NewForward * NewForwardSpeed + NewRight * NewLateralSpeed;
+	Velocity.Z = 0.0;
+	CurrentSpeed = FVector::DotProduct(Velocity, NewForward);
 
-	if (PlanarVelocity.IsNearlyZero(0.5f) && FMath::IsNearlyZero(YawDelta, 0.001f))
+	if (Velocity.IsNearlyZero(0.5f) && FMath::IsNearlyZero(YawDelta, 0.001f))
 	{
 		CurrentSpeed = 0.0f;
-		PlanarVelocity = FVector::ZeroVector;
+		Velocity = FVector::ZeroVector;
+		UpdateComponentVelocity();
 		return;
 	}
 
-	const FVector NewLocation = OwnerActor->GetActorLocation() + PlanarVelocity * DeltaTime;
+	if (!UpdatedPrimitive)
+	{
+		Velocity = FVector::ZeroVector;
+		CurrentSpeed = 0.0f;
+		return;
+	}
 
-	// Not swept, matching the host's buoyancy: passengers must never become blockers for the
-	// platform that carries them. Hull-to-hull collision belongs to a later ramming pass.
-	OwnerActor->SetActorLocationAndRotation(NewLocation, NewRotation, false, nullptr, ETeleportType::None);
+	RefreshMoveIgnoreActors();
+
+	const FVector Delta = Velocity * DeltaTime;
+	FHitResult Hit(1.0f);
+	SafeMoveUpdatedComponent(Delta, NewRotation.Quaternion(), /*bSweep=*/true, Hit);
+	if (Hit.IsValidBlockingHit())
+	{
+		const FVector BlockingNormal = Hit.Normal;
+		const FVector BlockingImpactNormal = Hit.ImpactNormal;
+		const float ImpactSpeed = FMath::Max(
+			0.0f, FVector::DotProduct(Velocity, -BlockingImpactNormal));
+		OnHullBlocked.Broadcast(Hit, ImpactSpeed);
+
+		// SafeMove has already consumed Hit.Time of Delta. Let the engine resolve the remaining
+		// distance and any second wall, then remove the blocked velocity for the next frame.
+		SlideAlongSurface(Delta, 1.0f - Hit.Time, BlockingNormal, Hit, /*bHandleImpact=*/false);
+		Velocity = FVector::VectorPlaneProject(Velocity, BlockingImpactNormal);
+		Velocity.Z = 0.0;
+		CurrentSpeed = FVector::DotProduct(Velocity, NewForward);
+	}
+
+	// Rotation is still applied directly by MoveComponent. A later overlap pass can reject yaw
+	// without changing buoyancy or client interpolation ownership.
+	UpdateComponentVelocity();
 }
 
 void UNavalMovementComponent::TickClientInterpolation(AActor& OwnerActor, float DeltaTime)
