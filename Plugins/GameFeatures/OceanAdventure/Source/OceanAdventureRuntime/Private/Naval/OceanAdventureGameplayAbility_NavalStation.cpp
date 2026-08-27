@@ -13,11 +13,10 @@
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalVesselComponent.h"
 #include "Naval/OceanAdventureAbilityTask_NavalControl.h"
+#include "Naval/OceanAdventureGameplayEffect_NavalStationLock.h"
 #include "Naval/OceanAdventureNavalMessages.h"
 #include "Naval/OceanAdventureNavalTags.h"
 #include "OceanAdventureRuntimeModule.h"
-#include "System/LyraAssetManager.h"
-#include "System/LyraGameData.h"
 #include "TimerManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureGameplayAbility_NavalStation)
@@ -111,6 +110,10 @@ void UOceanAdventureGameplayAbility_NavalStation::ActivateAbility(
 	EnterStationPresentation(Station);
 	if (!bStationEntered)
 	{
+		UE_LOG(LogOceanAdventure, Error,
+			TEXT("[NavalStation] Local station lock failed ability=%s station=%s avatar=%s"),
+			*GetNameSafe(this), *GetNameSafe(Station),
+			*GetNameSafe(GetAvatarActorFromActorInfo()));
 		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
 		return;
 	}
@@ -395,21 +398,13 @@ bool UOceanAdventureGameplayAbility_NavalStation::ApplyStationLock()
 		return false;
 	}
 
-	const TSubclassOf<UGameplayEffect> DynamicTagEffect =
-		ULyraAssetManager::GetSubclass(ULyraGameData::Get().DynamicTagGameplayEffect);
-	if (!DynamicTagEffect)
-	{
-		UE_LOG(LogOceanAdventure, Error,
-			TEXT("[NavalStation] Lyra DynamicTagGameplayEffect is not configured"));
-		return false;
-	}
-
-	// Explicitly associate the predicted client effect and the authoritative server effect
-	// with this ability activation so GAS reconciles them instead of leaving two lock specs.
-	FScopedPredictionWindow ScopedPrediction(
-		AbilitySystem, CurrentActivationInfo.GetActivationPredictionKey());
 	FGameplayEffectSpecHandle SpecHandle =
-		AbilitySystem->MakeOutgoingSpec(DynamicTagEffect, 1.0f, AbilitySystem->MakeEffectContext());
+		MakeOutgoingGameplayEffectSpec(
+			CurrentSpecHandle,
+			CurrentActorInfo,
+			CurrentActivationInfo,
+			UOceanAdventureGameplayEffect_NavalStationLock::StaticClass(),
+			1.0f);
 	FGameplayEffectSpec* Spec = SpecHandle.Data.Get();
 	if (!Spec)
 	{
@@ -423,7 +418,14 @@ bool UOceanAdventureGameplayAbility_NavalStation::ApplyStationLock()
 		Spec->DynamicGrantedTags.AddTag(StatusTag);
 	}
 
-	StationLockHandle = AbilitySystem->ApplyGameplayEffectSpecToSelf(*Spec);
+	// The ability wrapper supplies GetPredictionKeyForNewAction(). Calling the ASC overload
+	// without its second argument would pass an invalid prediction key and reject this
+	// non-instant effect on an autonomous proxy.
+	StationLockHandle = ApplyGameplayEffectSpecToOwner(
+		CurrentSpecHandle,
+		CurrentActorInfo,
+		CurrentActivationInfo,
+		SpecHandle);
 	if (!StationLockHandle.IsValid())
 	{
 		return false;

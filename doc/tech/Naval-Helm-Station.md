@@ -37,7 +37,7 @@ IA_Naval_Interact (E)
 
 - `EnterStationPresentation()` 把角色 `AttachToActor` 到船舵上（不是每帧 teleport），
   所以角色天然跟着甲板漂。它不修改 CharacterMovement 的真实 MovementMode。
-- 站位能力应用 Lyra 的 Infinite DynamicTag GameplayEffect，同时授予
+- 站位能力应用 OceanAdventure 自己的 Infinite `NavalStationLock` GameplayEffect，同时授予
   `Gameplay.MovementStopped` 和当前站位状态标签。CMC、鼠标朝向和 TopDown facing
   都消费这个标签；退出时按 ActiveGameplayEffectHandle 原子移除，ASC 即使已换 Pawn 也不会残留。
 - `UOceanAdventureHelmInputComponent::EnableHelmInput()` 压入优先级 2 的
@@ -123,9 +123,16 @@ Raft.uasset (GameFeatureData)
   `GameplayTasks`；只包含 `GameplayAbilities` 头文件不够。这次错误出现在已经撤销的
   `TopDownGameplayAbility_Move` 实验中，因此正确收尾是删除该 Ability 和
   TopDownFeatureRuntime 的多余依赖，而不是为了保留错误分层继续补链接。
+- 自主代理应用非 Instant GameplayEffect 时必须显式携带本次 Ability 的预测键。
+  仅创建 `FScopedPredictionWindow` 不会改变
+  `ApplyGameplayEffectSpecToSelf(Spec, FPredictionKey())` 的默认实参；这里用
+  `MakeOutgoingGameplayEffectSpec()` + `ApplyGameplayEffectSpecToOwner()`，同时获得
+  Ability/SourceObject effect context 与 `GetPredictionKeyForNewAction()`。监听服务器测不出
+  空预测键问题，必须用 Dedicated Server + 独立客户端验证。
 - 不要为了能力互斥把 TopDown 的逐帧移动包装成 GameplayAbility。Lyra 有意把 Move/Look
   作为 `NativeInputActions`，位移预测属于 CharacterMovement 的 SavedMove/网络校正链；
   GAS 负责“进入/离开舵位”这个玩家意图和状态标签，不接管 CMC 的预测。
 - 不要同时使用 `Gameplay.MovementStopped` 与 `MOVE_None`，更不能退出时硬写
   `MOVE_Walking`；这会把 Falling/Swimming 等真实状态吃掉。站位只应用可复制、可按句柄
-  回收的 DynamicTag GameplayEffect，CMC 在自己的层级把速度和转向归零。
+  回收的 OceanAdventure GameplayEffect，CMC 在自己的层级把速度和转向归零。不要依赖可空的
+  `ULyraGameData::DynamicTagGameplayEffect` 全局配置，否则配置缺失会让上站位直接失败。
