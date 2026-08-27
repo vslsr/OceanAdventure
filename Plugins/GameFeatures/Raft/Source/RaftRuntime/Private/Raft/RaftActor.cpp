@@ -5,6 +5,7 @@
 #include "Building/BuildStructureComponent.h"
 #include "Building/BuildStructureVisualComponent.h"
 #include "Components/BoxComponent.h"
+#include "Naval/NavalMovementComponent.h"
 #include "Raft/RaftBuoyancyComponent.h"
 #include "Raft/RaftDefinition.h"
 
@@ -112,6 +113,11 @@ bool ARaftActor::IsCellAnchored(const FBuildGridCoord& Coord) const
 
 void ARaftActor::OnStructureBoundsChanged(const FBox& LocalPieceBounds)
 {
+	if (UNavalMovementComponent* Movement = FindComponentByClass<UNavalMovementComponent>())
+	{
+		Movement->MarkMoveIgnoreActorsDirty();
+	}
+
 	if (!DeckCollision)
 	{
 		return;

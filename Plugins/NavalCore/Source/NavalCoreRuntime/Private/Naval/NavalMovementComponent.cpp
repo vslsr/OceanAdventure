@@ -6,6 +6,7 @@
 #include "CollisionShape.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
@@ -73,7 +74,8 @@ void UNavalMovementComponent::BeginPlay()
 
 void UNavalMovementComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
-	ClearManagedMoveIgnoreActors();
+	ClearManagedMoveIgnoreActors(ManagedPassengerMoveIgnoreActors);
+	ClearManagedMoveIgnoreActors(ManagedAttachedMoveIgnoreActors);
 
 	if (bChangedOwnerReplicateMovement)
 	{
@@ -112,11 +114,12 @@ void UNavalMovementComponent::ResolvePeers()
 	Vessel = OwnerActor->FindComponentByClass<UNavalVesselComponent>();
 }
 
-void UNavalMovementComponent::ClearManagedMoveIgnoreActors()
+void UNavalMovementComponent::ClearManagedMoveIgnoreActors(
+	TArray<TWeakObjectPtr<AActor>>& ManagedActors)
 {
 	if (UpdatedPrimitive)
 	{
-		for (const TWeakObjectPtr<AActor>& IgnoredActor : ManagedMoveIgnoreActors)
+		for (const TWeakObjectPtr<AActor>& IgnoredActor : ManagedActors)
 		{
 			if (AActor* Actor = IgnoredActor.Get())
 			{
@@ -125,36 +128,59 @@ void UNavalMovementComponent::ClearManagedMoveIgnoreActors()
 		}
 	}
 
-	ManagedMoveIgnoreActors.Reset();
+	ManagedActors.Reset();
 }
 
-void UNavalMovementComponent::RefreshMoveIgnoreActors()
+void UNavalMovementComponent::UpdateMoveIgnoreActors(float DeltaTime)
 {
-	ClearManagedMoveIgnoreActors();
+	if (bAttachedMoveIgnoreDirty)
+	{
+		// Reclassify atomically: an operator can move between the passenger and attachment sets.
+		ClearManagedMoveIgnoreActors(ManagedPassengerMoveIgnoreActors);
+		RefreshAttachedMoveIgnoreActors();
+		PassengerScanTimeRemaining = 0.0f;
+	}
+
+	PassengerScanTimeRemaining -= DeltaTime;
+	if (PassengerScanTimeRemaining <= 0.0f)
+	{
+		RefreshPassengerMoveIgnoreActors();
+		PassengerScanTimeRemaining = FMath::Max(0.05f, PassengerScanInterval);
+	}
+}
+
+void UNavalMovementComponent::RefreshAttachedMoveIgnoreActors()
+{
+	ClearManagedMoveIgnoreActors(ManagedAttachedMoveIgnoreActors);
+	bAttachedMoveIgnoreDirty = false;
+
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || !UpdatedPrimitive)
+	{
+		return;
+	}
+
+	TArray<AActor*> AttachedActors;
+	OwnerActor->GetAttachedActors(AttachedActors, /*bResetArray=*/true, /*bRecursively=*/true);
+	for (AActor* AttachedActor : AttachedActors)
+	{
+		if (AttachedActor && !UpdatedPrimitive->GetMoveIgnoreActors().Contains(AttachedActor))
+		{
+			UpdatedPrimitive->IgnoreActorWhenMoving(AttachedActor, true);
+			ManagedAttachedMoveIgnoreActors.Add(AttachedActor);
+		}
+	}
+}
+
+void UNavalMovementComponent::RefreshPassengerMoveIgnoreActors()
+{
+	ClearManagedMoveIgnoreActors(ManagedPassengerMoveIgnoreActors);
 
 	AActor* OwnerActor = GetOwner();
 	UWorld* World = GetWorld();
 	if (!OwnerActor || !World || !UpdatedPrimitive)
 	{
 		return;
-	}
-
-	const auto AddManagedIgnore = [this](AActor* Actor)
-	{
-		if (!Actor || UpdatedPrimitive->GetMoveIgnoreActors().Contains(Actor))
-		{
-			return;
-		}
-
-		UpdatedPrimitive->IgnoreActorWhenMoving(Actor, true);
-		ManagedMoveIgnoreActors.Add(Actor);
-	};
-
-	TArray<AActor*> AttachedActors;
-	OwnerActor->GetAttachedActors(AttachedActors, /*bResetArray=*/true, /*bRecursively=*/true);
-	for (AActor* AttachedActor : AttachedActors)
-	{
-		AddManagedIgnore(AttachedActor);
 	}
 
 	// Free-moving passengers are based on the deck rather than attached to it. A minimally
@@ -179,7 +205,11 @@ void UNavalMovementComponent::RefreshMoveIgnoreActors()
 		const AActor* BaseActor = MovementBase ? MovementBase->GetOwner() : nullptr;
 		if (BaseActor == OwnerActor || (BaseActor && BaseActor->IsAttachedTo(OwnerActor)))
 		{
-			AddManagedIgnore(Pawn);
+			if (!UpdatedPrimitive->GetMoveIgnoreActors().Contains(Pawn))
+			{
+				UpdatedPrimitive->IgnoreActorWhenMoving(Pawn, true);
+				ManagedPassengerMoveIgnoreActors.Add(Pawn);
+			}
 		}
 	}
 }
@@ -389,7 +419,7 @@ void UNavalMovementComponent::TickAuthorityMovement(float DeltaTime)
 		return;
 	}
 
-	RefreshMoveIgnoreActors();
+	UpdateMoveIgnoreActors(DeltaTime);
 
 	const FVector Delta = Velocity * DeltaTime;
 	FHitResult Hit(1.0f);
@@ -403,9 +433,9 @@ void UNavalMovementComponent::TickAuthorityMovement(float DeltaTime)
 		OnHullBlocked.Broadcast(Hit, ImpactSpeed);
 
 		// SafeMove has already consumed Hit.Time of Delta. Let the engine resolve the remaining
-		// distance and any second wall, then remove the blocked velocity for the next frame.
+		// distance and any second wall. This P0 event intentionally reports only the first contact.
 		SlideAlongSurface(Delta, 1.0f - Hit.Time, BlockingNormal, Hit, /*bHandleImpact=*/false);
-		Velocity = FVector::VectorPlaneProject(Velocity, BlockingImpactNormal);
+		Velocity = FVector::VectorPlaneProject(Velocity, BlockingNormal);
 		Velocity.Z = 0.0;
 		CurrentSpeed = FVector::DotProduct(Velocity, NewForward);
 	}

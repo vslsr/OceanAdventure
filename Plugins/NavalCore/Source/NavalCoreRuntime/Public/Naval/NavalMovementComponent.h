@@ -78,6 +78,9 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Movement")
 	void SetSpeedScale(float NewSpeedScale);
 
+	/** Call after the owner's runtime attachment tree changes. Refreshed lazily before movement. */
+	void MarkMoveIgnoreActorsDirty() { bAttachedMoveIgnoreDirty = true; }
+
 	/** Server-only notification emitted when authoritative planar movement hits the world. */
 	UPROPERTY(BlueprintAssignable, Category = "Naval|Movement|Collision")
 	FOnNavalHullBlocked OnHullBlocked;
@@ -164,6 +167,11 @@ protected:
 		meta = (ClampMin = "0.0", ClampMax = "0.5", Units = "s"))
 	float ClientMaxExtrapolationSeconds = 0.2f;
 
+	/** Server cadence for discovering free-moving pawns based on this vessel. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Collision",
+		meta = (ClampMin = "0.05", Units = "s"))
+	float PassengerScanInterval = 0.25f;
+
 	UPROPERTY(Replicated)
 	float CurrentSpeed = 0.0f;
 
@@ -176,8 +184,10 @@ protected:
 
 private:
 	void ResolvePeers();
-	void RefreshMoveIgnoreActors();
-	void ClearManagedMoveIgnoreActors();
+	void UpdateMoveIgnoreActors(float DeltaTime);
+	void RefreshAttachedMoveIgnoreActors();
+	void RefreshPassengerMoveIgnoreActors();
+	void ClearManagedMoveIgnoreActors(TArray<TWeakObjectPtr<AActor>>& ManagedActors);
 
 	/** Repairs stale Blueprint/instance mobility that would silently discard every move. */
 	void EnsureOwnerCanMove();
@@ -192,10 +202,13 @@ private:
 	TWeakObjectPtr<UNavalLoadComponent> Load;
 	TWeakObjectPtr<UNavalVesselComponent> Vessel;
 
-	/** Actors this component added to UpdatedPrimitive's move-ignore list. */
-	TArray<TWeakObjectPtr<AActor>> ManagedMoveIgnoreActors;
+	/** Entries are separate so passenger scans do not rebuild the stable attachment list. */
+	TArray<TWeakObjectPtr<AActor>> ManagedAttachedMoveIgnoreActors;
+	TArray<TWeakObjectPtr<AActor>> ManagedPassengerMoveIgnoreActors;
 
 	float YawRateDegrees = 0.0f;
+	float PassengerScanTimeRemaining = 0.0f;
+	bool bAttachedMoveIgnoreDirty = true;
 
 	double LastReplicatedPoseTime = 0.0;
 	bool bHasReplicatedPose = false;

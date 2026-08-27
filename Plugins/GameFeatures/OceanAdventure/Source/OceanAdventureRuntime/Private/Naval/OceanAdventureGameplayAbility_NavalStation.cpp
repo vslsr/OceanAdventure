@@ -13,6 +13,7 @@
 #include "GameplayEffect.h"
 #include "Build/OceanAdventureBuildTags.h"
 #include "Naval/NavalGameplayTags.h"
+#include "Naval/NavalMovementComponent.h"
 #include "Naval/NavalVesselComponent.h"
 #include "Naval/OceanAdventureAbilityTask_NavalControl.h"
 #include "Naval/OceanAdventureGameplayEffect_NavalStationExitLock.h"
@@ -22,6 +23,21 @@
 #include "OceanAdventureRuntimeModule.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureGameplayAbility_NavalStation)
+
+namespace
+{
+	void MarkVesselMoveIgnoreActorsDirty(const AActor* ContextActor)
+	{
+		UNavalVesselComponent* Vessel = UNavalVesselComponent::FindVessel(ContextActor);
+		AActor* VesselActor = Vessel ? Vessel->GetOwner() : nullptr;
+		if (UNavalMovementComponent* Movement = VesselActor
+			? VesselActor->FindComponentByClass<UNavalMovementComponent>()
+			: nullptr)
+		{
+			Movement->MarkMoveIgnoreActorsDirty();
+		}
+	}
+}
 
 UOceanAdventureGameplayAbility_NavalStation::UOceanAdventureGameplayAbility_NavalStation(
 	const FObjectInitializer& ObjectInitializer)
@@ -440,6 +456,7 @@ void UOceanAdventureGameplayAbility_NavalStation::EnterStationPresentation(AActo
 		bHasSavedMovementMode = true;
 		CharacterMovement->DisableMovement();
 	}
+	MarkVesselMoveIgnoreActorsDirty(Character);
 
 	const FGameplayTag StatusTag = GetStationStatusTag();
 	UE_LOG(LogOceanAdventure, Display,
@@ -469,6 +486,7 @@ void UOceanAdventureGameplayAbility_NavalStation::LeaveStationPresentation()
 		return;
 	}
 
+	MarkVesselMoveIgnoreActorsDirty(Character);
 	Character->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
 
 	if (UCharacterMovementComponent* CharacterMovement = Character->GetCharacterMovement())
