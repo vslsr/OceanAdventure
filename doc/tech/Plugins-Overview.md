@@ -98,11 +98,12 @@
 
 **把上面三套框架落地成一艘具体的船。**
 
-- `ARaftActor` — 复制的移动平台，同时实现 `IBuildStructureHost`：木筏甲板就是建造宿主。
+- `ARaftVesselActor` — 无建造能力的水体载具基类：碰撞、浮力、复制与可选的船体直接驾驶。
+- `ARaftActor` — 在载具基类上追加 `IBuildStructureHost` 和两个建造组件；木筏甲板就是建造宿主。
   角色把 `DeckCollision` 当作 CharacterMovement 的 movement base 站在上面。
 - `URaftBuoyancyComponent` — 仅服务端的运动学浮力，四个浮筒点向 OceanCore 采样水面；
-  实现 `INavalBuoyancyControl`，船变成残骸后就不再被托在水线上。结果通过标准
-  `AActor::ReplicatedMovement` 发给客户端。
+  实现 `INavalBuoyancyControl`，船变成残骸后就不再被托在水线上。NavalMovement 注入后
+  使用复制姿态与客户端逐帧插值，不再走普通 Actor 的 30Hz transform snap。
 - `URaftBuildPieceDefinition` / `RaftDefinition` — 木筏专属的构件与整船定义。
 - `Content/Python/` 下的一组幂等脚本负责生成这些资产（`BuildRaftFeature.py` 跑完整流程，
   `ValidateRaftFeature.py` 只读校验）。
