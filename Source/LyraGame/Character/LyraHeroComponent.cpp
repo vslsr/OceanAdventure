@@ -270,7 +270,7 @@ void ULyraHeroComponent::InitializePlayerInput(UInputComponent* PlayerInputCompo
 							
 							FModifyContextOptions Options = {};
 							Options.bIgnoreAllPressedKeysUntilRelease = false;
-							// Actually add the config to the local player							
+							// Actually add the config to the local player
 							Subsystem->AddMappingContext(IMC, Mapping.Priority, Options);
 						}
 					}
@@ -451,6 +451,24 @@ void ULyraHeroComponent::Input_Move(const FInputActionValue& InputActionValue)
 	if (Controller)
 	{
 		const FVector2D Value = InputActionValue.Get<FVector2D>();
+		const UAbilitySystemComponent* AbilitySystem =
+			UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Pawn);
+		const ULyraCharacterMovementComponent* MovementComponent =
+			Pawn->FindComponentByClass<ULyraCharacterMovementComponent>();
+		if (AbilitySystem
+			&& AbilitySystem->HasMatchingGameplayTag(TAG_Gameplay_MovementStopped))
+		{
+			Pawn->ConsumeMovementInputVector();
+			UE_LOG(LogLyra, Verbose,
+				TEXT("[LyraInputTrace] phase=movement-action result=blocked pawn=%s value=(%.3f,%.3f) movement_stopped_count=%d max_speed=%.3f attached_to=%s pending_input=%s"),
+				*GetNameSafe(Pawn), Value.X, Value.Y,
+				AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped),
+				MovementComponent ? MovementComponent->GetMaxSpeed() : -1.0f,
+				*GetNameSafe(Pawn->GetRootComponent()->GetAttachParent()),
+				*Pawn->GetPendingMovementInputVector().ToCompactString());
+			return;
+		}
+
 		const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
 
 		if (Value.X != 0.0f)
@@ -464,6 +482,14 @@ void ULyraHeroComponent::Input_Move(const FInputActionValue& InputActionValue)
 			const FVector MovementDirection = MovementRotation.RotateVector(FVector::ForwardVector);
 			Pawn->AddMovementInput(MovementDirection, Value.Y);
 		}
+
+		UE_LOG(LogLyra, Verbose,
+			TEXT("[LyraInputTrace] phase=movement-action result=applied pawn=%s value=(%.3f,%.3f) movement_stopped_count=%d max_speed=%.3f attached_to=%s pending_input=%s"),
+			*GetNameSafe(Pawn), Value.X, Value.Y,
+			AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
+			MovementComponent ? MovementComponent->GetMaxSpeed() : -1.0f,
+			*GetNameSafe(Pawn->GetAttachParentActor()),
+			*Pawn->GetPendingMovementInputVector().ToCompactString());
 	}
 }
 

@@ -4,8 +4,10 @@
 
 #include "AbilitySystemComponent.h"
 #include "Abilities/Tasks/AbilityTask_WaitInputPress.h"
+#include "Components/SceneComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
 #include "Character/LyraCharacterMovementComponent.h"
 #include "GameplayEffect.h"
@@ -13,11 +15,11 @@
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalVesselComponent.h"
 #include "Naval/OceanAdventureAbilityTask_NavalControl.h"
+#include "Naval/OceanAdventureGameplayEffect_NavalStationExitLock.h"
 #include "Naval/OceanAdventureGameplayEffect_NavalStationLock.h"
 #include "Naval/OceanAdventureNavalMessages.h"
 #include "Naval/OceanAdventureNavalTags.h"
 #include "OceanAdventureRuntimeModule.h"
-#include "TimerManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureGameplayAbility_NavalStation)
 
@@ -352,23 +354,50 @@ void UOceanAdventureGameplayAbility_NavalStation::EnterStationPresentation(AActo
 		return;
 	}
 
-	FTransform OperatorTransform;
-	if (GetOperatorTransform(Station, OperatorTransform))
+	if (UCharacterMovementComponent* CharacterMovement = Character->GetCharacterMovement())
 	{
-		Character->SetActorLocationAndRotation(
-			OperatorTransform.GetLocation(),
-			OperatorTransform.Rotator(),
-			/*bSweep=*/false,
-			nullptr,
-			ETeleportType::TeleportPhysics);
+		CharacterMovement->StopMovementImmediately();
 	}
-	Character->AttachToActor(Station, FAttachmentTransformRules::KeepWorldTransform);
+	Character->ConsumeMovementInputVector();
+
+	USceneComponent* AttachmentPoint = FindOperatorAttachmentPoint(Station);
+	bool bAttached = false;
+	if (AttachmentPoint)
+	{
+		bAttached = Character->AttachToComponent(
+			AttachmentPoint,
+			FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+	}
+	else
+	{
+		FTransform OperatorTransform;
+		if (GetOperatorTransform(Station, OperatorTransform))
+		{
+			Character->SetActorLocationAndRotation(
+				OperatorTransform.GetLocation(),
+				OperatorTransform.Rotator(),
+				/*bSweep=*/false,
+				nullptr,
+				ETeleportType::TeleportPhysics);
+			bAttached = Character->AttachToActor(Station, FAttachmentTransformRules::KeepWorldTransform);
+		}
+	}
+
+	if (!bAttached)
+	{
+		UE_LOG(LogOceanAdventure, Error,
+			TEXT("[NavalStation] Presentation attachment failed avatar=%s station=%s attachment_point=%s"),
+			*GetNameSafe(Character), *GetNameSafe(Station), *GetNameSafe(AttachmentPoint));
+		RemoveStationLock();
+		return;
+	}
 
 	const FGameplayTag StatusTag = GetStationStatusTag();
 	UE_LOG(LogOceanAdventure, Display,
-		TEXT("[NavalStation] Presentation entered avatar=%s station=%s status=%s attached_to=%s"),
+		TEXT("[NavalStation] Presentation entered avatar=%s station=%s status=%s attachment_point=%s attached_to=%s relative_location=%s"),
 		*GetNameSafe(Character), *GetNameSafe(Station), *StatusTag.ToString(),
-		*GetNameSafe(Character->GetAttachParentActor()));
+		*GetNameSafe(AttachmentPoint), *GetNameSafe(Character->GetRootComponent()->GetAttachParent()),
+		*Character->GetRootComponent()->GetRelativeLocation().ToCompactString());
 
 	bStationEntered = true;
 }
@@ -395,6 +424,9 @@ bool UOceanAdventureGameplayAbility_NavalStation::ApplyStationLock()
 	UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo();
 	if (!AbilitySystem)
 	{
+		UE_LOG(LogOceanAdventure, Error,
+			TEXT("[NavalInputTrace] phase=station-lock-apply result=no-asc ability=%s avatar=%s"),
+			*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()));
 		return false;
 	}
 
@@ -408,6 +440,9 @@ bool UOceanAdventureGameplayAbility_NavalStation::ApplyStationLock()
 	FGameplayEffectSpec* Spec = SpecHandle.Data.Get();
 	if (!Spec)
 	{
+		UE_LOG(LogOceanAdventure, Error,
+			TEXT("[NavalInputTrace] phase=station-lock-apply result=no-spec ability=%s avatar=%s asc=%s"),
+			*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(AbilitySystem));
 		return false;
 	}
 
@@ -428,22 +463,52 @@ bool UOceanAdventureGameplayAbility_NavalStation::ApplyStationLock()
 		SpecHandle);
 	if (!StationLockHandle.IsValid())
 	{
+		UE_LOG(LogOceanAdventure, Error,
+			TEXT("[NavalInputTrace] phase=station-lock-apply result=invalid-handle ability=%s avatar=%s asc=%s movement_stopped_count=%d status=%s status_count=%d"),
+			*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(AbilitySystem),
+			AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped), *StatusTag.ToString(),
+			StatusTag.IsValid() ? AbilitySystem->GetTagCount(StatusTag) : 0);
 		return false;
 	}
 
 	StationLockAbilitySystem = AbilitySystem;
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalInputTrace] phase=station-lock-apply result=success ability=%s avatar=%s asc=%s movement_stopped_count=%d status=%s status_count=%d local=%d authority=%d"),
+		*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(AbilitySystem),
+		AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped), *StatusTag.ToString(),
+		StatusTag.IsValid() ? AbilitySystem->GetTagCount(StatusTag) : 0,
+		CurrentActorInfo && CurrentActorInfo->IsLocallyControlled(),
+		HasAuthority(&CurrentActivationInfo));
 	return true;
 }
 
 void UOceanAdventureGameplayAbility_NavalStation::RemoveStationLock()
 {
+	UAbilitySystemComponent* AbilitySystem = StationLockAbilitySystem.Get();
+	const FGameplayTag StatusTag = GetStationStatusTag();
+	const int32 MovementStoppedCountBefore = AbilitySystem
+		? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped)
+		: -1;
+	const int32 StatusCountBefore = AbilitySystem && StatusTag.IsValid()
+		? AbilitySystem->GetTagCount(StatusTag)
+		: -1;
+	bool bRemoved = false;
+
 	if (StationLockHandle.IsValid())
 	{
-		if (UAbilitySystemComponent* AbilitySystem = StationLockAbilitySystem.Get())
+		if (AbilitySystem)
 		{
-			AbilitySystem->RemoveActiveGameplayEffect(StationLockHandle);
+			bRemoved = AbilitySystem->RemoveActiveGameplayEffect(StationLockHandle);
 		}
 	}
+
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalInputTrace] phase=station-lock-remove ability=%s avatar=%s asc=%s handle_valid=%d removed=%d movement_stopped_before=%d movement_stopped_after=%d status=%s status_before=%d status_after=%d"),
+		*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(AbilitySystem),
+		StationLockHandle.IsValid(), bRemoved, MovementStoppedCountBefore,
+		AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
+		*StatusTag.ToString(), StatusCountBefore,
+		AbilitySystem && StatusTag.IsValid() ? AbilitySystem->GetTagCount(StatusTag) : -1);
 
 	StationLockHandle = FActiveGameplayEffectHandle();
 	StationLockAbilitySystem.Reset();
@@ -451,33 +516,43 @@ void UOceanAdventureGameplayAbility_NavalStation::RemoveStationLock()
 
 void UOceanAdventureGameplayAbility_NavalStation::ApplyExitLock()
 {
-	UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo();
-	UWorld* World = GetWorld();
-	if (!AbilitySystem || !World || StationExitLockSeconds <= 0.0f)
+	if (StationExitLockSeconds <= 0.0f || !CurrentActorInfo)
 	{
 		return;
 	}
 
 	// Stepping off a gun and shooting has to cost something, or the gun would have no
-	// downside at close range at all.
-	AbilitySystem->AddLooseGameplayTag(OceanAdventureNavalTags::Status_Naval_StationExitLock);
+	// downside at close range at all. A duration GE owns both replication and expiry, so
+	// repeated exits cannot leak a loose-tag count or leave an uncancellable timer behind.
+	FGameplayEffectSpecHandle SpecHandle = MakeOutgoingGameplayEffectSpec(
+		CurrentSpecHandle,
+		CurrentActorInfo,
+		CurrentActivationInfo,
+		UOceanAdventureGameplayEffect_NavalStationExitLock::StaticClass(),
+		1.0f);
+	FGameplayEffectSpec* Spec = SpecHandle.Data.Get();
+	if (!Spec)
+	{
+		UE_LOG(LogOceanAdventure, Error,
+			TEXT("[NavalStation] Failed to create station exit-lock effect ability=%s avatar=%s"),
+			*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()));
+		return;
+	}
 
-	TWeakObjectPtr<UAbilitySystemComponent> WeakAbilitySystem(AbilitySystem);
-	FTimerHandle ExitLockTimer;
-	World->GetTimerManager().SetTimer(
-		ExitLockTimer,
-		FTimerDelegate::CreateWeakLambda(
-			AbilitySystem,
-			[WeakAbilitySystem]()
-			{
-				if (UAbilitySystemComponent* AbilitySystemComponent = WeakAbilitySystem.Get())
-				{
-					AbilitySystemComponent->RemoveLooseGameplayTag(
-						OceanAdventureNavalTags::Status_Naval_StationExitLock);
-				}
-			}),
-		StationExitLockSeconds,
-		false);
+	Spec->SetDuration(StationExitLockSeconds, /*bLockDuration=*/true);
+	Spec->DynamicGrantedTags.AddTag(OceanAdventureNavalTags::Status_Naval_StationExitLock);
+
+	const FActiveGameplayEffectHandle ExitLockHandle = ApplyGameplayEffectSpecToOwner(
+		CurrentSpecHandle,
+		CurrentActorInfo,
+		CurrentActivationInfo,
+		SpecHandle);
+	if (!ExitLockHandle.IsValid())
+	{
+		UE_LOG(LogOceanAdventure, Warning,
+			TEXT("[NavalStation] Failed to apply station exit-lock effect ability=%s avatar=%s duration=%.2f"),
+			*GetNameSafe(this), *GetNameSafe(GetAvatarActorFromActorInfo()), StationExitLockSeconds);
+	}
 }
 
 AActor* UOceanAdventureGameplayAbility_NavalStation::GetStationVesselActor() const
@@ -542,4 +617,10 @@ bool UOceanAdventureGameplayAbility_NavalStation::GetOperatorTransform(
 	AActor* /*Station*/, FTransform& /*OutTransform*/) const
 {
 	return false;
+}
+
+USceneComponent* UOceanAdventureGameplayAbility_NavalStation::FindOperatorAttachmentPoint(
+	AActor* /*Station*/) const
+{
+	return nullptr;
 }

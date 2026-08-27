@@ -11,6 +11,16 @@ class UNavalHelmComponent;
 class UNavalPartComponent;
 struct FGameplayTag;
 
+namespace NavalHelmStation
+{
+	/** Marker used by a helm ability to find the authored operator snap point on a station actor. */
+	inline const FName& GetOperatorPointComponentTag()
+	{
+		static const FName OperatorPointComponentTag(TEXT("Naval.OperatorPoint"));
+		return OperatorPointComponentTag;
+	}
+}
+
 /**
  * Common interaction surface for anything that can put a player at a vessel's helm.
  *

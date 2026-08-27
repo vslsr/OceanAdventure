@@ -2,6 +2,9 @@
 
 #include "Naval/OceanAdventureGameplayAbility_OperateHelm.h"
 
+#include "AbilitySystemComponent.h"
+#include "Character/LyraCharacterMovementComponent.h"
+#include "Components/SceneComponent.h"
 #include "Naval/NavalHelmComponent.h"
 #include "Naval/NavalHelmStation.h"
 #include "Naval/NavalVesselComponent.h"
@@ -26,6 +29,14 @@ void UOceanAdventureGameplayAbility_OperateHelm::ActivateAbility(
 {
 	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
+	UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalInputTrace] phase=operate-helm-post-super active=%d avatar=%s station=%s local=%d authority=%d movement_stopped_count=%d steering_count=%d"),
+		IsActive(), *GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(GetStationActor()),
+		ActorInfo && ActorInfo->IsLocallyControlled(), HasAuthority(&ActivationInfo),
+		AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
+		AbilitySystem ? AbilitySystem->GetTagCount(OceanAdventureNavalTags::Status_Naval_Steering) : -1);
+
 	// Only the local predicted ability owns the player's mapping context. The server receives
 	// target-data samples and never installs a client input mapping.
 	if (IsActive() && ActorInfo && ActorInfo->IsLocallyControlled())
@@ -44,6 +55,12 @@ void UOceanAdventureGameplayAbility_OperateHelm::ActivateAbility(
 		}
 
 		HelmInput->EnableHelmInput();
+		UE_LOG(LogOceanAdventure, Display,
+			TEXT("[NavalInputTrace] phase=operate-helm-enable-input avatar=%s station=%s enabled=%d movement_stopped_count=%d steering_count=%d"),
+			*GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(GetStationActor()),
+			HelmInput->IsHelmInputEnabled(),
+			AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
+			AbilitySystem ? AbilitySystem->GetTagCount(OceanAdventureNavalTags::Status_Naval_Steering) : -1);
 		if (!HelmInput->IsHelmInputEnabled())
 		{
 			UE_LOG(LogOceanAdventure, Error,
@@ -61,6 +78,13 @@ void UOceanAdventureGameplayAbility_OperateHelm::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	const UAbilitySystemComponent* AbilitySystem = ActorInfo ? ActorInfo->AbilitySystemComponent.Get() : nullptr;
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalInputTrace] phase=operate-helm-end-pre-disable avatar=%s station=%s cancelled=%d movement_stopped_count=%d steering_count=%d"),
+		*GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(GetStationActor()), bWasCancelled,
+		AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
+		AbilitySystem ? AbilitySystem->GetTagCount(OceanAdventureNavalTags::Status_Naval_Steering) : -1);
+
 	// Pop the high-priority context before the base class removes the station lock. W/A/S/D
 	// then return immediately to the native TopDown + CharacterMovement path.
 	if (ActorInfo && ActorInfo->IsLocallyControlled())
@@ -114,8 +138,20 @@ void UOceanAdventureGameplayAbility_OperateHelm::ServerApplyControl(
 {
 	if (UNavalHelmComponent* Helm = ResolveHelm(Station))
 	{
+		UE_LOG(LogOceanAdventure, Verbose,
+			TEXT("[NavalInputTrace] phase=server-control-received avatar=%s station=%s vessel=%s operator=%s throttle=%.3f steer=%.3f accepts_input=%d"),
+			*GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(Station),
+			*GetNameSafe(Helm->GetOwner()), *GetNameSafe(Helm->GetOperator()),
+			Data.GetThrottle(), Data.GetSteer(), Helm->AcceptsControlInput());
 		// The server-owned helm rejects samples from anyone except its current operator.
 		Helm->SetControlIntent(GetAvatarActorFromActorInfo(), Data.GetThrottle(), Data.GetSteer());
+	}
+	else
+	{
+		UE_LOG(LogOceanAdventure, Warning,
+			TEXT("[NavalInputTrace] phase=server-control-received result=no-helm avatar=%s station=%s throttle=%.3f steer=%.3f"),
+			*GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(Station),
+			Data.GetThrottle(), Data.GetSteer());
 	}
 }
 
@@ -129,10 +165,18 @@ bool UOceanAdventureGameplayAbility_OperateHelm::BuildControlSample(
 		: nullptr;
 	if (!VesselActor || !HelmInput || !HelmInput->IsHelmInputEnabled())
 	{
+		UE_LOG(LogOceanAdventure, Verbose,
+			TEXT("[NavalInputTrace] phase=client-control-sample result=skipped avatar=%s station=%s vessel=%s input_component=%s input_enabled=%d"),
+			*GetNameSafe(Avatar), *GetNameSafe(GetStationActor()), *GetNameSafe(VesselActor),
+			*GetNameSafe(HelmInput), HelmInput && HelmInput->IsHelmInputEnabled());
 		return false;
 	}
 
 	OutData.SetControlIntent(HelmInput->GetThrottleInput(), HelmInput->GetSteerInput());
+	UE_LOG(LogOceanAdventure, Verbose,
+		TEXT("[NavalInputTrace] phase=client-control-sample result=built avatar=%s station=%s vessel=%s throttle=%.3f steer=%.3f"),
+		*GetNameSafe(Avatar), *GetNameSafe(GetStationActor()), *GetNameSafe(VesselActor),
+		HelmInput->GetThrottleInput(), HelmInput->GetSteerInput());
 	return true;
 }
 
@@ -161,15 +205,27 @@ bool UOceanAdventureGameplayAbility_OperateHelm::IsStationStillValid(AActor* Sta
 		&& (CurrentStation == nullptr || CurrentStation == Station);
 }
 
-bool UOceanAdventureGameplayAbility_OperateHelm::GetOperatorTransform(
-	AActor* Station, FTransform& OutTransform) const
+USceneComponent* UOceanAdventureGameplayAbility_OperateHelm::FindOperatorAttachmentPoint(
+	AActor* Station) const
 {
-	const INavalHelmStation* HelmStation = Station ? Cast<INavalHelmStation>(Station) : nullptr;
-	if (!HelmStation)
+	if (!Station)
 	{
-		return false;
+		return nullptr;
 	}
 
-	OutTransform = HelmStation->GetOperatorTransform();
-	return true;
+	TArray<USceneComponent*> SceneComponents;
+	Station->GetComponents<USceneComponent>(SceneComponents);
+	for (USceneComponent* SceneComponent : SceneComponents)
+	{
+		if (SceneComponent
+			&& SceneComponent->ComponentHasTag(NavalHelmStation::GetOperatorPointComponentTag()))
+		{
+			return SceneComponent;
+		}
+	}
+
+	UE_LOG(LogOceanAdventure, Error,
+		TEXT("[NavalStation] Helm station has no tagged operator point station=%s required_tag=%s"),
+		*GetNameSafe(Station), *NavalHelmStation::GetOperatorPointComponentTag().ToString());
+	return nullptr;
 }

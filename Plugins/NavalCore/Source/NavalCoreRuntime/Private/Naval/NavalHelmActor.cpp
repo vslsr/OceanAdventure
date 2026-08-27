@@ -4,6 +4,7 @@
 
 #include "Components/BoxComponent.h"
 #include "Components/GameFrameworkComponentManager.h"
+#include "Components/SceneComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "Naval/NavalCoreTypes.h"
@@ -74,6 +75,7 @@ ANavalHelmActor::ANavalHelmActor()
 
 	OperatorPoint = CreateDefaultSubobject<USceneComponent>(TEXT("OperatorPoint"));
 	OperatorPoint->SetupAttachment(SceneRoot);
+	OperatorPoint->ComponentTags.AddUnique(NavalHelmStation::GetOperatorPointComponentTag());
 	// Behind the console, facing the bow: the character stands at the wheel and looks the way
 	// the ship is going, so the steering keys read as ship-relative without any camera work.
 	OperatorPoint->SetRelativeLocation(FVector(-75.0, 0.0, 88.0));

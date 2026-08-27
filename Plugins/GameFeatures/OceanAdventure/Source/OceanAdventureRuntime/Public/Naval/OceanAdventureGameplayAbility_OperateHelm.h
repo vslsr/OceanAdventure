@@ -7,6 +7,7 @@
 #include "OceanAdventureGameplayAbility_OperateHelm.generated.h"
 
 class UNavalHelmComponent;
+class USceneComponent;
 
 /**
  * 操作主舵台.
@@ -47,7 +48,7 @@ protected:
 	virtual bool BuildControlSample(FOceanAdventureNavalTargetData& OutData) const override;
 	virtual FGameplayTag GetStationStatusTag() const override;
 	virtual bool IsStationStillValid(AActor* Station) const override;
-	virtual bool GetOperatorTransform(AActor* Station, FTransform& OutTransform) const override;
+	virtual USceneComponent* FindOperatorAttachmentPoint(AActor* Station) const override;
 
 private:
 	static UNavalHelmComponent* ResolveHelm(AActor* Station);

@@ -252,18 +252,31 @@ void UNavalHelmComponent::SetControlIntent(AActor* Source, float InThrottle, flo
 {
 	if (!GetOwner() || !GetOwner()->HasAuthority())
 	{
+		UE_LOG(LogNavalCore, Verbose,
+			TEXT("[NavalInputTrace] phase=helm-intent result=not-authority vessel=%s source=%s throttle=%.3f steer=%.3f"),
+			*GetNameSafe(GetOwner()), *GetNameSafe(Source), InThrottle, InSteer);
 		return;
 	}
 
 	// The client sends this as a request every frame it holds a direction; only the actor the
 	// server believes is at the wheel can move the ship.
-	if (Source == nullptr || Operator != Source || !AcceptsControlInput())
+	const bool bAcceptsControlInput = AcceptsControlInput();
+	if (Source == nullptr || Operator != Source || !bAcceptsControlInput)
 	{
+		UE_LOG(LogNavalCore, Verbose,
+			TEXT("[NavalInputTrace] phase=helm-intent result=rejected vessel=%s source=%s operator=%s active_station=%s throttle=%.3f steer=%.3f source_valid=%d operator_matches=%d accepts_input=%d helm_state=%d"),
+			*GetNameSafe(GetOwner()), *GetNameSafe(Source), *GetNameSafe(Operator.Get()),
+			*GetNameSafe(ActiveStation.Get()), InThrottle, InSteer, Source != nullptr,
+			Operator == Source, bAcceptsControlInput, static_cast<int32>(GetHelmState()));
 		return;
 	}
 
 	ThrottleIntent = FMath::Clamp(InThrottle, -1.0f, 1.0f);
 	SteerIntent = FMath::Clamp(InSteer, -1.0f, 1.0f);
+	UE_LOG(LogNavalCore, Verbose,
+		TEXT("[NavalInputTrace] phase=helm-intent result=accepted vessel=%s source=%s active_station=%s throttle=%.3f steer=%.3f helm_state=%d"),
+		*GetNameSafe(GetOwner()), *GetNameSafe(Source), *GetNameSafe(ActiveStation.Get()),
+		ThrottleIntent, SteerIntent, static_cast<int32>(GetHelmState()));
 }
 
 float UNavalHelmComponent::GetThrottleIntent() const

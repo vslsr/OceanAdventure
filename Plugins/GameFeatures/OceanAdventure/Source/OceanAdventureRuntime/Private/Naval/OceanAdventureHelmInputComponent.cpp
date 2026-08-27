@@ -28,7 +28,7 @@ UOceanAdventureHelmInputComponent::UOceanAdventureHelmInputComponent(
 	: Super(ObjectInitializer)
 	, ThrottleInputTag(OceanAdventureNavalTags::InputTag_Naval_Helm_Throttle)
 	, SteerInputTag(OceanAdventureNavalTags::InputTag_Naval_Helm_Steer)
-	, HelmMappingContext(FSoftObjectPath(TEXT("/OceanAdventure/Input/IMC_OceanHelm")))
+	, HelmMappingContext(FSoftObjectPath(TEXT("/OceanAdventure/Input/IMC_OceanHelm.IMC_OceanHelm")))
 {
 	PrimaryComponentTick.bCanEverTick = false;
 }
@@ -135,8 +135,10 @@ void UOceanAdventureHelmInputComponent::BindInputIfReady()
 		UE_LOG(
 			LogOceanAdventureHelmInput,
 			Warning,
-			TEXT("Helm input disabled for %s: component or tagged native actions are missing"),
-			*GetNameSafe(Pawn));
+			TEXT("[NavalInputTrace] phase=bind result=missing-dependency pawn=%s controller=%s input_component=%s throttle_tag=%s throttle_action=%s steer_tag=%s steer_action=%s input_config=%s"),
+			*GetNameSafe(Pawn), *GetNameSafe(PlayerController), *GetNameSafe(InputComponent),
+			*ThrottleInputTag.ToString(), *GetNameSafe(ThrottleAction),
+			*SteerInputTag.ToString(), *GetNameSafe(SteerAction), *GetNameSafe(InputConfig));
 		return;
 	}
 
@@ -161,7 +163,11 @@ void UOceanAdventureHelmInputComponent::BindInputIfReady()
 
 	BoundInputComponent = InputComponent;
 	bInputBound = true;
-	UE_LOG(LogOceanAdventureHelmInput, Verbose, TEXT("Bound helm actions for %s"), *GetNameSafe(Pawn));
+	UE_LOG(LogOceanAdventureHelmInput, Display,
+		TEXT("[NavalInputTrace] phase=bind result=success pawn=%s controller=%s input_component=%s input_config=%s throttle_tag=%s throttle_action=%s steer_tag=%s steer_action=%s binding_count=%d"),
+		*GetNameSafe(Pawn), *GetNameSafe(PlayerController), *GetNameSafe(InputComponent),
+		*GetNameSafe(InputConfig), *ThrottleInputTag.ToString(), *GetNameSafe(ThrottleAction),
+		*SteerInputTag.ToString(), *GetNameSafe(SteerAction), InputBindingHandles.Num());
 }
 
 void UOceanAdventureHelmInputComponent::UnbindInput()
@@ -184,6 +190,9 @@ void UOceanAdventureHelmInputComponent::EnableHelmInput()
 {
 	if (bHelmInputEnabled)
 	{
+		UE_LOG(LogOceanAdventureHelmInput, Verbose,
+			TEXT("[NavalInputTrace] phase=mapping-enable result=already-enabled pawn=%s"),
+			*GetNameSafe(GetPawn<APawn>()));
 		return;
 	}
 
@@ -196,7 +205,7 @@ void UOceanAdventureHelmInputComponent::EnableHelmInput()
 		UE_LOG(
 			LogOceanAdventureHelmInput,
 			Error,
-			TEXT("Cannot enable helm input for %s: tagged native actions are not bound"),
+			TEXT("[NavalInputTrace] phase=mapping-enable result=input-not-bound pawn=%s"),
 			*GetNameSafe(GetPawn<APawn>()));
 		return;
 	}
@@ -215,8 +224,10 @@ void UOceanAdventureHelmInputComponent::EnableHelmInput()
 		UE_LOG(
 			LogOceanAdventureHelmInput,
 			Warning,
-			TEXT("Cannot push helm mapping for %s: local input subsystem or IMC_OceanHelm is missing"),
-			*GetNameSafe(Pawn));
+			TEXT("[NavalInputTrace] phase=mapping-enable result=missing-dependency pawn=%s controller=%s local_player=%s subsystem=%s mapping=%s soft_path=%s"),
+			*GetNameSafe(Pawn), *GetNameSafe(PlayerController), *GetNameSafe(LocalPlayer),
+			*GetNameSafe(InputSubsystem), *GetNameSafe(MappingContext),
+			*HelmMappingContext.ToSoftObjectPath().ToString());
 		return;
 	}
 
@@ -228,8 +239,9 @@ void UOceanAdventureHelmInputComponent::EnableHelmInput()
 	UE_LOG(
 		LogOceanAdventureHelmInput,
 		Display,
-		TEXT("Pushed helm mapping context=%s priority=%d pawn=%s"),
-		*GetNameSafe(MappingContext), HelmMappingPriority, *GetNameSafe(Pawn));
+		TEXT("[NavalInputTrace] phase=mapping-enable result=success context=%s priority=%d pawn=%s controller=%s input_bound=%d"),
+		*GetNameSafe(MappingContext), HelmMappingPriority, *GetNameSafe(Pawn),
+		*GetNameSafe(PlayerController), bInputBound);
 }
 
 void UOceanAdventureHelmInputComponent::DisableHelmInput()
@@ -258,7 +270,9 @@ void UOceanAdventureHelmInputComponent::DisableHelmInput()
 
 	bHelmInputEnabled = false;
 	ResetInput();
-	UE_LOG(LogOceanAdventureHelmInput, Display, TEXT("Popped helm mapping pawn=%s"), *GetNameSafe(Pawn));
+	UE_LOG(LogOceanAdventureHelmInput, Display,
+		TEXT("[NavalInputTrace] phase=mapping-disable result=complete pawn=%s controller=%s subsystem=%s"),
+		*GetNameSafe(Pawn), *GetNameSafe(PlayerController), *GetNameSafe(InputSubsystem));
 }
 
 void UOceanAdventureHelmInputComponent::ResetInput()
@@ -269,20 +283,46 @@ void UOceanAdventureHelmInputComponent::ResetInput()
 
 void UOceanAdventureHelmInputComponent::Input_Throttle(const FInputActionValue& InputActionValue)
 {
-	ThrottleInput = FMath::Clamp(InputActionValue.Get<float>(), -1.0f, 1.0f);
+	const float NewValue = FMath::Clamp(InputActionValue.Get<float>(), -1.0f, 1.0f);
+	if (!FMath::IsNearlyEqual(ThrottleInput, NewValue))
+	{
+		UE_LOG(LogOceanAdventureHelmInput, Display,
+			TEXT("[NavalInputTrace] phase=helm-action action=throttle event=triggered pawn=%s previous=%.3f value=%.3f input_enabled=%d input_bound=%d"),
+			*GetNameSafe(GetPawn<APawn>()), ThrottleInput, NewValue, bHelmInputEnabled, bInputBound);
+	}
+	ThrottleInput = NewValue;
 }
 
 void UOceanAdventureHelmInputComponent::Input_Steer(const FInputActionValue& InputActionValue)
 {
-	SteerInput = FMath::Clamp(InputActionValue.Get<float>(), -1.0f, 1.0f);
+	const float NewValue = FMath::Clamp(InputActionValue.Get<float>(), -1.0f, 1.0f);
+	if (!FMath::IsNearlyEqual(SteerInput, NewValue))
+	{
+		UE_LOG(LogOceanAdventureHelmInput, Display,
+			TEXT("[NavalInputTrace] phase=helm-action action=steer event=triggered pawn=%s previous=%.3f value=%.3f input_enabled=%d input_bound=%d"),
+			*GetNameSafe(GetPawn<APawn>()), SteerInput, NewValue, bHelmInputEnabled, bInputBound);
+	}
+	SteerInput = NewValue;
 }
 
 void UOceanAdventureHelmInputComponent::Input_ThrottleReleased(const FInputActionValue& /*InputActionValue*/)
 {
+	if (!FMath::IsNearlyZero(ThrottleInput))
+	{
+		UE_LOG(LogOceanAdventureHelmInput, Display,
+			TEXT("[NavalInputTrace] phase=helm-action action=throttle event=released pawn=%s previous=%.3f input_enabled=%d input_bound=%d"),
+			*GetNameSafe(GetPawn<APawn>()), ThrottleInput, bHelmInputEnabled, bInputBound);
+	}
 	ThrottleInput = 0.0f;
 }
 
 void UOceanAdventureHelmInputComponent::Input_SteerReleased(const FInputActionValue& /*InputActionValue*/)
 {
+	if (!FMath::IsNearlyZero(SteerInput))
+	{
+		UE_LOG(LogOceanAdventureHelmInput, Display,
+			TEXT("[NavalInputTrace] phase=helm-action action=steer event=released pawn=%s previous=%.3f input_enabled=%d input_bound=%d"),
+			*GetNameSafe(GetPawn<APawn>()), SteerInput, bHelmInputEnabled, bInputBound);
+	}
 	SteerInput = 0.0f;
 }

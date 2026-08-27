@@ -4,14 +4,23 @@ import unreal
 PLUGIN_ROOT = "/TopDownFeature"
 INPUT_ROOT = f"{PLUGIN_ROOT}/Input"
 PAWN_ROOT = f"{PLUGIN_ROOT}/Pawn"
+BASE_INPUT_CONFIG_PATH = "/Game/Input/DA_InputConfig_Base"
 DEFAULT_PAWN_CLASS_PATH = (
     "/Game/Character/BP_Character_Hero_Default.BP_Character_Hero_Default_C"
+)
+LEGACY_INPUT_ASSET_PATHS = (
+    f"{INPUT_ROOT}/IMC_TopDown",
+    f"{INPUT_ROOT}/DA_TopDown_InputConfig",
 )
 LEGACY_GAS_ACTION_NAMES = {
     "TopDown_AddComponents",
     "TopDown_AddInputMapping",
     "TopDown_AddInputBinding",
     "TopDown_AddAbilities",
+}
+LEGACY_INPUT_ACTION_CLASSES = {
+    "GameFeatureAction_AddInputContextMapping",
+    "GameFeatureAction_AddInputBinding",
 }
 
 
@@ -44,68 +53,25 @@ def load_or_create_data_asset(asset_name, package_path, asset_class):
     )
 
 
-def load_or_duplicate(source_path, destination_path):
-    destination_package_path = destination_path.rsplit("/", 1)[0]
-    scan_asset_directory(destination_package_path)
-    if unreal.EditorAssetLibrary.does_asset_exist(destination_path):
-        return unreal.EditorAssetLibrary.load_asset(destination_path)
-
-    source_package_path = source_path.rsplit("/", 1)[0]
-    scan_asset_directory(source_package_path)
-    return unreal.EditorAssetLibrary.duplicate_asset(source_path, destination_path)
-
-
 def require(value, message):
     if not value:
         raise RuntimeError(message)
     return value
 
 
-def gameplay_tag(tag_name):
-    """Resolve a registered tag across UE 5.7 Python wrapper variants."""
-    request_tag = getattr(unreal.GameplayTagLibrary, "request_gameplay_tag", None)
-    if request_tag is not None:
-        tag = request_tag(unreal.Name(tag_name), False)
-    else:
-        tag = unreal.GameplayTag()
-        tag.import_text(tag_name)
+def is_legacy_input_action(action):
+    if action is None:
+        return False
 
-    is_valid = getattr(unreal.GameplayTagLibrary, "is_gameplay_tag_valid", None)
-    if tag == unreal.GameplayTag() or (is_valid is not None and not is_valid(tag)):
-        raise RuntimeError(f"GameplayTag is not registered: {tag_name}")
-    return tag
-
-
-def asset_path(asset):
-    """Return a stable asset path for UE Python wrappers (object equality is unreliable)."""
-    if asset is None:
-        return ""
-    get_path_name = getattr(asset, "get_path_name", None)
-    if get_path_name is None:
-        return str(asset)
-    return str(get_path_name()).split(".", 1)[0]
-
-
-def gameplay_tags_equal(left, right):
-    """Compare FGameplayTag values; Python's generated ``==`` wrapper compares identity."""
-    equal_tag = getattr(unreal.GameplayTagLibrary, "equal_equal_gameplay_tag", None)
-    if equal_tag is not None:
-        return bool(equal_tag(left, right))
-
-    export_left = getattr(left, "export_text", None)
-    export_right = getattr(right, "export_text", None)
-    if export_left is not None and export_right is not None:
-        return str(export_left()) == str(export_right())
-    return left == right
-
-
-def has_native_input_action(entries, action, input_tag):
-    """Check a Lyra input entry without comparing wrapped UObject identity."""
-    expected_action_path = asset_path(action)
-    return any(
-        asset_path(entry.get_editor_property("input_action")) == expected_action_path
-        and gameplay_tags_equal(entry.get_editor_property("input_tag"), input_tag)
-        for entry in entries
+    class_name = str(action.get_class().get_name())
+    # Actions stored in UGameFeatureData::Actions arrive in Python as the base
+    # GameFeatureAction wrapper. get_class() reports the concrete type, but UE 5.7 cannot
+    # read derived properties such as InputMappings through that wrapper. Under the current
+    # ownership model this feature must not inject any mapping or InputConfig, so the
+    # concrete action class is the complete and stable migration key.
+    return (
+        str(action.get_name()) in LEGACY_GAS_ACTION_NAMES
+        or class_name in LEGACY_INPUT_ACTION_CLASSES
     )
 
 
@@ -120,102 +86,6 @@ def save_asset(asset):
 game_feature_data = require(
     load_or_create_data_asset("TopDownFeature", PLUGIN_ROOT, unreal.GameFeatureData),
     "Failed to create TopDownFeature GameFeatureData.",
-)
-
-input_action_specs = [
-    ("IA_TopDownMoveForward", unreal.InputActionValueType.AXIS1D, "move_forward_input_tag", "W"),
-    ("IA_TopDownMoveBackward", unreal.InputActionValueType.AXIS1D, "move_backward_input_tag", "S"),
-    ("IA_TopDownMoveRight", unreal.InputActionValueType.AXIS1D, "move_right_input_tag", "D"),
-    ("IA_TopDownMoveLeft", unreal.InputActionValueType.AXIS1D, "move_left_input_tag", "A"),
-    ("IA_TopDownCameraZoom", unreal.InputActionValueType.AXIS1D, "camera_zoom_input_tag", "MouseWheelAxis"),
-    ("IA_TopDownCameraRotateHold", unreal.InputActionValueType.BOOLEAN, "camera_rotate_hold_input_tag", "RightMouseButton"),
-    ("IA_TopDownCameraRotate", unreal.InputActionValueType.AXIS2D, "camera_rotate_input_tag", "Mouse2D"),
-]
-
-input_actions = []
-for asset_name, value_type, _, _ in input_action_specs:
-    action = require(
-        load_or_create_data_asset(asset_name, INPUT_ROOT, unreal.InputAction),
-        f"Failed to create {asset_name}.",
-    )
-    action.set_editor_property("value_type", value_type)
-    input_actions.append(action)
-
-input_mapping = require(
-    load_or_create_data_asset("IMC_TopDown", INPUT_ROOT, unreal.InputMappingContext),
-    "Failed to create IMC_TopDown.",
-)
-for action, (_, _, _, key_name) in zip(input_actions, input_action_specs):
-    input_mapping.unmap_all_keys_from_action(action)
-    key = unreal.Key()
-    key.set_editor_property("key_name", unreal.Name(key_name))
-    input_mapping.map_key(action, key)
-
-legacy_click_action = load_existing(f"{INPUT_ROOT}/IA_TopDownClick")
-if legacy_click_action is not None:
-    input_mapping.unmap_all_keys_from_action(legacy_click_action)
-
-input_config = require(
-    load_or_duplicate(
-        "/Game/Input/DA_InputConfig_Base",
-        f"{INPUT_ROOT}/DA_TopDown_InputConfig",
-    ),
-    "Failed to duplicate the base Lyra InputConfig.",
-)
-component_class = require(
-    unreal.load_class(None, "/Script/TopDownFeatureRuntime.TopDownPawnComponent"),
-    "Failed to load UTopDownPawnComponent.",
-)
-component_cdo = unreal.get_default_object(component_class)
-owned_tags = [
-    require(
-        component_cdo.get_editor_property(tag_property),
-        f"UTopDownPawnComponent has no valid {tag_property}.",
-    )
-    for _, _, tag_property, _ in input_action_specs
-]
-legacy_tags = [gameplay_tag("InputTag.TopDownClick"), gameplay_tag("InputTag.Move")]
-# Every tag this script owns, plus the superseded ones it must strip. ``in`` would
-# compare the wrapped structs by identity, so nothing matched and each run appended
-# a fresh copy of the owned actions on top of the previous ones.
-replaced_tags = list(owned_tags) + legacy_tags
-ability_actions = [
-    action
-    for action in input_config.get_editor_property("ability_input_actions")
-    if not any(
-        gameplay_tags_equal(action.get_editor_property("input_tag"), replaced_tag)
-        for replaced_tag in replaced_tags
-    )
-]
-native_actions = [
-    action
-    for action in input_config.get_editor_property("native_input_actions")
-    if not any(
-        gameplay_tags_equal(action.get_editor_property("input_tag"), replaced_tag)
-        for replaced_tag in replaced_tags
-    )
-]
-input_config.set_editor_property("ability_input_actions", ability_actions)
-for action, input_tag in zip(input_actions, owned_tags):
-    native_actions.append(unreal.LyraInputAction(input_action=action, input_tag=input_tag))
-input_config.set_editor_property("native_input_actions", native_actions)
-
-configured_native_actions = input_config.get_editor_property("native_input_actions")
-for action, input_tag in zip(input_actions, owned_tags):
-    require(
-        has_native_input_action(configured_native_actions, action, input_tag),
-        f"InputConfig did not retain {action.get_name()} -> {input_tag}.",
-    )
-configured_ability_actions = input_config.get_editor_property("ability_input_actions")
-require(
-    not any(
-        any(
-            gameplay_tags_equal(entry.get_editor_property("input_tag"), owned_tag)
-            for owned_tag in owned_tags
-        )
-        for entry in configured_ability_actions
-    ),
-    "TopDown movement tags are still registered as AbilityInputActions.",
 )
 
 pawn_data_class = require(
@@ -238,35 +108,56 @@ camera_class = require(
     unreal.load_class(None, "/Script/TopDownFeatureRuntime.LyraCameraMode_TopDownFollow"),
     "Failed to load ULyraCameraMode_TopDownFollow.",
 )
+base_input_config = require(
+    load_existing(BASE_INPUT_CONFIG_PATH),
+    f"Failed to load the project base InputConfig: {BASE_INPUT_CONFIG_PATH}",
+)
 pawn_data.set_editor_property("pawn_class", pawn_class)
 pawn_data.set_editor_property("ability_sets", [])
-pawn_data.set_editor_property("input_config", input_config)
+pawn_data.set_editor_property("input_config", base_input_config)
 pawn_data.set_editor_property("default_camera_mode", camera_class)
 
-# Migration from the rejected GAS-movement experiment. The pre-existing hand-authored
-# TopDownFeature actions are preserved; only the stable names created by that script are
-# removed so the component is not injected twice and no movement Ability is granted.
+# Input assets now belong to the gameplay feature that owns the player Pawn. Remove only
+# actions created by the rejected GAS experiment or actions that reference these two exact
+# TopDown legacy assets; unrelated hand-authored actions remain untouched.
 game_feature_data.set_editor_property(
     "actions",
     [
         action
         for action in game_feature_data.get_editor_property("actions")
-        if action is not None and str(action.get_name()) not in LEGACY_GAS_ACTION_NAMES
+        if action is not None and not is_legacy_input_action(action)
     ],
 )
 require(
-    not any(
-        str(action.get_name()) in LEGACY_GAS_ACTION_NAMES
-        for action in game_feature_data.get_editor_property("actions")
-        if action is not None
-    ),
-    "TopDownFeature still contains a GAS-movement GameFeature action.",
+    not any(is_legacy_input_action(action) for action in game_feature_data.get_editor_property("actions")),
+    "TopDownFeature still references a legacy TopDown input asset.",
 )
 
-assets_to_save = [game_feature_data, *input_actions, input_mapping, input_config, pawn_data]
+assets_to_save = [game_feature_data, pawn_data]
 for asset in assets_to_save:
     save_asset(asset)
 
-unreal.log_warning("TOPDOWN_ASSETS_CREATED")
-unreal.log_warning("DA_TopDown_PawnData intentionally has no AbilitySets; add gameplay-specific sets in the consuming feature.")
-unreal.log_warning("Configure Add Components and Add Input Mapping actions on /TopDownFeature/TopDownFeature before activation.")
+for legacy_asset_path in LEGACY_INPUT_ASSET_PATHS:
+    scan_asset_directory(legacy_asset_path.rsplit("/", 1)[0])
+    if unreal.EditorAssetLibrary.does_asset_exist(legacy_asset_path):
+        remaining_referencers = unreal.EditorAssetLibrary.find_package_referencers_for_asset(
+            legacy_asset_path,
+            True,
+        )
+        require(
+            not remaining_referencers,
+            f"Refusing to delete {legacy_asset_path}; remaining referencers: "
+            f"{remaining_referencers}",
+        )
+        require(
+            unreal.EditorAssetLibrary.delete_asset(legacy_asset_path),
+            f"Failed to delete legacy input asset {legacy_asset_path}.",
+        )
+    require(
+        not unreal.EditorAssetLibrary.does_asset_exist(legacy_asset_path),
+        f"Legacy input asset still exists after migration: {legacy_asset_path}",
+    )
+
+unreal.log_warning("TOPDOWN_ASSETS_MIGRATED")
+unreal.log_warning("TopDownFeature no longer injects or owns an InputMappingContext/InputConfig.")
+unreal.log_warning("The consuming player GameFeature must own those assets and inject UTopDownPawnComponent.")

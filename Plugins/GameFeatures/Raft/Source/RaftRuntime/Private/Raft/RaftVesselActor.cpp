@@ -18,6 +18,7 @@
 namespace RaftVesselDefaults
 {
 	const FVector DeckExtent(100.0, 100.0, 75.0);
+	const FVector HelmOperatorLocalOffset(-35.0, 0.0, 163.0);
 }
 
 ARaftVesselActor::ARaftVesselActor()
@@ -42,6 +43,11 @@ ARaftVesselActor::ARaftVesselActor()
 	VisualMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	VisualMesh->SetGenerateOverlapEvents(false);
 	VisualMesh->SetCanEverAffectNavigation(false);
+
+	HelmOperatorPoint = CreateDefaultSubobject<USceneComponent>(TEXT("HelmOperatorPoint"));
+	HelmOperatorPoint->SetupAttachment(DeckCollision);
+	HelmOperatorPoint->SetRelativeLocation(RaftVesselDefaults::HelmOperatorLocalOffset);
+	HelmOperatorPoint->ComponentTags.AddUnique(NavalHelmStation::GetOperatorPointComponentTag());
 
 	BuoyancyComponent = CreateDefaultSubobject<URaftBuoyancyComponent>(TEXT("BuoyancyComponent"));
 
@@ -107,6 +113,9 @@ void ARaftVesselActor::ApplyDefinition()
 	DeckCollision->SetBoxExtent(RaftDefinition->GetDeckBoxExtent());
 	VisualPivot->SetRelativeLocation(RaftDefinition->GetVisualMeshOffset());
 	VisualMesh->SetStaticMesh(RaftDefinition->GetVisualMesh());
+	HelmOperatorPoint->SetRelativeLocation(RaftDefinition->GetDirectHelmOperatorLocalOffset());
+	HelmOperatorPoint->SetRelativeRotation(
+		FRotator(0.0f, RaftDefinition->GetDirectHelmOperatorLocalYaw(), 0.0f));
 	BuoyancyComponent->ApplyDefinition(RaftDefinition);
 }
 
@@ -179,15 +188,7 @@ void ARaftVesselActor::ReleaseOperator(AActor* LeavingOperator)
 
 FTransform ARaftVesselActor::GetOperatorTransform() const
 {
-	if (!RaftDefinition)
-	{
-		return GetActorTransform();
-	}
-
-	const FTransform LocalTransform(
-		FRotator(0.0f, RaftDefinition->GetDirectHelmOperatorLocalYaw(), 0.0f),
-		RaftDefinition->GetDirectHelmOperatorLocalOffset());
-	return LocalTransform * GetActorTransform();
+	return HelmOperatorPoint ? HelmOperatorPoint->GetComponentTransform() : GetActorTransform();
 }
 
 FVector ARaftVesselActor::GetInteractionLocation() const

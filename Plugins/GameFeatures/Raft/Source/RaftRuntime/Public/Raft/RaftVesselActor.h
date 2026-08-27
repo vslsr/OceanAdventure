@@ -45,6 +45,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Raft")
 	URaftBuoyancyComponent* GetBuoyancyComponent() const { return BuoyancyComponent; }
 
+	/** Authored point where the direct helm ability attaches its operator. */
+	UFUNCTION(BlueprintPure, Category = "Raft|Helm")
+	USceneComponent* GetHelmOperatorPoint() const { return HelmOperatorPoint; }
+
 	// INavalHelmStation. Only definitions that opt in expose direct hull interaction.
 	virtual UNavalHelmComponent* GetHelmComponent() const override;
 	virtual UNavalPartComponent* GetHelmCorePart() const override { return nullptr; }
@@ -72,6 +76,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Presentation")
 	TObjectPtr<UStaticMeshComponent> VisualMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Helm")
+	TObjectPtr<USceneComponent> HelmOperatorPoint;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy")
 	TObjectPtr<URaftBuoyancyComponent> BuoyancyComponent;

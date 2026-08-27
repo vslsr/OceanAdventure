@@ -1,5 +1,20 @@
 # 项目规范
 
+## Python 脚本强制门禁
+
+- 创建、修改、审计、排查或准备执行仓库内任何 Python 脚本时，**必须先使用**
+  `.agents/skills/python-script-governance/SKILL.md`（`python-script-governance`）。
+- 每次编写或修改 Python 之前，必须完整阅读该 Skill 及其
+  `references/error-ledger.md`；审计脚本时同样必须先读，不得只搜索当前关键词。
+- Python 出现 `Traceback`、`Error`、未处理 `Exception`、`RuntimeError` 或宿主报告脚本未执行时，
+  必须在下一次脚本修改前把原始错误、根因、预防规则和验证状态写入失败档案。
+  同一错误复发时更新原记录的次数与复发原因，不得用新条目掩盖重复失败。
+- 此 Skill 是项目级前置门禁，必须与适用的领域 Skill 组合使用：Lyra 编辑器资产脚本继续使用
+  `lyra-editor-asset-automation`，Blender 脚本继续使用 `blender-asset-workflow`，Raft 船体资产族继续使用
+  `raft-hull-asset-workflow`。领域 Skill 不能替代失败档案门禁，门禁也不能替代领域实现规范。
+- 不得手工编辑 `.uasset` 二进制来绕过脚本错误；没有在 Unreal、Blender 等真实宿主中运行的修复只能标记为
+  `STATIC_ONLY`，不能声称已验证。
+
 ## Blender 脚本
 
 - 所有 Blender Python 脚本统一放置在项目根目录下的 `blender/script/python/` 目录中。

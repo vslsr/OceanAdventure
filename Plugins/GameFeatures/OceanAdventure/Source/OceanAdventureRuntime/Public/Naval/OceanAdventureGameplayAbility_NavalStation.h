@@ -10,6 +10,7 @@
 
 class UOceanAdventureAbilityTask_NavalControl;
 class UAbilitySystemComponent;
+class USceneComponent;
 
 /**
  * Shared behaviour for "the character walks up to a thing and operates it".
@@ -67,6 +68,9 @@ protected:
 	virtual bool IsStationStillValid(AActor* Station) const;
 
 	virtual bool GetOperatorTransform(AActor* Station, FTransform& OutTransform) const;
+
+	/** Finds the component that owns the operator's attachment transform, when this station type has one. */
+	virtual USceneComponent* FindOperatorAttachmentPoint(AActor* Station) const;
 
 	AActor* GetStationActor() const { return ActiveStation.Get(); }
 

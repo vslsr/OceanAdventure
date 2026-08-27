@@ -25,6 +25,36 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogTopDownPawnComponent, Log, All);
 
+namespace TopDownInputTrace
+{
+	static bool IsMovementInputBlocked(const APawn* Pawn)
+	{
+		const UAbilitySystemComponent* AbilitySystem = Pawn
+			? UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Pawn)
+			: nullptr;
+		return AbilitySystem
+			&& AbilitySystem->HasMatchingGameplayTag(TAG_Gameplay_MovementStopped);
+	}
+
+	static void LogMovementInput(
+		const APawn* Pawn, const TCHAR* Action, float RawValue, float AppliedScale, const TCHAR* Result)
+	{
+		const UAbilitySystemComponent* AbilitySystem = Pawn
+			? UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Pawn)
+			: nullptr;
+		const ULyraCharacterMovementComponent* MovementComponent = Pawn
+			? Pawn->FindComponentByClass<ULyraCharacterMovementComponent>()
+			: nullptr;
+		UE_LOG(LogTopDownPawnComponent, Verbose,
+			TEXT("[TopDownInputTrace] phase=movement-action result=%s action=%s pawn=%s raw_value=%.3f applied_scale=%.3f movement_stopped_count=%d max_speed=%.3f attached_to=%s pending_input=%s"),
+			Result, Action, *GetNameSafe(Pawn), RawValue, AppliedScale,
+			AbilitySystem ? AbilitySystem->GetTagCount(TAG_Gameplay_MovementStopped) : -1,
+			MovementComponent ? MovementComponent->GetMaxSpeed() : -1.0f,
+			*GetNameSafe(Pawn ? Pawn->GetAttachParentActor() : nullptr),
+			Pawn ? *Pawn->GetPendingMovementInputVector().ToCompactString() : TEXT("None"));
+	}
+}
+
 UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ClickInputTag(TopDownFeatureGameplayTags::InputTag_TopDownClick)
@@ -121,6 +151,12 @@ void UTopDownPawnComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	if (!Pawn || !Pawn->IsLocallyControlled())
 	{
 		CancelMoveToTarget();
+		return;
+	}
+	if (TopDownInputTrace::IsMovementInputBlocked(Pawn))
+	{
+		CancelMoveToTarget();
+		Pawn->ConsumeMovementInputVector();
 		return;
 	}
 
@@ -382,7 +418,15 @@ void UTopDownPawnComponent::Input_MoveForward(const FInputActionValue& InputActi
 	}
 
 	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::ForwardVector), InputActionValue.Get<float>());
+	const float RawValue = InputActionValue.Get<float>();
+	if (TopDownInputTrace::IsMovementInputBlocked(Pawn))
+	{
+		Pawn->ConsumeMovementInputVector();
+		TopDownInputTrace::LogMovementInput(Pawn, TEXT("forward"), RawValue, 0.0f, TEXT("blocked"));
+		return;
+	}
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::ForwardVector), RawValue);
+	TopDownInputTrace::LogMovementInput(Pawn, TEXT("forward"), RawValue, RawValue, TEXT("applied"));
 }
 
 void UTopDownPawnComponent::Input_MoveBackward(const FInputActionValue& InputActionValue)
@@ -396,7 +440,15 @@ void UTopDownPawnComponent::Input_MoveBackward(const FInputActionValue& InputAct
 	}
 
 	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::ForwardVector), -InputActionValue.Get<float>());
+	const float RawValue = InputActionValue.Get<float>();
+	if (TopDownInputTrace::IsMovementInputBlocked(Pawn))
+	{
+		Pawn->ConsumeMovementInputVector();
+		TopDownInputTrace::LogMovementInput(Pawn, TEXT("backward"), RawValue, 0.0f, TEXT("blocked"));
+		return;
+	}
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::ForwardVector), -RawValue);
+	TopDownInputTrace::LogMovementInput(Pawn, TEXT("backward"), RawValue, -RawValue, TEXT("applied"));
 }
 
 void UTopDownPawnComponent::Input_MoveRight(const FInputActionValue& InputActionValue)
@@ -410,7 +462,15 @@ void UTopDownPawnComponent::Input_MoveRight(const FInputActionValue& InputAction
 	}
 
 	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::RightVector), InputActionValue.Get<float>());
+	const float RawValue = InputActionValue.Get<float>();
+	if (TopDownInputTrace::IsMovementInputBlocked(Pawn))
+	{
+		Pawn->ConsumeMovementInputVector();
+		TopDownInputTrace::LogMovementInput(Pawn, TEXT("right"), RawValue, 0.0f, TEXT("blocked"));
+		return;
+	}
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::RightVector), RawValue);
+	TopDownInputTrace::LogMovementInput(Pawn, TEXT("right"), RawValue, RawValue, TEXT("applied"));
 }
 
 void UTopDownPawnComponent::Input_MoveLeft(const FInputActionValue& InputActionValue)
@@ -424,7 +484,15 @@ void UTopDownPawnComponent::Input_MoveLeft(const FInputActionValue& InputActionV
 	}
 
 	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::RightVector), -InputActionValue.Get<float>());
+	const float RawValue = InputActionValue.Get<float>();
+	if (TopDownInputTrace::IsMovementInputBlocked(Pawn))
+	{
+		Pawn->ConsumeMovementInputVector();
+		TopDownInputTrace::LogMovementInput(Pawn, TEXT("left"), RawValue, 0.0f, TEXT("blocked"));
+		return;
+	}
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::RightVector), -RawValue);
+	TopDownInputTrace::LogMovementInput(Pawn, TEXT("left"), RawValue, -RawValue, TEXT("applied"));
 }
 
 void UTopDownPawnComponent::Input_CameraZoom(const FInputActionValue& InputActionValue)
