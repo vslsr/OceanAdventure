@@ -6,9 +6,9 @@
 #include "Abilities/Tasks/AbilityTask_WaitInputPress.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
-#include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
 #include "Character/LyraCharacterMovementComponent.h"
+#include "GameplayEffect.h"
 #include "Build/OceanAdventureBuildTags.h"
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalVesselComponent.h"
@@ -16,6 +16,8 @@
 #include "Naval/OceanAdventureNavalMessages.h"
 #include "Naval/OceanAdventureNavalTags.h"
 #include "OceanAdventureRuntimeModule.h"
+#include "System/LyraAssetManager.h"
+#include "System/LyraGameData.h"
 #include "TimerManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureGameplayAbility_NavalStation)
@@ -107,6 +109,11 @@ void UOceanAdventureGameplayAbility_NavalStation::ActivateAbility(
 	// Locally the character takes the station immediately. If the server refuses, it ends the
 	// ability and the attachment unwinds in EndAbility.
 	EnterStationPresentation(Station);
+	if (!bStationEntered)
+	{
+		EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		return;
+	}
 
 	ControlTask = UOceanAdventureAbilityTask_NavalControl::NavalControlTick(this, ControlSampleInterval);
 	if (ControlTask)
@@ -252,6 +259,15 @@ void UOceanAdventureGameplayAbility_NavalStation::OnTargetDataReadyCallback(
 					return;
 				}
 				EnterStationPresentation(Station);
+				if (!bStationEntered)
+				{
+					UE_LOG(LogOceanAdventure, Error,
+						TEXT("[NavalStation] Station lock failed ability=%s station=%s avatar=%s"),
+						*GetNameSafe(this), *GetNameSafe(Station),
+						*GetNameSafe(GetAvatarActorFromActorInfo()));
+					EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true, true);
+					return;
+				}
 				UE_LOG(LogOceanAdventure, Display,
 					TEXT("[NavalStation] Server occupy accepted ability=%s station=%s avatar=%s"),
 					*GetNameSafe(this), *GetNameSafe(Station), *GetNameSafe(GetAvatarActorFromActorInfo()));
@@ -326,11 +342,11 @@ void UOceanAdventureGameplayAbility_NavalStation::EnterStationPresentation(AActo
 		return;
 	}
 
-	if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+	// CharacterMovement keeps its real mode (walking, falling, swimming, ...). The replicated
+	// GAS lock below makes Lyra return zero speed/rotation without corrupting that state.
+	if (!ApplyStationLock())
 	{
-		// The character is standing at the wheel, not walking. Movement input is taken over by
-		// the control samples below rather than being fed to the legs.
-		Movement->SetMovementMode(MOVE_None);
+		return;
 	}
 
 	FTransform OperatorTransform;
@@ -345,19 +361,11 @@ void UOceanAdventureGameplayAbility_NavalStation::EnterStationPresentation(AActo
 	}
 	Character->AttachToActor(Station, FAttachmentTransformRules::KeepWorldTransform);
 
-	if (UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo())
-	{
-		AbilitySystem->AddLooseGameplayTag(TAG_Gameplay_MovementStopped);
-		const FGameplayTag StatusTag = GetStationStatusTag();
-		if (StatusTag.IsValid())
-		{
-			AbilitySystem->AddLooseGameplayTag(StatusTag);
-			UE_LOG(LogOceanAdventure, Display,
-				TEXT("[NavalStation] Presentation entered avatar=%s station=%s status=%s attached_to=%s"),
-				*GetNameSafe(Character), *GetNameSafe(Station), *StatusTag.ToString(),
-				*GetNameSafe(Character->GetAttachParentActor()));
-		}
-	}
+	const FGameplayTag StatusTag = GetStationStatusTag();
+	UE_LOG(LogOceanAdventure, Display,
+		TEXT("[NavalStation] Presentation entered avatar=%s station=%s status=%s attached_to=%s"),
+		*GetNameSafe(Character), *GetNameSafe(Station), *StatusTag.ToString(),
+		*GetNameSafe(Character->GetAttachParentActor()));
 
 	bStationEntered = true;
 }
@@ -366,19 +374,9 @@ void UOceanAdventureGameplayAbility_NavalStation::LeaveStationPresentation()
 {
 	bStationEntered = false;
 
-	// The tags come off first and unconditionally. Lyra keeps the ability system on the
-	// PlayerState, so it outlives the pawn: an avatar that is already gone by the time the
-	// ability ends would otherwise leave Gameplay.MovementStopped behind, and the player would
-	// respawn unable to move or turn at all.
-	if (UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo())
-	{
-		const FGameplayTag StatusTag = GetStationStatusTag();
-		if (StatusTag.IsValid())
-		{
-			AbilitySystem->RemoveLooseGameplayTag(StatusTag);
-		}
-		AbilitySystem->RemoveLooseGameplayTag(TAG_Gameplay_MovementStopped);
-	}
+	// The handle remembers the PlayerState ASC even if its pawn/avatar has already gone away.
+	// Removing the effect clears both MovementStopped and the station status atomically.
+	RemoveStationLock();
 
 	ACharacter* Character = Cast<ACharacter>(GetAvatarActorFromActorInfo());
 	if (!Character)
@@ -387,10 +385,66 @@ void UOceanAdventureGameplayAbility_NavalStation::LeaveStationPresentation()
 	}
 
 	Character->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
-	if (UCharacterMovementComponent* Movement = Character->GetCharacterMovement())
+}
+
+bool UOceanAdventureGameplayAbility_NavalStation::ApplyStationLock()
+{
+	UAbilitySystemComponent* AbilitySystem = GetAbilitySystemComponentFromActorInfo();
+	if (!AbilitySystem)
 	{
-		Movement->SetMovementMode(MOVE_Walking);
+		return false;
 	}
+
+	const TSubclassOf<UGameplayEffect> DynamicTagEffect =
+		ULyraAssetManager::GetSubclass(ULyraGameData::Get().DynamicTagGameplayEffect);
+	if (!DynamicTagEffect)
+	{
+		UE_LOG(LogOceanAdventure, Error,
+			TEXT("[NavalStation] Lyra DynamicTagGameplayEffect is not configured"));
+		return false;
+	}
+
+	// Explicitly associate the predicted client effect and the authoritative server effect
+	// with this ability activation so GAS reconciles them instead of leaving two lock specs.
+	FScopedPredictionWindow ScopedPrediction(
+		AbilitySystem, CurrentActivationInfo.GetActivationPredictionKey());
+	FGameplayEffectSpecHandle SpecHandle =
+		AbilitySystem->MakeOutgoingSpec(DynamicTagEffect, 1.0f, AbilitySystem->MakeEffectContext());
+	FGameplayEffectSpec* Spec = SpecHandle.Data.Get();
+	if (!Spec)
+	{
+		return false;
+	}
+
+	Spec->DynamicGrantedTags.AddTag(TAG_Gameplay_MovementStopped);
+	const FGameplayTag StatusTag = GetStationStatusTag();
+	if (StatusTag.IsValid())
+	{
+		Spec->DynamicGrantedTags.AddTag(StatusTag);
+	}
+
+	StationLockHandle = AbilitySystem->ApplyGameplayEffectSpecToSelf(*Spec);
+	if (!StationLockHandle.IsValid())
+	{
+		return false;
+	}
+
+	StationLockAbilitySystem = AbilitySystem;
+	return true;
+}
+
+void UOceanAdventureGameplayAbility_NavalStation::RemoveStationLock()
+{
+	if (StationLockHandle.IsValid())
+	{
+		if (UAbilitySystemComponent* AbilitySystem = StationLockAbilitySystem.Get())
+		{
+			AbilitySystem->RemoveActiveGameplayEffect(StationLockHandle);
+		}
+	}
+
+	StationLockHandle = FActiveGameplayEffectHandle();
+	StationLockAbilitySystem.Reset();
 }
 
 void UOceanAdventureGameplayAbility_NavalStation::ApplyExitLock()

@@ -187,6 +187,20 @@ void UOceanAdventureHelmInputComponent::EnableHelmInput()
 		return;
 	}
 
+	// Component injection and Lyra's BindInputsNow event do not have a guaranteed order.
+	// Retry here, at the exact point the ability takes ownership of W/A/S/D, and refuse to
+	// claim the mapping if the tagged native actions still cannot be resolved.
+	BindInputIfReady();
+	if (!bInputBound)
+	{
+		UE_LOG(
+			LogOceanAdventureHelmInput,
+			Error,
+			TEXT("Cannot enable helm input for %s: tagged native actions are not bound"),
+			*GetNameSafe(GetPawn<APawn>()));
+		return;
+	}
+
 	APawn* Pawn = GetPawn<APawn>();
 	APlayerController* PlayerController = Pawn
 		? Cast<APlayerController>(Pawn->GetController())

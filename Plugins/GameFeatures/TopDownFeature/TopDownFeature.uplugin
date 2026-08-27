@@ -3,7 +3,7 @@
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "Top Down Feature",
-	"Description": "Pawn-following top-down camera and GAS-owned mouse-facing WASD movement for Lyra pawns.",
+	"Description": "Pawn-following top-down camera and mouse-facing WASD input for Lyra pawns.",
 	"Category": "Game Features",
 	"CreatedBy": "LyraTemplate",
 	"EnabledByDefault": true,

@@ -27,15 +27,12 @@ BP_Experience_Ocean  (LyraExperienceDefinition)
    │                        AddComponents: AOceanAdventurePawn ← UOceanChunkInvokerComponent
    │                        AddComponents: AOceanChunkActor    ← UOceanChunkPresentationComponent
    └─ "TopDownFeature"  ──► AddComponents: LyraCharacter       ← UTopDownPawnComponent
-                            AddInputMapping: IMC_TopDown (WASD + camera)
-                            AddInputBinding: DA_TopDown_InputConfig
-                            AddAbilities: PlayerState ← DA_AbilitySet_TopDownMovement
+                            AddInputMapping: IMC_OceanAdventure_Base (WASD + camera)
 
-Pressing E activates `OperateHelm`. Server acceptance temporarily grants `DriveHelm` to the
-same player ASC; that Ability pushes `IMC_OceanHelm` at priority 2 and samples the two tagged
-Axis1D actions (`IA_Ocean_Helm_Throttle` = W/S, `IA_Ocean_Helm_Steer` = A/D). At the same time
-`Gameplay.MovementStopped` cancels and blocks TopDown movement Abilities. Pressing E again
-revokes `DriveHelm`, pops the context and restores walking.
+The naval P0 wiring adds `UOceanAdventureHelmInputComponent` to the pawn. Pressing E
+activates `OperateHelm`, which temporarily pushes `IMC_OceanHelm` at priority 2. Its signed
+Axis1D actions (`IA_Ocean_Helm_Throttle` = W/S and `IA_Ocean_Helm_Steer` = A/D) override the
+top-down movement mappings until the ability ends; E then pops the context and walking resumes.
 ```
 
 Adding or dropping a capability is an edit to the experience, not to the pawn class.
@@ -126,7 +123,7 @@ tune its remaining CharacterMovement settings for the water.
 log LogOceanAdventure Verbose
 ```
 
-On spawn the pawn logs every component attached to it. `UOceanChunkInvokerComponent` and
-`UTopDownPawnComponent` in that list mean both features activated. On successful helm entry,
-`LogOceanAdventure` reports `[Helm] Granted DriveHelm`. Each initialized chunk also logs `Built terrain and water presentation for chunk`
+On spawn the pawn logs every component attached to it. `UOceanChunkInvokerComponent`,
+`UTopDownPawnComponent`, and `UOceanAdventureHelmInputComponent` in that list means both
+features and the naval input adapter activated. Each initialized chunk also logs `Built terrain and water presentation for chunk`
 when `UOceanChunkPresentationComponent` creates its local meshes.

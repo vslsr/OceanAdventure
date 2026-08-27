@@ -3,11 +3,13 @@
 #pragma once
 
 #include "AbilitySystem/Abilities/LyraGameplayAbility.h"
+#include "ActiveGameplayEffectHandle.h"
 #include "Naval/OceanAdventureNavalTargetData.h"
 
 #include "OceanAdventureGameplayAbility_NavalStation.generated.h"
 
 class UOceanAdventureAbilityTask_NavalControl;
+class UAbilitySystemComponent;
 
 /**
  * Shared behaviour for "the character walks up to a thing and operates it".
@@ -97,6 +99,8 @@ private:
 	void HandleControlSample(float DeltaTime);
 	void StartLeaveInputWatch();
 	void ApplyExitLock();
+	bool ApplyStationLock();
+	void RemoveStationLock();
 
 	UFUNCTION()
 	void OnLeaveInputPressed(float TimeWaited);
@@ -107,5 +111,7 @@ private:
 	TObjectPtr<UOceanAdventureAbilityTask_NavalControl> ControlTask;
 
 	FDelegateHandle OnTargetDataReadyHandle;
+	FActiveGameplayEffectHandle StationLockHandle;
+	TWeakObjectPtr<UAbilitySystemComponent> StationLockAbilitySystem;
 	bool bStationEntered = false;
 };

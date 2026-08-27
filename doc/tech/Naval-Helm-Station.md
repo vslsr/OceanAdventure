@@ -14,7 +14,7 @@
 | 世界里的 Actor | `ANavalHeavyWeaponActor` | `INavalHelmStation`：固定 `ANavalHelmActor` 或 LifeRaft 船体 |
 | 谁在用它 | Actor 自己的 `WeaponOperator` | 船上的 `UNavalHelmComponent::Operator` |
 | 上/下站位的能力 | `UOceanAdventureGameplayAbility_OperateHeavyWeapon` | `UOceanAdventureGameplayAbility_OperateHelm` |
-| 站位期间的输入能力 | 临时授予 `FireHeavyWeapon` | 临时授予 `DriveHelm`（同一 Spec 带两个舵 InputTag） |
+| 站位期间的输入 | 临时授予 `FireHeavyWeapon` | `OperateHelm` 生命周期内 push/pop `IMC_OceanHelm` |
 | 共同基类 | `UOceanAdventureGameplayAbility_NavalStation` | 同左 |
 | 输入 | `InputTag.Naval.Interact`（E） | 同左 |
 
@@ -36,17 +36,19 @@ IA_Naval_Interact (E)
 上舵成功后：
 
 - `EnterStationPresentation()` 把角色 `AttachToActor` 到船舵上（不是每帧 teleport），
-  所以角色天然跟着甲板漂；`MOVE_None` + `Gameplay.MovementStopped` 停掉走路。
-- `Gameplay.MovementStopped` 会立即结束四个方向中正在运行的 `TopDownGameplayAbility_Move`，
-  并阻止它们在站位期间重新激活；`UTopDownPawnComponent` 不再直接绑定 WASD。
-- 服务端占位成功后给同一玩家 ASC 临时授予 `DriveHelm`。该 Spec 的 `SourceObject` 是舵站，
-  并带 `InputTag.Naval.Helm.Throttle/Steer`；Ability 压入优先级 2 的 `IMC_OceanHelm`。
-- `DriveHelm` 每 `ControlSampleInterval`（0.05s）从 Config 对应的 Enhanced Input Action
-  采样一次，仍旧走 TargetData 通道发给服务端；
+  所以角色天然跟着甲板漂。它不修改 CharacterMovement 的真实 MovementMode。
+- 站位能力应用 Lyra 的 Infinite DynamicTag GameplayEffect，同时授予
+  `Gameplay.MovementStopped` 和当前站位状态标签。CMC、鼠标朝向和 TopDown facing
+  都消费这个标签；退出时按 ActiveGameplayEffectHandle 原子移除，ASC 即使已换 Pawn 也不会残留。
+- `UOceanAdventureHelmInputComponent::EnableHelmInput()` 压入优先级 2 的
+  `IMC_OceanHelm`，`W/A/S/D` 被 `IA_Ocean_Helm_Throttle` /
+  `IA_Ocean_Helm_Steer` 吃掉，TopDown 的原生移动 action 收不到这些键。
+- `OperateHelm` 每 `ControlSampleInterval`（0.05s）从输入组件采样一次，仍旧走
+  TargetData 通道发给服务端；
   服务端 `SetControlIntent()` 只接受"它认为正在掌舵的那个 Actor"发来的值，其余一律丢弃。
 - 再按一次 `E`：`UAbilityTask_WaitInputPress` 收到同一个输入 → `EndAbility` → 发 Release、
-  先撤销临时 `DriveHelm`（自动弹出 `IMC_OceanHelm`），再解除附着，并上 0.45s 的
-  `Status.Naval.StationExitLock`。
+  先弹出 `IMC_OceanHelm`，再移除站位 GE、解除附着，并上 0.45s 的
+  `Status.Naval.StationExitLock`。原来的 Walking/Falling/Swimming 状态保持不变。
 
 ## 船舵 Actor 的构成
 
@@ -95,12 +97,12 @@ Raft.uasset (GameFeatureData)
   这条船没被注入 `UNavalHelmComponent`（Raft Feature 未激活/资产脚本未重跑）。
 - **上去了立刻被弹下来**：服务端拒绝，日志里会打出 `Server occupy refused`；
   对照舵站的距离/功能状态，以及 `CanOccupy()` 的队伍、残骸、座位占用。
-- **上了舵船不动**：`AcceptsControlInput()` 为假（舵芯被打坏 / 正被夺船 / 船已成残骸），
-  或临时 `DriveHelm` 没有拿到 Config/IMC。先看 `LogOceanAdventure` 中
-  `[Helm] Granted DriveHelm`；若随后出现 `[DriveHelm] Tagged input assets are unavailable`，
-  重跑 `CreateNavalP0Assets.py` 并重启编辑器。确认 `DA_InputConfig_OceanNaval` 的
-  `AbilityInputActions` 有两个舵 InputTag，且旧的 `OceanNaval_AddHelmInputComponent` Action
-  已被脚本移除。舵本身不产生动力；没有推进部件时只使用船体基线。
+- **上了舵船不动**：先看 `[Helm] Avatar ... has no OceanAdventureHelmInputComponent`、
+  `Cannot enable helm input ... tagged native actions are not bound`。出现前者说明
+  `OceanNaval_AddHelmInputComponent` 没注入，出现后者说明 PawnData 的
+  `NativeInputActions` 没保留两个舵 InputTag；重跑 `CreateOceanAdventureExperience.py`
+  后再跑 `CreateNavalP0Assets.py`，并重启编辑器。输入正常但仍不动时，再检查
+  `AcceptsControlInput()`（舵芯/夺船/残骸）和推进部件。
 
 ## UE 5.7 编辑器 Python 重跑坑点
 
@@ -117,12 +119,13 @@ Raft.uasset (GameFeatureData)
   读取公开的 `NativeInputActions` / `AbilityInputActions`，但跨 DLL 调用其非内联成员函数
   `FindNativeInputActionForTag()` 会产生 `LNK2019`。这里按 `InputTag` 本地遍历数组，不为了一个
   查询帮助函数扩大 LyraGame 的导出 ABI。
-- 不要把 TopDown 移动或舵输入注册成常驻组件的 `NativeInputActions` 再直接调用
-  `AddMovementInput` / `SetControlIntent`。这种实现虽然键能触发，却绕过 ASC 的 Ability
-  激活/阻止/取消链，`Gameplay.MovementStopped` 也无法真正禁掉玩家 WASD。本次迁移把
-  TopDown 四方向放入 `AbilityInputActions + DA_AbilitySet_TopDownMovement`，把舵控制放入
-  临时 `DriveHelm` Spec；Pawn/船组件只作为执行器和服务端状态所有者。
-- GameFeature 使用 `UAbilityTask_*` 时，`GameplayAbilities` 依赖并不会替当前模块链接
-  `UGameplayTask` 的实现。若调用 `ReadyForActivation()` 后出现该符号的 `LNK2019`，需要在
-  模块 `Build.cs` 中显式加入 `GameplayTasks`；本项目将它放在
-  `TopDownFeatureRuntime` 的 `PrivateDependencyModuleNames`。
+- `UGameplayTask::ReadyForActivation()` 的 `LNK2019` 表示调用模块没有显式链接
+  `GameplayTasks`；只包含 `GameplayAbilities` 头文件不够。这次错误出现在已经撤销的
+  `TopDownGameplayAbility_Move` 实验中，因此正确收尾是删除该 Ability 和
+  TopDownFeatureRuntime 的多余依赖，而不是为了保留错误分层继续补链接。
+- 不要为了能力互斥把 TopDown 的逐帧移动包装成 GameplayAbility。Lyra 有意把 Move/Look
+  作为 `NativeInputActions`，位移预测属于 CharacterMovement 的 SavedMove/网络校正链；
+  GAS 负责“进入/离开舵位”这个玩家意图和状态标签，不接管 CMC 的预测。
+- 不要同时使用 `Gameplay.MovementStopped` 与 `MOVE_None`，更不能退出时硬写
+  `MOVE_Walking`；这会把 Falling/Swimming 等真实状态吃掉。站位只应用可复制、可按句柄
+  回收的 DynamicTag GameplayEffect，CMC 在自己的层级把速度和转向归零。

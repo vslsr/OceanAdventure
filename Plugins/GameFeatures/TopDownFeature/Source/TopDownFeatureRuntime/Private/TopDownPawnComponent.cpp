@@ -6,12 +6,13 @@
 #include "AbilitySystemGlobals.h"
 #include "Character/LyraHeroComponent.h"
 #include "Character/LyraCharacterMovementComponent.h"
+#include "Character/LyraPawnData.h"
+#include "Character/LyraPawnExtensionComponent.h"
 #include "Components/GameFrameworkComponentManager.h"
 #include "CommonUIExtensions.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
 #include "EnhancedInputComponent.h"
-#include "GameFramework/PawnMovementComponent.h"
 #include "GameFramework/PlayerController.h"
 #include "Input/LyraInputConfig.h"
 #include "InputAction.h"
@@ -19,7 +20,6 @@
 #include "TopDownFeatureGameplayTags.h"
 #include "TopDownCameraDragInputWidget.h"
 #include "TopDownInputWidget.h"
-#include "UObject/SoftObjectPath.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TopDownPawnComponent)
 
@@ -35,7 +35,6 @@ UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectIni
 	, CameraZoomInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraZoom)
 	, CameraRotateHoldInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraRotateHold)
 	, CameraRotateInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraRotate)
-	, TopDownInputConfig(FSoftObjectPath(TEXT("/TopDownFeature/Input/DA_TopDown_InputConfig")))
 	, InputWidgetClass(UTopDownInputWidget::StaticClass())
 	, CameraDragInputWidgetClass(UTopDownCameraDragInputWidget::StaticClass())
 	, UILayerTag(FGameplayTag::RequestGameplayTag(FName("UI.Layer.Game"), false))
@@ -64,7 +63,6 @@ UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectIni
 	FacingBlockedTags.AddTag(TAG_Gameplay_MovementStopped);
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
-	PrimaryComponentTick.TickGroup = TG_PrePhysics;
 }
 
 void UTopDownPawnComponent::BeginPlay()
@@ -77,11 +75,6 @@ void UTopDownPawnComponent::BeginPlay()
 	if (!ensure(Pawn))
 	{
 		return;
-	}
-	if (UPawnMovementComponent* Movement = Pawn->GetMovementComponent())
-	{
-		// Execute Ability intent before CharacterMovement consumes it in the same frame.
-		Movement->AddTickPrerequisiteComponent(this);
 	}
 
 	// Lyra characters normally use the controller yaw for FPS-style aiming. In this
@@ -106,7 +99,6 @@ void UTopDownPawnComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	ExtensionRequestHandle.Reset();
 	UnbindInput();
-	ActiveAbilityMoveInputs.Reset();
 	CancelMoveToTarget();
 
 	if (bRotationPolicyOverridden)
@@ -116,13 +108,6 @@ void UTopDownPawnComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 			Pawn->bUseControllerRotationYaw = bOriginalUseControllerRotationYaw;
 		}
 		bRotationPolicyOverridden = false;
-	}
-	if (APawn* Pawn = GetPawn<APawn>())
-	{
-		if (UPawnMovementComponent* Movement = Pawn->GetMovementComponent())
-		{
-			Movement->RemoveTickPrerequisiteComponent(this);
-		}
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -141,34 +126,6 @@ void UTopDownPawnComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 
 	UpdateFacingFromMouse(DeltaTime);
 
-	const UAbilitySystemComponent* AbilitySystem =
-		UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(GetOwner());
-	if (AbilitySystem && AbilitySystem->HasAnyMatchingGameplayTags(FacingBlockedTags))
-	{
-		CancelMoveToTarget();
-		return;
-	}
-
-	FVector2D AbilityMove = FVector2D::ZeroVector;
-	AbilityMove.X += ActiveAbilityMoveInputs.HasTagExact(MoveForwardInputTag) ? 1.0f : 0.0f;
-	AbilityMove.X -= ActiveAbilityMoveInputs.HasTagExact(MoveBackwardInputTag) ? 1.0f : 0.0f;
-	AbilityMove.Y += ActiveAbilityMoveInputs.HasTagExact(MoveRightInputTag) ? 1.0f : 0.0f;
-	AbilityMove.Y -= ActiveAbilityMoveInputs.HasTagExact(MoveLeftInputTag) ? 1.0f : 0.0f;
-	if (!AbilityMove.IsNearlyZero())
-	{
-		CancelMoveToTarget();
-		AbilityMove.Normalize();
-		if (AController* Controller = Pawn->GetController())
-		{
-			const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
-			Pawn->AddMovementInput(
-				MovementRotation.RotateVector(FVector::ForwardVector), AbilityMove.X);
-			Pawn->AddMovementInput(
-				MovementRotation.RotateVector(FVector::RightVector), AbilityMove.Y);
-		}
-		return;
-	}
-
 	// Keep the old programmatic target API functional for existing Blueprint callers,
 	// but no input action invokes it anymore.
 	if (!bHasMoveTarget)
@@ -186,29 +143,6 @@ void UTopDownPawnComponent::TickComponent(float DeltaTime, ELevelTick TickType, 
 	}
 
 	Pawn->AddMovementInput(Direction.GetSafeNormal2D());
-}
-
-void UTopDownPawnComponent::SetAbilityMoveInput(FGameplayTag InputTag, bool bPressed)
-{
-	const bool bIsOwnedDirection = InputTag == MoveForwardInputTag
-		|| InputTag == MoveBackwardInputTag
-		|| InputTag == MoveRightInputTag
-		|| InputTag == MoveLeftInputTag;
-	if (!bIsOwnedDirection)
-	{
-		return;
-	}
-
-	if (bPressed)
-	{
-		ActiveAbilityMoveInputs.AddTag(InputTag);
-		CancelMoveToTarget();
-		SetComponentTickEnabled(true);
-	}
-	else
-	{
-		ActiveAbilityMoveInputs.RemoveTag(InputTag);
-	}
 }
 
 bool UTopDownPawnComponent::SetMoveTargetUnderCursor()
@@ -275,7 +209,6 @@ void UTopDownPawnComponent::HandlePawnExtension(AActor* Actor, FName EventName)
 		(EventName == UGameFrameworkComponentManager::NAME_ReceiverRemoved))
 	{
 		UnbindInput();
-		ActiveAbilityMoveInputs.Reset();
 		CancelMoveToTarget();
 	}
 	else if ((EventName == UGameFrameworkComponentManager::NAME_ExtensionAdded) ||
@@ -306,9 +239,12 @@ void UTopDownPawnComponent::BindInputIfReady()
 	}
 	EnsureInputWidget(PlayerController);
 
-	const ULyraInputConfig* InputConfig = TopDownInputConfig.LoadSynchronous();
+	const ULyraPawnExtensionComponent* PawnExtension = ULyraPawnExtensionComponent::FindPawnExtensionComponent(Pawn);
+	const ULyraPawnData* PawnData = PawnExtension ? PawnExtension->GetPawnData<ULyraPawnData>() : nullptr;
+	const ULyraInputConfig* InputConfig = PawnData ? PawnData->InputConfig : nullptr;
 	UEnhancedInputComponent* InputComponent = Pawn->FindComponentByClass<UEnhancedInputComponent>();
-	if (!InputConfig || !InputComponent || !CameraZoomInputTag.IsValid() ||
+	if (!InputConfig || !InputComponent || !MoveForwardInputTag.IsValid() || !MoveBackwardInputTag.IsValid() ||
+		!MoveRightInputTag.IsValid() || !MoveLeftInputTag.IsValid() || !CameraZoomInputTag.IsValid() ||
 		!CameraRotateHoldInputTag.IsValid() || !CameraRotateInputTag.IsValid())
 	{
 		return;
@@ -328,17 +264,30 @@ void UTopDownPawnComponent::BindInputIfReady()
 		return nullptr;
 	};
 
+	const UInputAction* MoveForwardAction = FindNativeAction(MoveForwardInputTag);
+	const UInputAction* MoveBackwardAction = FindNativeAction(MoveBackwardInputTag);
+	const UInputAction* MoveRightAction = FindNativeAction(MoveRightInputTag);
+	const UInputAction* MoveLeftAction = FindNativeAction(MoveLeftInputTag);
 	const UInputAction* ZoomAction = FindNativeAction(CameraZoomInputTag);
 	const UInputAction* RotateHoldAction = FindNativeAction(CameraRotateHoldInputTag);
 	const UInputAction* RotateAction = FindNativeAction(CameraRotateInputTag);
-	if (!ZoomAction || !RotateHoldAction || !RotateAction)
+	if (!MoveForwardAction || !MoveBackwardAction || !MoveRightAction || !MoveLeftAction ||
+		!ZoomAction || !RotateHoldAction || !RotateAction)
 	{
 		UE_LOG(LogTopDownPawnComponent, Warning,
-			TEXT("Feature InputConfig '%s' is missing one or more top-down camera actions; top-down input is disabled for '%s'."),
+			TEXT("PawnData InputConfig '%s' is missing one or more top-down native actions; top-down input is disabled for '%s'."),
 			*GetNameSafe(InputConfig), *GetNameSafe(Pawn));
 		return;
 	}
 
+	InputBindingHandles.Add(
+		InputComponent->BindAction(MoveForwardAction, ETriggerEvent::Triggered, this, &ThisClass::Input_MoveForward).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(MoveBackwardAction, ETriggerEvent::Triggered, this, &ThisClass::Input_MoveBackward).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(MoveRightAction, ETriggerEvent::Triggered, this, &ThisClass::Input_MoveRight).GetHandle());
+	InputBindingHandles.Add(
+		InputComponent->BindAction(MoveLeftAction, ETriggerEvent::Triggered, this, &ThisClass::Input_MoveLeft).GetHandle());
 	InputBindingHandles.Add(
 		InputComponent->BindAction(ZoomAction, ETriggerEvent::Triggered, this, &ThisClass::Input_CameraZoom).GetHandle());
 	InputBindingHandles.Add(
@@ -420,6 +369,62 @@ void UTopDownPawnComponent::PopCameraDragInputWidget()
 		UCommonUIExtensions::PopContentFromLayer(PushedCameraDragInputWidget);
 		PushedCameraDragInputWidget = nullptr;
 	}
+}
+
+void UTopDownPawnComponent::Input_MoveForward(const FInputActionValue& InputActionValue)
+{
+	CancelMoveToTarget();
+	APawn* Pawn = GetPawn<APawn>();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+	if (!Pawn || !Controller)
+	{
+		return;
+	}
+
+	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::ForwardVector), InputActionValue.Get<float>());
+}
+
+void UTopDownPawnComponent::Input_MoveBackward(const FInputActionValue& InputActionValue)
+{
+	CancelMoveToTarget();
+	APawn* Pawn = GetPawn<APawn>();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+	if (!Pawn || !Controller)
+	{
+		return;
+	}
+
+	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::ForwardVector), -InputActionValue.Get<float>());
+}
+
+void UTopDownPawnComponent::Input_MoveRight(const FInputActionValue& InputActionValue)
+{
+	CancelMoveToTarget();
+	APawn* Pawn = GetPawn<APawn>();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+	if (!Pawn || !Controller)
+	{
+		return;
+	}
+
+	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::RightVector), InputActionValue.Get<float>());
+}
+
+void UTopDownPawnComponent::Input_MoveLeft(const FInputActionValue& InputActionValue)
+{
+	CancelMoveToTarget();
+	APawn* Pawn = GetPawn<APawn>();
+	AController* Controller = Pawn ? Pawn->GetController() : nullptr;
+	if (!Pawn || !Controller)
+	{
+		return;
+	}
+
+	const FRotator MovementRotation(0.0f, Controller->GetControlRotation().Yaw, 0.0f);
+	Pawn->AddMovementInput(MovementRotation.RotateVector(FVector::RightVector), -InputActionValue.Get<float>());
 }
 
 void UTopDownPawnComponent::Input_CameraZoom(const FInputActionValue& InputActionValue)

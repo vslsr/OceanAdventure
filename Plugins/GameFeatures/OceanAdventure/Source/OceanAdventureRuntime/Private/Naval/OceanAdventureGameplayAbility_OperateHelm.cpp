@@ -2,11 +2,10 @@
 
 #include "Naval/OceanAdventureGameplayAbility_OperateHelm.h"
 
-#include "AbilitySystem/LyraAbilitySystemComponent.h"
 #include "Naval/NavalHelmComponent.h"
 #include "Naval/NavalHelmStation.h"
 #include "Naval/NavalVesselComponent.h"
-#include "Naval/OceanAdventureGameplayAbility_DriveHelm.h"
+#include "Naval/OceanAdventureHelmInputComponent.h"
 #include "Naval/OceanAdventureNavalStatics.h"
 #include "Naval/OceanAdventureNavalTags.h"
 #include "OceanAdventureRuntimeModule.h"
@@ -19,6 +18,42 @@ UOceanAdventureGameplayAbility_OperateHelm::UOceanAdventureGameplayAbility_Opera
 {
 }
 
+void UOceanAdventureGameplayAbility_OperateHelm::ActivateAbility(
+	const FGameplayAbilitySpecHandle Handle,
+	const FGameplayAbilityActorInfo* ActorInfo,
+	const FGameplayAbilityActivationInfo ActivationInfo,
+	const FGameplayEventData* TriggerEventData)
+{
+	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
+
+	// Only the local predicted ability owns the player's mapping context. The server receives
+	// target-data samples and never installs a client input mapping.
+	if (IsActive() && ActorInfo && ActorInfo->IsLocallyControlled())
+	{
+		UOceanAdventureHelmInputComponent* HelmInput =
+			GetAvatarActorFromActorInfo()
+				? GetAvatarActorFromActorInfo()->FindComponentByClass<UOceanAdventureHelmInputComponent>()
+				: nullptr;
+		if (!HelmInput)
+		{
+			UE_LOG(LogOceanAdventure, Error,
+				TEXT("[Helm] Avatar %s has no OceanAdventureHelmInputComponent"),
+				*GetNameSafe(GetAvatarActorFromActorInfo()));
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+			return;
+		}
+
+		HelmInput->EnableHelmInput();
+		if (!HelmInput->IsHelmInputEnabled())
+		{
+			UE_LOG(LogOceanAdventure, Error,
+				TEXT("[Helm] Failed to enable tagged helm input for avatar %s"),
+				*GetNameSafe(GetAvatarActorFromActorInfo()));
+			EndAbility(Handle, ActorInfo, ActivationInfo, true, true);
+		}
+	}
+}
+
 void UOceanAdventureGameplayAbility_OperateHelm::EndAbility(
 	const FGameplayAbilitySpecHandle Handle,
 	const FGameplayAbilityActorInfo* ActorInfo,
@@ -26,27 +61,17 @@ void UOceanAdventureGameplayAbility_OperateHelm::EndAbility(
 	bool bReplicateEndAbility,
 	bool bWasCancelled)
 {
+	// Pop the high-priority context before the base class removes the station lock. W/A/S/D
+	// then return immediately to the native TopDown + CharacterMovement path.
 	if (ActorInfo && ActorInfo->IsLocallyControlled())
 	{
-		if (ULyraAbilitySystemComponent* AbilitySystem =
-			Cast<ULyraAbilitySystemComponent>(ActorInfo->AbilitySystemComponent.Get()))
+		if (UOceanAdventureHelmInputComponent* HelmInput =
+			GetAvatarActorFromActorInfo()
+				? GetAvatarActorFromActorInfo()->FindComponentByClass<UOceanAdventureHelmInputComponent>()
+				: nullptr)
 		{
-			// Do not wait one round trip for the server's spec removal before handing WASD back
-			// to TopDown movement. The server still owns the actual ClearAbility below.
-			AbilitySystem->CancelAbilitiesByFunc(
-				[](const ULyraGameplayAbility* Ability, FGameplayAbilitySpecHandle)
-				{
-					return Ability && Ability->IsA<UOceanAdventureGameplayAbility_DriveHelm>();
-				},
-				/*bReplicateCancelAbility=*/true);
+			HelmInput->DisableHelmInput();
 		}
-	}
-
-	// The station pointer may already be invalid after destruction. Revoke independently so a
-	// stale DriveHelm spec can never keep consuming W/A/S/D after the player leaves.
-	if (HasAuthority(&ActivationInfo))
-	{
-		RevokeDriveAbility();
 	}
 
 	Super::EndAbility(Handle, ActorInfo, ActivationInfo, bReplicateEndAbility, bWasCancelled);
@@ -73,71 +98,42 @@ AActor* UOceanAdventureGameplayAbility_OperateHelm::FindStationInRange() const
 bool UOceanAdventureGameplayAbility_OperateHelm::ServerOccupyStation(AActor* Station)
 {
 	INavalHelmStation* HelmStation = Station ? Cast<INavalHelmStation>(Station) : nullptr;
-	AActor* Avatar = GetAvatarActorFromActorInfo();
-	if (!HelmStation || !HelmStation->TryOccupy(Avatar))
-	{
-		return false;
-	}
-
-	if (!GrantDriveAbility(Station))
-	{
-		HelmStation->ReleaseOperator(Avatar);
-		return false;
-	}
-	return true;
+	return HelmStation && HelmStation->TryOccupy(GetAvatarActorFromActorInfo());
 }
 
 void UOceanAdventureGameplayAbility_OperateHelm::ServerReleaseStation(AActor* Station)
 {
-	RevokeDriveAbility();
 	if (INavalHelmStation* HelmStation = Station ? Cast<INavalHelmStation>(Station) : nullptr)
 	{
 		HelmStation->ReleaseOperator(GetAvatarActorFromActorInfo());
 	}
 }
 
-bool UOceanAdventureGameplayAbility_OperateHelm::GrantDriveAbility(AActor* Station)
+void UOceanAdventureGameplayAbility_OperateHelm::ServerApplyControl(
+	AActor* Station, const FOceanAdventureNavalTargetData& Data)
 {
-	ULyraAbilitySystemComponent* AbilitySystem = GetLyraAbilitySystemComponentFromActorInfo();
-	if (!HasAuthority(&CurrentActivationInfo) || !AbilitySystem || !Station)
+	if (UNavalHelmComponent* Helm = ResolveHelm(Station))
+	{
+		// The server-owned helm rejects samples from anyone except its current operator.
+		Helm->SetControlIntent(GetAvatarActorFromActorInfo(), Data.GetThrottle(), Data.GetSteer());
+	}
+}
+
+bool UOceanAdventureGameplayAbility_OperateHelm::BuildControlSample(
+	FOceanAdventureNavalTargetData& OutData) const
+{
+	const AActor* VesselActor = GetStationVesselActor();
+	const AActor* Avatar = GetAvatarActorFromActorInfo();
+	const UOceanAdventureHelmInputComponent* HelmInput = Avatar
+		? Avatar->FindComponentByClass<UOceanAdventureHelmInputComponent>()
+		: nullptr;
+	if (!VesselActor || !HelmInput || !HelmInput->IsHelmInputEnabled())
 	{
 		return false;
 	}
 
-	RevokeDriveAbility();
-	UOceanAdventureGameplayAbility_DriveHelm* DriveAbilityCDO =
-		UOceanAdventureGameplayAbility_DriveHelm::StaticClass()
-			->GetDefaultObject<UOceanAdventureGameplayAbility_DriveHelm>();
-	FGameplayAbilitySpec DriveSpec(DriveAbilityCDO, 1);
-	DriveSpec.SourceObject = Station;
-	DriveSpec.GetDynamicSpecSourceTags().AddTag(
-		OceanAdventureNavalTags::InputTag_Naval_Helm_Throttle);
-	DriveSpec.GetDynamicSpecSourceTags().AddTag(
-		OceanAdventureNavalTags::InputTag_Naval_Helm_Steer);
-	GrantedDriveAbilityHandle = AbilitySystem->GiveAbility(DriveSpec);
-
-	UE_LOG(LogOceanAdventure, Display,
-		TEXT("[Helm] Granted DriveHelm station=%s avatar=%s handle=%s"),
-		*GetNameSafe(Station), *GetNameSafe(GetAvatarActorFromActorInfo()),
-		*GrantedDriveAbilityHandle.ToString());
-	return GrantedDriveAbilityHandle.IsValid();
-}
-
-void UOceanAdventureGameplayAbility_OperateHelm::RevokeDriveAbility()
-{
-	if (!GrantedDriveAbilityHandle.IsValid())
-	{
-		return;
-	}
-	if (ULyraAbilitySystemComponent* AbilitySystem = GetLyraAbilitySystemComponentFromActorInfo())
-	{
-		UE_LOG(LogOceanAdventure, Display,
-			TEXT("[Helm] Revoked DriveHelm avatar=%s handle=%s"),
-			*GetNameSafe(GetAvatarActorFromActorInfo()),
-			*GrantedDriveAbilityHandle.ToString());
-		AbilitySystem->ClearAbility(GrantedDriveAbilityHandle);
-	}
-	GrantedDriveAbilityHandle = FGameplayAbilitySpecHandle();
+	OutData.SetControlIntent(HelmInput->GetThrottleInput(), HelmInput->GetSteerInput());
+	return true;
 }
 
 FGameplayTag UOceanAdventureGameplayAbility_OperateHelm::GetStationStatusTag() const
@@ -159,8 +155,6 @@ bool UOceanAdventureGameplayAbility_OperateHelm::IsStationStillValid(AActor* Sta
 		return false;
 	}
 
-	// Null covers the window before the server's occupancy has replicated back; a different
-	// operator means the wheel was taken -- by a capture, or by a team-mate on the server.
 	const AActor* CurrentOperator = Helm->GetOperator();
 	const AActor* CurrentStation = Helm->GetActiveStation();
 	return (CurrentOperator == nullptr || CurrentOperator == GetAvatarActorFromActorInfo())
@@ -176,8 +170,6 @@ bool UOceanAdventureGameplayAbility_OperateHelm::GetOperatorTransform(
 		return false;
 	}
 
-	// Standing behind the wheel and facing the bow, so W/S read as ahead/astern for the
-	// player exactly as they do for the hull.
 	OutTransform = HelmStation->GetOperatorTransform();
 	return true;
 }

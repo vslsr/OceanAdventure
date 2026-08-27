@@ -156,6 +156,14 @@ def validate_owned_actions(game_feature_data):
 
 
 def main():
+    # Assets may already exist on disk but still be absent from the current editor session's
+    # AssetRegistry (for example after switching branches while the editor is open). Scan
+    # before does_asset_exist() so load_or_create repairs those packages instead of treating
+    # their GameFeatureData soft references as missing.
+    unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous(
+        [FEATURE_ROOT], True, True
+    )
+
     input_mapping = require(
         load_or_create(
             "IMC_OceanBuild", INPUT_ROOT, unreal.InputMappingContext,
