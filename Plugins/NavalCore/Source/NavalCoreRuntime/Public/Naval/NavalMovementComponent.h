@@ -104,9 +104,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "1.0"))
 	float YawAccelerationDegrees = 90.0f;
 
-	/** Angular drag returns the hull to a stable heading when AD is released. */
+	/** Angular drag settles yaw after AD is released and limits the sustained yaw rate while held. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "0.0"))
-	float YawDamping = 5.0f;
+	float YawDamping = 2.5f;
 
 	/**
 	 * Turn authority left when every rudder is gone. Design 8.3.1: a very weak emergency
@@ -126,10 +126,10 @@ protected:
 		meta = (ClampMin = "0.1", ClampMax = "1.0"))
 	float DamagedCoreSpeedScale = 0.8f;
 
-	/** Retained as a tuning floor for content that wants a reduced stationary torque response. */
+	/** Minimum turn authority keeps stationary steering deliberate but immediately visible. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement",
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float MinSpeedFractionForTurn = 0.12f;
+	float MinSpeedFractionForTurn = 0.35f;
 
 	/** Half-life of the client-only location correction toward the latest server sample. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Smoothing",
