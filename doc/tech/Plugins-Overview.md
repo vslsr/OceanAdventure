@@ -116,3 +116,58 @@ Raft 依赖 OceanCore，**从不**依赖 OceanAdventure；反过来，重武器�
 
 - **OceanCore** 给世界；**BuildingCore** 给格子；**NavalCore** 给船的规则；**CarryCore** 给手。
 - **Raft** 是它们四个第一个共同的宿主；**OceanAdventure** 是唯一拥有玩家和 GAS 的那一层。
+
+---
+
+## 依赖关系
+
+只有五条边，全部自上而下，无环：
+
+```
+                    OceanAdventure (玩法层 · 唯一有玩家 Pawn 和 GAS 的一层)
+                    │  依赖以下全部 + LyraGame + GameplayAbilities + CommonUI
+        ┌───────────┼───────────┬──────────────┐
+        │           │           │              │
+      Raft ────────►│           │              │
+        │  │        │           │              │
+        │  ├──────► NavalCore ──┤              │
+        │  │            │       │              │
+        │  └──────────► BuildingCore           │
+        └────────────► OceanCore          CarryCore
+                                          (谁都不依赖，也只被玩法层用)
+```
+
+| 边 | 类型 | 为什么存在（具体耦合点） |
+| --- | --- | --- |
+| `NavalCore → BuildingCore` | Public | 船上能被打的东西**就是**建造构件。`ANavalBuildPieceActor` 继承 `ABuildPlacedActor`；`UNavalPieceFragments` 是挂在 `UBuildPieceDefinition` 上的 Fragment；`UNavalLoadComponent` 通过 `UBuildStructureComponent` + `UBuildPieceCatalog` 读出实例化构件（甲板、墙）的重量 |
+| `Raft → BuildingCore` | Public | `ARaftActor` 实现 `IBuildStructureHost`，甲板即建造宿主 |
+| `Raft → NavalCore` | Public | `URaftBuoyancyComponent` 实现 `INavalBuoyancyControl`，让船变成残骸后不再被托在水线上 |
+| `Raft → OceanCore` | **Private** | 浮力向 `UOceanWorldManagerComponent` 要 `FOceanWaterSurfaceSample`。私有依赖 = 不出现在 Raft 的公开头文件里，外部无法顺着 Raft 摸到 OceanCore |
+| `OceanAdventure → 全部四个` | Public | 玩法层是唯一允许同时认识它们的地方：GAS 能力在这里把"框架 A 的对象"和"框架 B 的规则"接起来 |
+
+### 没有的边，比有的边更重要
+
+- **OceanCore ↔ BuildingCore ↔ CarryCore 三者互不相识。** 它们是三块独立地基，可以单独抽走。
+- **OceanCore 不依赖 NavalCore。** 水面不知道船存在；反过来 NavalCore 也不直接依赖 OceanCore ——
+  船怎么浮是宿主的事，框架只通过 `INavalBuoyancyControl` 要一个开关。
+- **CarryCore 不依赖 NavalCore。** "被扛起的是一门炮"这件事只有玩法层知道：
+  `UOceanAdventureGameplayAbility_Carry` 里那些判断（甲板炮不能扛、有人操作不能扛、未建成不能扛）
+  是**唯一**同时 include 两边头文件的地方。这是刻意的 —— 换成扛核心箱、扛货物时框架一行不用改。
+- **GameFeature 之间零依赖。** `Raft` 不认识 `OceanAdventure`，`OceanAdventure` 也不认识 `Raft` 的类；
+  需要共享就下沉成通用插件，需要跨越就用接口（`IBuildStructureHost`、`INavalBuoyancyControl`）。
+
+### 两种跨层手段
+
+框架之间从不直接调用，只有两种连接方式，都在通用插件里定义、由宿主实现：
+
+1. **宿主接口** —— `IBuildStructureHost`（"我能被搭建"）、`INavalBuoyancyControl`（"我能浮"）。
+   框架定义提问，宿主负责回答。
+2. **组件注入** —— GameFeature 的 `AddComponents` Action 把能力挂到别人的 Actor 上，
+   Actor 本身只需注册成 GameFramework 组件接收者。`UCarryableComponent` 挂到
+   `ANavalHeavyWeaponActor` 走的就是这条路：两个插件的 `.Build.cs` 都不必提到对方。
+
+### 新增依赖前先自问
+
+- 这条边是不是从下往上（框架依赖玩法 / GameFeature 依赖 GameFeature）？是就一定不行。
+- 能不能用接口代替直接 include？能就用接口。
+- 只有玩法层需要知道两边？那就把胶水写进 GAS 能力里，别写进框架。
