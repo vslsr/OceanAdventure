@@ -40,7 +40,7 @@ HELM_ACTOR_CLASS_PATH = "/Script/NavalCoreRuntime.NavalHelmActor"
 # The one cannon. It lives in the general framework plugin because design 7.10 makes the deck
 # gun and the field emplacement the same weapon, and a GameFeature may not reference another
 # feature's assets -- NavalCore is the only place both can name.
-SHARED_CANNON_BLUEPRINT_PATH = "/NavalCore/Naval/BP_Naval_Cannon"
+SHARED_CANNON_BLUEPRINT_PATH = "/NavalCore/Blueprints/Cannon/BP_Naval_Cannon"
 NAVAL_CORE_ROOT = "/NavalCore"
 SHARED_CANNON_MESH_NAME = "SM_Naval_Cannon"
 HELM_WHEEL_MESH_NAME = "SM_Naval_HelmWheel"
@@ -211,6 +211,11 @@ COMPONENT_BLUEPRINTS = (
             "base_tonnage": 24.0,
             "base_buoyancy_capacity": 50.0,
             "base_thrust": 40.0,
+            "reference_tonnage_for_inertia": 30.0,
+            "linear_inertia_exponent": 0.45,
+            "minimum_linear_response": 0.55,
+            "angular_inertia_exponent": 0.65,
+            "minimum_angular_response": 0.40,
         },
     },
     {
@@ -221,9 +226,31 @@ COMPONENT_BLUEPRINTS = (
     {
         "asset": "BPC_NavalMovement_RaftT0",
         "parent": "/Script/NavalCoreRuntime.NavalMovementComponent",
+        "enum_properties": {
+            "movement_model": ("NavalMovementModel", "HELM"),
+        },
         "properties": {
             "max_forward_speed": 900.0,
-            "max_yaw_rate_degrees": 26.0,
+            # A built raft is force-driven and deliberately keeps momentum. Large rafts
+            # get an additional continuous response penalty from NavalLoadComponent.
+            "acceleration": 145.0,
+            "braking_deceleration": 120.0,
+            "drift_deceleration": 32.0,
+            "lateral_drag": 75.0,
+            "max_yaw_rate_degrees": 22.0,
+            "yaw_acceleration_degrees": 42.0,
+            "yaw_damping": 2.2,
+            "min_speed_fraction_for_turn": 0.0,
+            # The same injected component services compact direct-planar hull definitions.
+            "direct_acceleration": 850.0,
+            "direct_direction_change_acceleration": 1250.0,
+            "direct_braking_deceleration": 1050.0,
+            "direct_max_yaw_rate_degrees": 240.0,
+            "direct_yaw_acceleration_degrees": 720.0,
+            "direct_facing_dead_zone": 75.0,
+            "direct_client_location_smoothing_half_life": 0.035,
+            "direct_client_rotation_smoothing_half_life": 0.03,
+            "direct_client_max_extrapolation_seconds": 0.08,
         },
     },
 )
@@ -288,6 +315,29 @@ def import_life_raft_mesh():
     require(
         LIFE_RAFT_SOURCE_FBX.is_file(),
         f"Missing life-raft FBX: {LIFE_RAFT_SOURCE_FBX}. Run SM_LifeRaft.py in Blender first",
+    )
+
+    # AssetTools' UE 5.7 Interchange completion path touches Content Browser/Slate even for an
+    # automated task. PythonScript commandlets have no SlateApplication, so an unconditional
+    # reimport crashes after saving the mesh. Reuse a valid generated asset on idempotent runs;
+    # first-time FBX import remains an explicit full-Editor operation.
+    if unreal.EditorAssetLibrary.does_asset_exist(LIFE_RAFT_MESH_PATH):
+        existing_mesh = require(
+            unreal.EditorAssetLibrary.load_asset(LIFE_RAFT_MESH_PATH),
+            f"Existing life-raft mesh is not loadable: {LIFE_RAFT_MESH_PATH}",
+        )
+        require(
+            existing_mesh.get_class().get_name() == "StaticMesh",
+            f"{LIFE_RAFT_MESH_PATH} exists but is not a StaticMesh",
+        )
+        log(f"Reused compact emergency hull at {LIFE_RAFT_MESH_PATH}")
+        return existing_mesh
+
+    command_line = str(unreal.SystemLibrary.get_command_line()).lower()
+    require(
+        "-run=pythonscript" not in command_line,
+        f"{LIFE_RAFT_MESH_PATH} needs its first FBX import. Run this script in the full "
+        "Unreal Editor once; UE 5.7 Interchange crashes in PythonScript commandlets without Slate.",
     )
 
     options = unreal.FbxImportUI()
@@ -611,7 +661,8 @@ def configure_deck_cannon(piece_class, invalid_material):
     the field emplacement uses, which meant the deck gun quietly ran without a mesh, without a
     shell and with the C++ default minimum range while the emplacement had all three. Design
     7.10 says support is the only difference between ground and mounted, so both now spawn
-    /NavalCore/Naval/BP_Naval_Cannon and the difference is expressed where it belongs: this
+    /NavalCore/Blueprints/Cannon/BP_Naval_Cannon and the difference is expressed where it
+    belongs: this
     piece's tonnage, and the vessel the gun ends up attached to.
     """
     missing_cannon = (
@@ -659,7 +710,7 @@ def configure_base_module_load():
 
 
 def configure_life_raft():
-    """Compact water vehicle: direct E driving and structurally no construction system."""
+    """Compact auto-drive water vehicle with structurally no construction system."""
     definition_class = require_type("RaftDefinition", "RaftRuntime")
     source = require(
         unreal.EditorAssetLibrary.load_asset(RAFT_DEFINITION_PATH),
@@ -678,6 +729,8 @@ def configure_life_raft():
             property_name, source.get_editor_property(property_name)
         )
     life_raft_definition.set_editor_property("build_piece_catalog", None)
+    direct_movement_model = enum_value("NavalMovementModel", "DIRECT_PLANAR")
+    life_raft_definition.set_editor_property("movement_model", direct_movement_model)
     life_raft_definition.set_editor_property("allow_direct_helm_interaction", True)
     life_raft_definition.set_editor_property("direct_helm_interaction_range", 260.0)
     save(life_raft_definition)
@@ -740,8 +793,12 @@ def configure_life_raft():
         f"{LIFE_RAFT_DEFINITION_PATH} must not expose a build catalog",
     )
     require(
+        life_raft_definition.get_editor_property("movement_model") == direct_movement_model,
+        f"{LIFE_RAFT_DEFINITION_PATH} did not retain the DirectPlanar movement model",
+    )
+    require(
         life_raft_definition.get_editor_property("allow_direct_helm_interaction"),
-        f"{LIFE_RAFT_DEFINITION_PATH} must allow direct E helm interaction",
+        f"{LIFE_RAFT_DEFINITION_PATH} must expose its hull as a helm station",
     )
     require(
         compiled_defaults.get_editor_property("raft_definition") == life_raft_definition,
@@ -803,10 +860,35 @@ def configure_component_blueprints(property_overrides=None):
         properties.update(property_overrides.get(spec["asset"], {}))
         for name, value in properties.items():
             defaults.set_editor_property(name, value)
+        enum_properties = {
+            name: enum_value(enum_type, value_name)
+            for name, (enum_type, value_name) in spec.get("enum_properties", {}).items()
+        }
+        for name, value in enum_properties.items():
+            defaults.set_editor_property(name, value)
 
         # Blueprint defaults only persist through a compile, and compilation can replace the
         # generated class, so the class is reacquired afterwards.
         unreal.BlueprintEditorLibrary.compile_blueprint(blueprint)
+        compiled_defaults = unreal.get_default_object(blueprint_class(blueprint, asset_path))
+        for name, expected in properties.items():
+            actual = compiled_defaults.get_editor_property(name)
+            if isinstance(expected, float):
+                require(
+                    abs(float(actual) - expected) <= 0.001,
+                    f"{asset_path} did not retain {name}={expected}; actual={actual}",
+                )
+            else:
+                require(
+                    actual == expected,
+                    f"{asset_path} did not retain {name}={expected}; actual={actual}",
+                )
+        for name, expected in enum_properties.items():
+            actual = compiled_defaults.get_editor_property(name)
+            require(
+                actual == expected,
+                f"{asset_path} did not retain {name}={expected}; actual={actual}",
+            )
         save(blueprint)
         component_classes.append(blueprint_class(blueprint, asset_path))
     return component_classes

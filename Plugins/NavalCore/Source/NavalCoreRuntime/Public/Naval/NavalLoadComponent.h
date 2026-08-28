@@ -77,6 +77,26 @@ protected:
 	float BaseThrust = 40.0f;
 
 	/**
+	 * Tonnage at which continuous inertia is neutral. Load/thrust bands still describe whether
+	 * the vessel is well supported; this separate response makes a large, well-supported raft
+	 * remain heavier to start, stop and rotate than its compact T0 form.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Load|Inertia", meta = (ClampMin = "1.0"))
+	float ReferenceTonnageForInertia = 30.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Load|Inertia", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	float LinearInertiaExponent = 0.45f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Load|Inertia", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+	float MinimumLinearResponse = 0.55f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Load|Inertia", meta = (ClampMin = "0.0", ClampMax = "2.0"))
+	float AngularInertiaExponent = 0.65f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Load|Inertia", meta = (ClampMin = "0.1", ClampMax = "1.0"))
+	float MinimumAngularResponse = 0.40f;
+
+	/**
 	 * Hull lost per second of dangerous draft. Design 7.11 wants 10-15 seconds in which the
 	 * crew can repair, dump weight or fight back -- not an instant loss and not a free ride.
 	 */

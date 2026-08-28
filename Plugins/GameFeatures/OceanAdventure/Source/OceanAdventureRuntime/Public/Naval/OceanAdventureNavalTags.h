@@ -22,6 +22,7 @@ namespace OceanAdventureNavalTags
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Naval_DeployLifeRaft);
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Naval_Helm_Throttle);
 	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Naval_Helm_Steer);
+	OCEANADVENTURERUNTIME_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(InputTag_Naval_Helm_DirectMove);
 
 	/**
 	 * Present while the player is steering. Design 1.2: this is a state the character enters,

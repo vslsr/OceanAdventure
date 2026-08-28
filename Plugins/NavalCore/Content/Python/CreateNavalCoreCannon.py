@@ -9,10 +9,10 @@ and the C++ default minimum range.
 
 So the gun lives here, in the general framework plugin, and both features point at it:
 
-    /NavalCore/Naval/BP_Naval_Cannon                 the shared gun
-    /NavalCore/Naval/BP_Naval_CannonballProjectile   its shell
-    /NavalCore/Naval/Meshes/SM_Naval_Cannon          the gun's art
-    /NavalCore/Naval/Meshes/SM_Naval_Cannonball      the shell's art
+    /NavalCore/Blueprints/Cannon/BP_Naval_Cannon                 the shared gun
+    /NavalCore/Blueprints/Cannon/BP_Naval_CannonballProjectile   its shell
+    /NavalCore/Arts/Cannon/Meshes/SM_Naval_Cannon                the gun's art
+    /NavalCore/Arts/Cannon/Meshes/SM_Naval_Cannonball            the shell's art
 
 This is the only direction the layering allows. A GameFeature may not reference another
 GameFeature's assets, and NavalCore may not reference a GameFeature's -- but every feature is
@@ -21,7 +21,8 @@ free to depend on the general framework, so this is the one place both can meet.
 Nothing here may reference /OceanAdventure, /Raft or any other feature path.
 
 Run once after enabling content on the NavalCore plugin, and after MigrateSharedCannon.py has
-moved the existing art over. Safe to re-run.
+moved the existing art over. If /NavalCore/Naval or /NavalCore/NavalArts still contains real
+assets, run MigrateNavalCoreContentLayout.py first. Safe to re-run.
 
     import CreateNavalCoreCannon
     CreateNavalCoreCannon.main()
@@ -33,12 +34,13 @@ import unreal
 
 
 PLUGIN_ROOT = "/NavalCore"
-NAVAL_ROOT = f"{PLUGIN_ROOT}/Naval"
-ART_ROOT = f"{PLUGIN_ROOT}/NavalArts"
+BLUEPRINT_ROOT = f"{PLUGIN_ROOT}/Blueprints"
+ART_ROOT = f"{PLUGIN_ROOT}/Arts"
 CANNON_ART_ROOT = f"{ART_ROOT}/Cannon"
+LEGACY_CONTENT_ROOTS = (f"{PLUGIN_ROOT}/Naval", f"{PLUGIN_ROOT}/NavalArts")
 
-CANNON_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Naval_Cannon"
-PROJECTILE_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Naval_CannonballProjectile"
+CANNON_BLUEPRINT_PATH = f"{BLUEPRINT_ROOT}/Cannon/BP_Naval_Cannon"
+PROJECTILE_BLUEPRINT_PATH = f"{BLUEPRINT_ROOT}/Cannon/BP_Naval_CannonballProjectile"
 CANNON_MESH_NAME = "SM_Naval_Cannon"
 CANNONBALL_MESH_NAME = "SM_Naval_Cannonball"
 CANNON_MESH_IMPORT_PATH = f"{CANNON_ART_ROOT}/Meshes/{CANNON_MESH_NAME}"
@@ -87,6 +89,27 @@ def package_of(asset):
     return str(asset.get_path_name()).split(".", 1)[0]
 
 
+def asset_class_name(asset_data):
+    class_path = getattr(asset_data, "asset_class_path", None)
+    if class_path is not None:
+        return str(class_path.asset_name)
+    return str(getattr(asset_data, "asset_class", ""))
+
+
+def require_canonical_layout(registry):
+    legacy_assets = []
+    for root in LEGACY_CONTENT_ROOTS:
+        for asset_data in registry.get_assets_by_path(root, recursive=True):
+            if asset_class_name(asset_data) != "ObjectRedirector":
+                legacy_assets.append(str(asset_data.package_name))
+    require(
+        not legacy_assets,
+        "Legacy NavalCore assets remain under /NavalCore/Naval or /NavalCore/NavalArts: "
+        + ", ".join(legacy_assets)
+        + ". Run MigrateNavalCoreContentLayout.py before authoring the cannon.",
+    )
+
+
 def save(asset):
     require(
         unreal.EditorAssetLibrary.save_loaded_asset(asset, only_if_is_dirty=False),
@@ -121,15 +144,6 @@ def blueprint_class(blueprint, asset_path):
     )
 
 
-def find_asset_by_name(asset_name):
-    """Resolve an asset by stable name so NavalCore art can be regrouped freely."""
-    registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    for asset_data in registry.get_assets_by_path(PLUGIN_ROOT, recursive=True):
-        if str(asset_data.asset_name) == asset_name:
-            return str(asset_data.package_name)
-    return None
-
-
 def import_or_reuse_mesh(asset_name, import_path, source_fbx):
     """Re-import from blender/models when the source is there, else keep what exists.
 
@@ -138,7 +152,7 @@ def import_or_reuse_mesh(asset_name, import_path, source_fbx):
     source is normal rather than an error -- the asset moved here by the migration is used
     as-is. Re-importing on every run is what stops a Blender revision from being ignored.
     """
-    asset_path = find_asset_by_name(asset_name) or import_path
+    asset_path = import_path
     existing = (
         unreal.EditorAssetLibrary.load_asset(asset_path)
         if unreal.EditorAssetLibrary.does_asset_exist(asset_path)
@@ -259,7 +273,9 @@ def main():
         f"{PLUGIN_ROOT} is not mounted. Set \"CanContainContent\": true in NavalCore.uplugin "
         "and restart the editor.",
     )
-    unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([PLUGIN_ROOT], True, True)
+    registry = unreal.AssetRegistryHelpers.get_asset_registry()
+    registry.scan_paths_synchronous([PLUGIN_ROOT], True, True)
+    require_canonical_layout(registry)
 
     cannonball_mesh, cannonball_mesh_path = import_or_reuse_mesh(
         CANNONBALL_MESH_NAME, CANNONBALL_MESH_IMPORT_PATH, CANNONBALL_SOURCE_FBX

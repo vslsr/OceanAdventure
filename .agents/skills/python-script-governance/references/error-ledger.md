@@ -9,6 +9,9 @@
 | PY-UE-001 | 2026-08-27 | Unreal Python / SceneComponent | `set_relative_rotation() required argument 'sweep'` | VERIFIED | 2 |
 | PY-UE-002 | 2026-08-27 | Unreal Editor / 执行入口 | `尝试执行已废弃的命令：exec(open(...))` | VERIFIED | 1 |
 | PY-UE-003 | 2026-08-27 | Unreal Python / GameFeatureData | `Failed to find property 'input_mappings'` | STATIC_ONLY | 1 |
+| PY-UE-004 | 2026-08-28 | Unreal Editor-Cmd / DDC 启动 | `no writable nodes available` | VERIFIED | 1 |
+| PY-UE-005 | 2026-08-28 | Unreal Python / 资产布局迁移 | `FindAssetPackageReferencers failed` / `AsyncLoading2.cpp !bHasFailed` | VERIFIED | 2 |
+| PY-UE-006 | 2026-08-28 | Unreal Commandlet / Interchange 导入 | `SlateApplication CurrentApplication.IsValid()` | VERIFIED | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
 | PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
@@ -71,6 +74,118 @@
 - 修复：TopDownFeature 按具体 Action 类清理所有 Add Input Mapping / Add Input Binding；不再读取 `input_mappings` 或 `input_configs`。
 - 验证：Python AST 与 `git diff --check` 已通过；尚待 Unreal Editor 连续运行两次并出现 `TOPDOWN_ASSETS_MIGRATED`。
 - 状态：`STATIC_ONLY`。
+
+## PY-UE-004：受限环境没有可写 DDC 节点
+
+- 日期：2026-08-28；发生一次。
+- 宿主与入口：UE 5.7.4 `UnrealEditor-Cmd.exe`，`-run=pythonscript` 执行
+  `Plugins/NavalCore/Content/Python/MigrateNavalCoreContentLayout.py`。
+- 原始错误：
+
+  ```text
+  LogWindows: Error: appError called: Fatal error: [File:D:\build\++UE5\Sync\Engine\Source\Developer\DerivedDataCache\Private\DerivedDataBackends.cpp] [Line: 208]
+  Unable to use default cache graph 'InstalledDerivedDataBackendGraph' because there are no writable nodes available.Add -DDC-ForceMemoryCache to the command line to bypass this if you need access to the editor settings to fix the cache configuration.
+  ```
+
+- 首次错误转换：引擎初始化 DDC 时终止，尚未进入 PythonScript commandlet，也没有执行迁移脚本。
+- 根因：受限执行环境不能更新用户级 Zen 安装，也不能写
+  `C:/Users/db/AppData/Local/UnrealEngine/Common/DerivedDataCache`，默认 DDC 图因此没有可写节点。
+- 预防规则：在受限环境启动 UE commandlet 时显式传入 `-DDC-ForceMemoryCache`；若宿主仍需要用户级目录，申请在沙箱外执行，不把启动失败误判为 Python 脚本失败。
+- 修复：使用 `-DDC-ForceMemoryCache`，并在沙箱外重新执行同一个 commandlet；迁移脚本本身未修改。
+- 验证证据：2026-08-28 重跑成功越过 DDC，日志出现
+  `LogInit: Executing Class /Script/PythonScriptPlugin.PythonScriptCommandlet` 和
+  `LogPythonScriptCommandlet: Display: Running Python script`。
+- 状态：`VERIFIED`。
+- 发生次数：1。
+
+## PY-UE-005：Blueprint/Redirector 迁移状态处理不安全
+
+- 日期：2026-08-28；发生两次。
+- 宿主与入口：UE 5.7.4 `UnrealEditor-Cmd.exe`，`-run=pythonscript` 执行
+  `Plugins/NavalCore/Content/Python/MigrateNavalCoreContentLayout.py`。
+- 原始错误：
+
+  ```text
+  LogEditorAssetSubsystem: Error: FindAssetPackageReferencers failed: Could not load asset. The asset '/NavalCore/Naval/BP_Naval_CannonballProjectile.BP_Naval_CannonballProjectile' exists but was not able to be loaded.
+  LogEditorAssetSubsystem: Error: DeleteAsset failed: Could not find the source asset. The asset '/NavalCore/Naval/BP_Naval_CannonballProjectile.BP_Naval_CannonballProjectile' exists but was not able to be loaded.
+  LogInit: Display: Failure - 12 error(s), 52 warning(s)
+  ```
+
+- 第二次原始错误：
+
+  ```text
+  LogLinker: Warning: [AssetLog] C:\EpicWkspc\OceanAdventure\Plugins\NavalCore\Content\Blueprints\Cannon\BP_Naval_Cannon.uasset: Error opening file.
+  Script Stack (1 frames) :
+  /Script/EditorScriptingUtilities.EditorAssetLibrary.RenameAsset
+  LogWindows: Error: appError called: Assertion failed: !bHasFailed [File:D:\build\++UE5\Sync\Engine\Source\Runtime\CoreUObject\Private\Serialization\AsyncLoading2.cpp] [Line: 1426]
+  ```
+
+- 首次错误转换：`remove_unreferenced_redirectors()` 调用
+  `find_package_referencers_for_asset()`；在此之前，同一 Blueprint 包已先保存到
+  `/NavalCore/Arts/Cannon`，又在 `/NavalCore/Blueprints/Cannon` 留下 Redirector。
+- 根因：Asset Registry 会为 Blueprint 包返回 Blueprint、GeneratedClass 等多条
+  `AssetData`。脚本按单条 `asset_class_path` 分类且没有按 `package_name` 去重，使同一包进入
+  Arts 和 Blueprints 两个计划；`exact_asset()` 又只比较包路径，没有排除
+  `ObjectRedirector`，让 Redirector 通过了目标验证。最后脚本对不可加载的旧 Redirector
+  调用 EditorAssetSubsystem 查询/删除，产生宿主错误。
+- 第二次复发原因：首次修复已按包去重并排除 Redirector，但在同一个编辑器进程里删除目标路径的
+  Redirector 后立刻把真实 Blueprint 重命名到相同包路径。UE 5.7 的异步加载器仍持有刚删除包的
+  失败/卸载状态；Projectile 恰好完成，随后 Cannon 在 `RenameAsset` 复用同一路径时触发
+  `AsyncLoading2.cpp` 断言并使宿主崩溃。修复没有把“释放冲突路径”和“复用路径”隔离到两次宿主会话。
+- 预防规则：资产迁移计划必须以 `package_name` 为稳定键去重；`BP_` 包名或任一记录为
+  Blueprint 时整包按 Blueprint 分类；所有“真实资产”检查必须显式排除
+  `ObjectRedirector`；未知或不可加载 Redirector 只报告，不用 `delete_asset` 强删。
+- 补充预防规则：如果目标包被 Redirector 占用，本次宿主会话只释放冲突 Redirector 并返回
+  “需要重启/重跑”的明确状态；不得在同一进程中立即把真实资产重命名到刚释放的包路径。
+- 修复：按包去重、识别当前半迁移状态并停止自动清理普通旧 Redirector；目标 Redirector 冲突
+  改为跨宿主会话的两阶段流程。恢复运行已将 `/NavalCore/Arts/Cannon/BP_*` 移至
+  `/NavalCore/Blueprints/Cannon`，后续无变更运行不再强制重存目标资产。
+- 验证证据：2026-08-28 使用 UE 5.7.4 commandlet 完成恢复迁移后，又连续运行当前脚本两次；
+  两次均输出 `NAVALCORE_LAYOUT_MIGRATION_OK_WITH_REDIRECTORS`、
+  `Python script executed successfully` 与 `Success - 0 error(s)`。Blueprints/Arts 下 18 个
+  `.uasset` 的 SHA-256 在两次运行前后完全一致；真实 `BP_Naval_Cannon`（25944 bytes）与
+  `BP_Naval_CannonballProjectile`（24389 bytes）位于 `/NavalCore/Blueprints/Cannon`，Arts
+  下无真实 Blueprint。旧路径仅剩三个报告出的 Redirector，脚本未强删。
+- 状态：`VERIFIED`。
+- 发生次数：2。
+
+## PY-UE-006：Commandlet 的 Interchange 导入触发 Slate 断言
+
+- 日期：2026-08-28；发生一次。
+- 宿主与入口：UE 5.7.4 `UnrealEditor-Cmd.exe`，`-run=pythonscript` 执行
+  `Plugins/GameFeatures/Raft/Content/Python/CreateRaftNavalAssets.py`，带
+  `-DDC-ForceMemoryCache -unattended -stdout -FullStdOutLogOutput`。
+- 原始错误：
+
+  ```text
+  LogOutputDevice: Warning:
+  Script Stack (1 frames) :
+  /Script/AssetTools.AssetTools.ImportAssetTasks
+
+  LogWindows: Error: appError called: Assertion failed: CurrentApplication.IsValid()
+  [File:D:\build\++UE5\Sync\Engine\Source\Runtime\Slate\Public\Framework\Application\SlateApplication.h]
+  [Line: 321]
+  ```
+
+- 首次错误转换：`import_life_raft_mesh()` 调用 `AssetTools.import_asset_tasks()`；日志先报告
+  `Interchange import completed` 并保存 `/Raft/Vehicles/LifeRaft/SM_LifeRaft`，随后
+  ContentBrowser/AssetTools 调用链访问不存在的 Slate Application 并使宿主崩溃。
+- 根因：UE 5.7 Interchange 的该批量导入完成路径包含编辑器 UI/Content Browser 通知；
+  `UnrealEditor-Cmd` 的 PythonScript commandlet 没有有效 Slate Application。脚本此前只在完整
+  Editor 中使用，未区分“源 FBX 已存在且目标 Mesh 已存在”与“必须重新导入”的宿主能力。
+- 预防规则：Commandlet 资产脚本不得无条件重导入已有 FBX。先用稳定资产路径加载并读回目标；
+  已存在时复用，不进入 Interchange。确需首次导入时使用完整 Unreal Editor 宿主，或经真实验证的
+  commandlet-safe 导入入口；发生崩溃后必须把本次视为部分写入并重启宿主再验证。
+- 修复：`import_life_raft_mesh()` 先加载稳定目标路径；目标存在时校验其类型为 `StaticMesh` 并直接
+  复用。目标缺失且宿主是 `-run=pythonscript` commandlet 时，在进入 Interchange 前抛出带完整
+  Editor 操作指引的 `RuntimeError`；仅完整 Editor 宿主保留首次 FBX 导入路径。
+- 验证证据：修复后在 UE 5.7.4 `UnrealEditor-Cmd.exe` 中多次重跑同一脚本，均输出
+  `Python script executed successfully`；使用 `-ddc=InstalledNoZenLocalFallback` 的最终两次资产
+  宿主验证分别覆盖 OceanAdventure 与 Raft，均为退出码 0、`Success - 0 error(s)`。Raft 重跑加载
+  并复用 `/Raft/Vehicles/LifeRaft/SM_LifeRaft`，未再次进入 `ImportAssetTasks`，稳定命名的
+  GameFeature Action 与资产配置未出现重复增长。
+- 状态：`VERIFIED`。
+- 发生次数：1。
 
 ## PY-LYRA-001：USTRUCT 包装器拒绝带参数构造
 

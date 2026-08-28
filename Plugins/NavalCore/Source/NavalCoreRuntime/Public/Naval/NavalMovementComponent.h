@@ -5,6 +5,7 @@
 #include "Engine/EngineTypes.h"
 #include "Engine/NetSerialization.h"
 #include "GameFramework/MovementComponent.h"
+#include "Naval/NavalCoreTypes.h"
 
 #include "NavalMovementComponent.generated.h"
 
@@ -69,6 +70,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Naval|Movement")
 	float GetSpeedFraction() const;
 
+	UFUNCTION(BlueprintPure, Category = "Naval|Movement")
+	ENavalMovementModel GetMovementModel() const { return MovementModel; }
+
+	/** The host definition selects the model; client control data is never allowed to. */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Movement")
+	void SetMovementModel(ENavalMovementModel NewMovementModel);
+
 	/**
 	 * Scales every handling number at once.
 	 *
@@ -86,6 +94,10 @@ public:
 	FOnNavalHullBlocked OnHullBlocked;
 
 protected:
+	/** Helm by default. Compact vessel definitions opt into DirectPlanar explicitly. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Replicated, Category = "Naval|Movement")
+	ENavalMovementModel MovementModel = ENavalMovementModel::Helm;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "0.0", Units = "cm/s"))
 	float MaxForwardSpeed = 900.0f;
 
@@ -109,7 +121,7 @@ protected:
 	float LateralDrag = 180.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "1.0", Units = "deg/s"))
-	float MaxYawRateDegrees = 26.0f;
+	float MaxYawRateDegrees = 35.0f;
 
 	/** AD is a torque input: angular velocity ramps up instead of snapping to a yaw rate. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement", meta = (ClampMin = "1.0"))
@@ -142,6 +154,34 @@ protected:
 		meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float MinSpeedFractionForTurn = 0.35f;
 
+	/** DirectPlanar acceleration while input is held. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Direct",
+		meta = (ClampMin = "1.0", Units = "cm/s^2", EditCondition = "MovementModel == ENavalMovementModel::DirectPlanar"))
+	float DirectAcceleration = 850.0f;
+
+	/** DirectPlanar acceleration used for a reversal, keeping WASD changes responsive. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Direct",
+		meta = (ClampMin = "1.0", Units = "cm/s^2", EditCondition = "MovementModel == ENavalMovementModel::DirectPlanar"))
+	float DirectDirectionChangeAcceleration = 1250.0f;
+
+	/** DirectPlanar deceleration after WASD returns to zero. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Direct",
+		meta = (ClampMin = "1.0", Units = "cm/s^2", EditCondition = "MovementModel == ENavalMovementModel::DirectPlanar"))
+	float DirectBrakingDeceleration = 1050.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Direct",
+		meta = (ClampMin = "1.0", Units = "deg/s", EditCondition = "MovementModel == ENavalMovementModel::DirectPlanar"))
+	float DirectMaxYawRateDegrees = 240.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Direct",
+		meta = (ClampMin = "1.0", EditCondition = "MovementModel == ENavalMovementModel::DirectPlanar"))
+	float DirectYawAccelerationDegrees = 720.0f;
+
+	/** Ignore mouse aim this close to the hull centre to avoid unstable 180-degree flips. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Direct",
+		meta = (ClampMin = "0.0", Units = "cm", EditCondition = "MovementModel == ENavalMovementModel::DirectPlanar"))
+	float DirectFacingDeadZone = 75.0f;
+
 	/** Half-life of the client-only location correction toward the latest server sample. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Smoothing",
 		meta = (ClampMin = "0.001", Units = "s"))
@@ -166,6 +206,19 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Smoothing",
 		meta = (ClampMin = "0.0", ClampMax = "0.5", Units = "s"))
 	float ClientMaxExtrapolationSeconds = 0.2f;
+
+	/** Faster correction and less extrapolation for the high-response DirectPlanar model. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Direct|Smoothing",
+		meta = (ClampMin = "0.001", Units = "s"))
+	float DirectClientLocationSmoothingHalfLife = 0.035f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Direct|Smoothing",
+		meta = (ClampMin = "0.001", Units = "s"))
+	float DirectClientRotationSmoothingHalfLife = 0.03f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Direct|Smoothing",
+		meta = (ClampMin = "0.0", ClampMax = "0.5", Units = "s"))
+	float DirectClientMaxExtrapolationSeconds = 0.08f;
 
 	/** Server cadence for discovering free-moving pawns based on this vessel. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Naval|Movement|Collision",

@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "Naval/NavalCoreTypes.h"
 
 #include "RaftDefinition.generated.h"
 
@@ -24,6 +25,7 @@ public:
 	float GetMaxTiltDegrees() const { return FMath::Clamp(MaxTiltDegrees, 0.0f, 20.0f); }
 	float GetVerticalInterpSpeed() const { return FMath::Max(0.0f, VerticalInterpSpeed); }
 	float GetRotationInterpSpeed() const { return FMath::Max(0.0f, RotationInterpSpeed); }
+	ENavalMovementModel GetMovementModel() const { return MovementModel; }
 	bool AllowsDirectHelmInteraction() const { return bAllowDirectHelmInteraction; }
 	float GetDirectHelmInteractionRange() const { return FMath::Max(50.0f, DirectHelmInteractionRange); }
 
@@ -47,6 +49,10 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Buoyancy", meta = (ClampMin = "0.0"))
 	float RotationInterpSpeed = 2.0f;
+
+	/** Selects the generic NavalCore movement integrator for this raft family. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Movement")
+	ENavalMovementModel MovementModel = ENavalMovementModel::Helm;
 
 	/** Compact vessels can expose their hull as the helm station without spawning a console. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft|Helm")

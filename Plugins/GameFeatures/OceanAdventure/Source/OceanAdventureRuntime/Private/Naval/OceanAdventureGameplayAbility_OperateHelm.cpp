@@ -5,8 +5,11 @@
 #include "AbilitySystemComponent.h"
 #include "Character/LyraCharacterMovementComponent.h"
 #include "Components/SceneComponent.h"
+#include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerController.h"
 #include "Naval/NavalHelmComponent.h"
 #include "Naval/NavalHelmStation.h"
+#include "Naval/NavalMovementComponent.h"
 #include "Naval/NavalVesselComponent.h"
 #include "Naval/OceanAdventureHelmInputComponent.h"
 #include "Naval/OceanAdventureNavalStatics.h"
@@ -54,7 +57,14 @@ void UOceanAdventureGameplayAbility_OperateHelm::ActivateAbility(
 			return;
 		}
 
-		HelmInput->EnableHelmInput();
+		const AActor* VesselActor = GetStationVesselActor();
+		const UNavalMovementComponent* Movement = VesselActor
+			? VesselActor->FindComponentByClass<UNavalMovementComponent>()
+			: nullptr;
+		const ENavalMovementModel MovementModel = Movement
+			? Movement->GetMovementModel()
+			: ENavalMovementModel::Helm;
+		HelmInput->EnableHelmInput(MovementModel);
 		UE_LOG(LogOceanAdventure, Display,
 			TEXT("[NavalInputTrace] phase=operate-helm-enable-input avatar=%s station=%s enabled=%d movement_stopped_count=%d steering_count=%d"),
 			*GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(GetStationActor()),
@@ -138,13 +148,32 @@ void UOceanAdventureGameplayAbility_OperateHelm::ServerApplyControl(
 {
 	if (UNavalHelmComponent* Helm = ResolveHelm(Station))
 	{
+		const UNavalMovementComponent* Movement = Helm->GetOwner()
+			? Helm->GetOwner()->FindComponentByClass<UNavalMovementComponent>()
+			: nullptr;
+		const ENavalMovementModel MovementModel = Movement
+			? Movement->GetMovementModel()
+			: ENavalMovementModel::Helm;
 		UE_LOG(LogOceanAdventure, Verbose,
-			TEXT("[NavalInputTrace] phase=server-control-received avatar=%s station=%s vessel=%s operator=%s throttle=%.3f steer=%.3f accepts_input=%d"),
+			TEXT("[NavalInputTrace] phase=server-control-received avatar=%s station=%s vessel=%s operator=%s model=%d throttle=%.3f steer=%.3f move=(%.3f,%.3f) accepts_input=%d"),
 			*GetNameSafe(GetAvatarActorFromActorInfo()), *GetNameSafe(Station),
 			*GetNameSafe(Helm->GetOwner()), *GetNameSafe(Helm->GetOperator()),
-			Data.GetThrottle(), Data.GetSteer(), Helm->AcceptsControlInput());
+			static_cast<int32>(MovementModel), Data.GetThrottle(), Data.GetSteer(),
+			Data.GetWorldMoveIntent().X, Data.GetWorldMoveIntent().Y, Helm->AcceptsControlInput());
 		// The server-owned helm rejects samples from anyone except its current operator.
-		Helm->SetControlIntent(GetAvatarActorFromActorInfo(), Data.GetThrottle(), Data.GetSteer());
+		if (MovementModel == ENavalMovementModel::DirectPlanar)
+		{
+			Helm->SetDirectControlIntent(
+				GetAvatarActorFromActorInfo(),
+				Data.GetWorldMoveIntent(),
+				Data.AimLocation,
+				Data.bHasFacingTarget);
+		}
+		else
+		{
+			Helm->SetControlIntent(
+				GetAvatarActorFromActorInfo(), Data.GetThrottle(), Data.GetSteer());
+		}
 	}
 	else
 	{
@@ -170,6 +199,36 @@ bool UOceanAdventureGameplayAbility_OperateHelm::BuildControlSample(
 			*GetNameSafe(Avatar), *GetNameSafe(GetStationActor()), *GetNameSafe(VesselActor),
 			*GetNameSafe(HelmInput), HelmInput && HelmInput->IsHelmInputEnabled());
 		return false;
+	}
+
+	const UNavalMovementComponent* Movement =
+		VesselActor->FindComponentByClass<UNavalMovementComponent>();
+	const ENavalMovementModel MovementModel = Movement
+		? Movement->GetMovementModel()
+		: ENavalMovementModel::Helm;
+	if (MovementModel == ENavalMovementModel::DirectPlanar)
+	{
+		const APawn* AvatarPawn = Cast<APawn>(Avatar);
+		APlayerController* PlayerController = AvatarPawn
+			? Cast<APlayerController>(AvatarPawn->GetController())
+			: nullptr;
+		if (!PlayerController)
+		{
+			return false;
+		}
+
+		// Axis2D is X=right, Y=forward. Transform it exactly like Lyra's native move path,
+		// then send world XY because the server does not know the local camera/control yaw.
+		const FVector2D LocalMove = HelmInput->GetDirectMoveInput().GetClampedToMaxSize(1.0f);
+		const FRotator ControlYaw(0.0f, PlayerController->GetControlRotation().Yaw, 0.0f);
+		const FVector WorldMove = ControlYaw.RotateVector(FVector(LocalMove.Y, LocalMove.X, 0.0f));
+
+		FVector FacingTarget = FVector::ZeroVector;
+		const bool bHasFacingTarget = UOceanAdventureNavalStatics::GetCursorAimLocation(
+			PlayerController, FacingTarget);
+		OutData.SetDirectControlIntent(
+			FVector2D(WorldMove.X, WorldMove.Y), FacingTarget, bHasFacingTarget);
+		return true;
 	}
 
 	OutData.SetControlIntent(HelmInput->GetThrottleInput(), HelmInput->GetSteerInput());

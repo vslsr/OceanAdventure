@@ -26,7 +26,7 @@ RAFT_ACTOR_PATH = "/Raft/Vehicles/Raft/BP_Raft_Default"
 BEACON_ACTOR_PATH = "/OceanAdventure/Naval/BP_NavalP0_Beacon"
 # The shared gun, in the general framework plugin: the same Blueprint the raft builds on
 # its deck.
-CANNON_BLUEPRINT_PATH = "/NavalCore/Naval/BP_Naval_Cannon"
+CANNON_BLUEPRINT_PATH = "/NavalCore/Blueprints/Cannon/BP_Naval_Cannon"
 CUBE_MESH_PATH = "/Engine/BasicShapes/Cube"
 
 # One unit of the arena. The two bays sit 24000cm apart, which is roughly 30 seconds of

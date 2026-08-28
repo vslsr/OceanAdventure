@@ -12,10 +12,9 @@ class USceneComponent;
 /**
  * 操作主舵台.
  *
- * While this runs, priority-2 IMC_OceanHelm consumes W/A/S/D and the dedicated helm input
- * component captures signed throttle/steer values instead of footsteps. The same ability owns
- * station occupancy, attachment and the GAS TargetData control stream. Pressing E again pops the
- * context before normal top-down movement resumes.
+ * While this runs, a priority-2 mapping consumes W/A/S/D. Helm vessels capture signed
+ * throttle/steer; DirectPlanar vessels capture Axis2D movement and sample mouse-facing. The
+ * same ability owns station occupancy, attachment and the GAS TargetData control stream.
  */
 UCLASS()
 class OCEANADVENTURERUNTIME_API UOceanAdventureGameplayAbility_OperateHelm

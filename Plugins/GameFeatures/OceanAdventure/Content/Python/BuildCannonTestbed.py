@@ -31,7 +31,7 @@ EXPERIENCE_PATH = f"{FEATURE_ROOT}/Experience/B_Experience_CannonTest"
 PAWN_DATA_PATH = f"{FEATURE_ROOT}/Character/DA_OceanAdventure_PawnData"
 # The shared gun, in the general framework plugin: the same Blueprint the raft builds on
 # its deck, so this testbed measures the gun players actually get.
-CANNON_BLUEPRINT_PATH = "/NavalCore/Naval/BP_Naval_Cannon"
+CANNON_BLUEPRINT_PATH = "/NavalCore/Blueprints/Cannon/BP_Naval_Cannon"
 CUBE_MESH_PATH = "/Engine/BasicShapes/Cube"
 
 LABEL_PREFIX = "CannonTest_"

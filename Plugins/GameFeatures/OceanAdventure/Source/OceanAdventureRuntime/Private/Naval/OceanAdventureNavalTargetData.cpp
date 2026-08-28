@@ -29,6 +29,9 @@ bool FOceanAdventureNavalTargetData::NetSerialize(FArchive& Ar, UPackageMap* Map
 
 	Ar << QuantizedThrottle;
 	Ar << QuantizedSteer;
+	Ar << QuantizedWorldMoveX;
+	Ar << QuantizedWorldMoveY;
+	Ar.SerializeBits(&bHasFacingTarget, 1);
 
 	bOutSuccess = bStationSerialized && bAimSuccess;
 	return true;

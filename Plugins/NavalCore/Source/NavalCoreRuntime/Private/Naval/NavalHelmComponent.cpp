@@ -143,8 +143,7 @@ bool UNavalHelmComponent::TryOccupyFromStation(AActor* NewOperator, AActor* Stat
 	ActiveStation = StationActor;
 	OperatorLostControllerTime = 0.0;
 	BindOperatorDestroyed(NewOperator);
-	ThrottleIntent = 0.0f;
-	SteerIntent = 0.0f;
+	ResetControlIntent();
 	GetOwner()->ForceNetUpdate();
 	OnHelmChanged.Broadcast(this);
 	BroadcastHelmState();
@@ -170,8 +169,7 @@ void UNavalHelmComponent::ReleaseHelm(AActor* LeavingOperator)
 	}
 	OperatorLostControllerTime = 0.0;
 	// Design 8.3.1: the ship keeps its heading and coasts down. No autopilot, no snap to zero.
-	ThrottleIntent = 0.0f;
-	SteerIntent = 0.0f;
+	ResetControlIntent();
 	GetOwner()->ForceNetUpdate();
 	OnHelmChanged.Broadcast(this);
 	BroadcastHelmState();
@@ -273,10 +271,48 @@ void UNavalHelmComponent::SetControlIntent(AActor* Source, float InThrottle, flo
 
 	ThrottleIntent = FMath::Clamp(InThrottle, -1.0f, 1.0f);
 	SteerIntent = FMath::Clamp(InSteer, -1.0f, 1.0f);
+	WorldMoveIntent = FVector2D::ZeroVector;
+	FacingTarget = FVector::ZeroVector;
+	bHasFacingTarget = false;
 	UE_LOG(LogNavalCore, Verbose,
 		TEXT("[NavalInputTrace] phase=helm-intent result=accepted vessel=%s source=%s active_station=%s throttle=%.3f steer=%.3f helm_state=%d"),
 		*GetNameSafe(GetOwner()), *GetNameSafe(Source), *GetNameSafe(ActiveStation.Get()),
 		ThrottleIntent, SteerIntent, static_cast<int32>(GetHelmState()));
+}
+
+void UNavalHelmComponent::SetDirectControlIntent(
+	AActor* Source,
+	FVector2D InWorldMoveIntent,
+	FVector InFacingTarget,
+	bool bInHasFacingTarget)
+{
+	if (!GetOwner() || !GetOwner()->HasAuthority())
+	{
+		return;
+	}
+
+	if (Source == nullptr || Operator != Source || !AcceptsControlInput())
+	{
+		UE_LOG(
+			LogNavalCore,
+			Verbose,
+			TEXT("[NavalInputTrace] phase=direct-intent result=rejected vessel=%s source=%s operator=%s"),
+			*GetNameSafe(GetOwner()),
+			*GetNameSafe(Source),
+			*GetNameSafe(Operator.Get()));
+		return;
+	}
+
+	if (!FMath::IsFinite(InWorldMoveIntent.X) || !FMath::IsFinite(InWorldMoveIntent.Y))
+	{
+		InWorldMoveIntent = FVector2D::ZeroVector;
+	}
+	WorldMoveIntent = InWorldMoveIntent.GetClampedToMaxSize(1.0f);
+	ThrottleIntent = 0.0f;
+	SteerIntent = 0.0f;
+
+	bHasFacingTarget = bInHasFacingTarget && !InFacingTarget.ContainsNaN();
+	FacingTarget = bHasFacingTarget ? InFacingTarget : FVector::ZeroVector;
 }
 
 float UNavalHelmComponent::GetThrottleIntent() const
@@ -325,6 +361,20 @@ ENavalHelmState UNavalHelmComponent::GetHelmState() const
 bool UNavalHelmComponent::BeginCapture(AActor* InChallenger)
 {
 	return BeginCaptureAtStation(InChallenger, ActiveStation ? ActiveStation.Get() : GetOwner());
+}
+
+FVector2D UNavalHelmComponent::GetWorldMoveIntent() const
+{
+	return AcceptsControlInput() ? WorldMoveIntent : FVector2D::ZeroVector;
+}
+
+void UNavalHelmComponent::ResetControlIntent()
+{
+	ThrottleIntent = 0.0f;
+	SteerIntent = 0.0f;
+	WorldMoveIntent = FVector2D::ZeroVector;
+	FacingTarget = FVector::ZeroVector;
+	bHasFacingTarget = false;
 }
 
 bool UNavalHelmComponent::BeginCaptureAtStation(AActor* InChallenger, AActor* StationActor)
@@ -488,6 +538,7 @@ void UNavalHelmComponent::CompleteCapture()
 	UnbindOperatorDestroyed();
 	Operator = nullptr;
 	ActiveStation = nullptr;
+	ResetControlIntent();
 	UpdateTickEnabled();
 
 	if (VesselComponent)

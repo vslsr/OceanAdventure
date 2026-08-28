@@ -34,7 +34,7 @@
 - 不得将 GameFeature 专属内容放入项目 `/Game` 内容目录、项目根 `Source/` 或其他插件目录。
 - 只有经确认与任何单一 GameFeature 无关、可被多个系统共享的通用能力，才可放入项目或通用插件目录。
 - 两个 GameFeature 需要用同一份资产时，把资产下沉到通用插件的 `Content/`，不要在各自目录里各存一份。
-  先例：`/NavalCore/Naval/BP_Naval_Cannon` —— 野战架设（OceanAdventure）与甲板建造（Raft）共用的那门炮。
+  先例：`/NavalCore/Blueprints/Cannon/BP_Naval_Cannon` —— 野战架设（OceanAdventure）与甲板建造（Raft）共用的那门炮。
   通用插件要装内容需在 `.uplugin` 里打开 `CanContainContent`，其内容只能引用 Engine 与其它通用插件。
 
 ## 模块分层

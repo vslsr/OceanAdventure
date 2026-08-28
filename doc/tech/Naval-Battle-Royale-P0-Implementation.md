@@ -26,7 +26,7 @@
 
 - **NavalCore 不认识 GAS、CommonUI、LyraGame。** 队伍归属通过 `IGenericTeamAgentInterface` 读取，作弊命令、存档恢复、编辑器脚本可以直接调用框架 API。
 - **两个 GameFeature 互不引用。** 船体组件由 Raft 自己的 GameFeatureData 注入 `ARaftVesselActor`（同时覆盖普通 Raft 与 LifeRaft）；玩法层只依赖 NavalCore 的舵站接口，不引用 Raft 类。
-- **炮只有一门。** 设计 7.10 规定地面架设与甲板安装是同一门炮、同一套规则，所以蓝图、炮弹和美术都下沉到 `NavalCore`（`/NavalCore/Naval/BP_Naval_Cannon`），野战与甲板两条路径都指向它。为此 `NavalCore.uplugin` 开了 `CanContainContent`——通用插件装内容不违反分层，Feature 依赖通用框架是自上而下的合法方向；反过来把炮留在某个 Feature 里，另一个 Feature 就无法引用。
+- **炮只有一门。** 设计 7.10 规定地面架设与甲板安装是同一门炮、同一套规则，所以蓝图、炮弹和美术都下沉到 `NavalCore`（`/NavalCore/Blueprints/Cannon/BP_Naval_Cannon`），野战与甲板两条路径都指向它。为此 `NavalCore.uplugin` 开了 `CanContainContent`——通用插件装内容不违反分层，Feature 依赖通用框架是自上而下的合法方向；反过来把炮留在某个 Feature 里，另一个 Feature 就无法引用。
 - **`GameFeatureAction_AddComponents` 的反射桥下沉到 NavalCore**（`UNavalCoreAssetLibrary`），Raft 的编辑器脚本不再需要调用 OceanAdventure 的脚本。
 
 ## 2. P0 硬规则 → 代码
@@ -43,8 +43,8 @@
 | 主舵台 = 交互点，舵芯座 = 受击体 | `ANavalHelmActor` | 舵轮 `NoCollision`，甲板下方较宽的加固座耐久 750（约普通墙 2.9 倍） |
 | 舵芯失能只丧失操控，不等于沉船 | `UNavalHelmComponent` + `UNavalVesselComponent` | 两条独立生命值；核心归零→漂航，船壳归零→沉没倒计时 |
 | 船壳归零先失能，保留抢修窗口 | `UNavalVesselComponent` | 20 秒倒计时、一次 7 秒抢修恢复 12% 船壳；继续挨打会**缩短**倒计时 |
-| 失船后仍能参与 | `UOceanAdventureGameplayAbility_DeployLifeRaft` | 每队一次；30% 船壳、70% 航速；直接继承 `ARaftVesselActor`，结构上没有建造接口/组件，按 E 直接驾驶船体 |
-| 吨位/浮力/推力三分档 | `UNavalLoadComponent` | 按总纲 7.11 的分档表；重要的是"重量永远算，容量只在部件正常时算" |
+| 失船后仍能参与 | `UOceanAdventureGameplayAbility_DeployLifeRaft` | 每队一次；30% 船壳、70% 航速；站上自动请求驾驶；WASD 世界方向移动、鼠标独立定船头 |
+| 吨位/浮力/推力三分档 | `UNavalLoadComponent` | 分档之外再按总吨位连续降低线性/角响应；补足浮力与推力也不会消除大木筏惯性 |
 | 浮筒被打掉 → 危险吃水 | 同上 | 严重超载即进水，每秒 6% 船壳，给 10–15 秒抢救窗口 |
 | 严重超载禁止继续加重 | `UNavalLoadComponent::CanAcceptPiece` | 但**永远允许**装浮筒或拆除，否则玩家会被自己卡死 |
 | 一局必须结束 | `UOceanAdventureNavalMatchComponent` | 0:00 起算，5:30 信标启动，8:00 硬判定；淘汰 / 占领 / 超时三条出口 |
@@ -55,7 +55,7 @@
 - 所有船只、部件、重武器状态由服务端写入并复制；客户端只做本地预览与表现。
 - 玩家请求一律走 GAS 的 TargetData 通道（`CallServerSetReplicatedTargetData` + `AbilityTargetDataSetDelegate`），**没有任何自造的 Server/Client RPC**。操舵是一个 20Hz 的连续 TargetData 采样流，服务端逐条校验"你是不是我认为在掌舵的那个人"。
 - 重炮交互成功后，服务端给玩家 ASC 临时授予 `UOceanAdventureGameplayAbility_FireHeavyWeapon`，以 HeavyWeapon Actor 作为 `SourceObject` 并绑定 `InputTag.Naval.Fire`；离炮或炮被销毁时回收该 Spec。
-- 弹道参数集中在 `/NavalCore/Naval/BP_Naval_Cannon` 的 `Naval|HeavyWeapon`：`MinimumRange`（最小射程）、`MaxRange`（满蓄力射程）、`TrajectoryFlightSeconds`（满蓄力飞行时间）和 `MaxTrajectoryRise`（满蓄力弧顶高度）。`Plugins/NavalCore/Content/Python/CreateNavalCoreCannon.py` 顶部的 `CANNON_TRAJECTORY_DEFAULTS` 可批量重设这些值；蓄力过程会按射程比例缩放弧线并保持同一发射仰角。
+- 弹道参数集中在 `/NavalCore/Blueprints/Cannon/BP_Naval_Cannon` 的 `Naval|HeavyWeapon`：`MinimumRange`（最小射程）、`MaxRange`（满蓄力射程）、`TrajectoryFlightSeconds`（满蓄力飞行时间）和 `MaxTrajectoryRise`（满蓄力弧顶高度）。`Plugins/NavalCore/Content/Python/CreateNavalCoreCannon.py` 顶部的 `CANNON_TRAJECTORY_DEFAULTS` 可批量重设这些值；蓄力过程会按射程比例缩放弧线并保持同一发射仰角。
 - 反馈（失败原因、警报、载重变化、命中）全部通过 `UGameplayMessageSubsystem` 广播，UI/音效/埋点各自订阅。
 - 倒计时以**服务器时间戳**复制（`NavalTime::GetNetworkTimeSeconds`），而不是复制一个递减的秒数，中途加入或丢包的客户端读到的数字一致。
 - 角色伤害是唯一一处跨层：NavalCore 广播 `FNavalProjectileImpactMessage`，玩法层的 `UOceanAdventureNavalDamageRelay` 把它变成 GameplayEffect。这样框架层完全不碰 GAS。
@@ -86,8 +86,8 @@
 
 | 检查 | 期望 |
 | --- | --- |
-| 普通 Raft 建造舵台后走近按 `E` | 角色贴到固定舵台，WASD 变成油门/转向；普通 Raft 未造舵台时不能驾驶 |
-| 走近 LifeRaft 船体按 `E` | 不生成舵台 Actor，直接进入驾驶；再次按 E 下船 |
+| 普通 Raft 建造舵台后走近按 `E` | WASD 变成油门/转向；停船不能原地转，松 W 后长滑，转弯保留侧滑 |
+| 站上 LifeRaft | 自动进入驾驶；WASD 直接控制相机空间移动方向，鼠标只控制船头；按 E 下船后不会原地自动重进，离开再登可重新驾驶 |
 | 在甲板放一面墙，站在墙后向外射击 | 子弹打在**自己的墙**上，不穿过 |
 | 把墙换成单向窗，站在窗内向外射击 | 子弹放行；绕到窗外向内射击被挡；打烂窗后双向都能过 |
 | 造浮筒/推进件，看 HUD 载重与推力条 | 跨档时分档变化，超载后转向明显变钝 |
@@ -107,7 +107,8 @@
 4. **倒计时一致**：船壳归零后两端读到的剩余秒数偏差应在一帧内。
 5. **夺船**：B 登上 A 的空船，在舵台持续交互，4 秒后开始改旗、11 秒完成；A 回来打断后进度缓慢回退而不是清零；改旗完成后**窗、炮、储物一起换队**。
 6. **反作弊回归**：客户端断点/修改本地瞄点后开炮，服务端仍按自己的射界与最小射距拒绝。
-7. **救生筏**：A 队沉船后部署救生筏，两端都看到它；船体没有建造组件，靠近按 E 可直接驾驶；A 队第二次尝试被拒绝。
+7. **救生筏**：A 队沉船后部署救生筏，两端都看到它；船体没有建造组件，A 站上后自动请求驾驶；
+   A 客户端 WASD 的世界移动方向与鼠标朝向在两端一致，急转时非控制端不应明显外推过冲；A 队第二次尝试被拒绝。
 8. **掉线释放占用**：A 占住重炮后**强杀客户端进程**（不是正常退出）。几秒内 B 必须能占上同一门炮，炮口停在 A 最后的角度。掌舵同理：A 掌舵时掉线，B 必须能接管方向盘。
 9. **重连锚点**：A 重连后应在**炮旁边**出生，而不是默认出生点；此时炮的 `WeaponOperator` 已经是 B，A 按 `E` 应被拒（`Naval.Fail.SeatOccupied`）。
 10. **锚点一次性**：A 重连后正常死亡一次，必须在**默认出生点**重生，不能再被拉回掉线位置。

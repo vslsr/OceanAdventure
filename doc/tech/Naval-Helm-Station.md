@@ -1,10 +1,12 @@
-# 船舵（主舵台）：按 E 上舵、再按 E 下舵
+# 船舵（主舵台）：普通木筏按 E 上舵，LifeRaft 站上即驾驶
 
 ## 这一版做了什么
 
-- 普通 `ARaftActor` 需要先建造固定 **船舵 Actor**（`ANavalHelmActor`）；LifeRaft 没有舵台，走近船体按 `E` 直接驾驶。
-- 上舵后角色被钉在舵位上（`OperatorPoint`），`W/S` 变成进退、`A/D` 变成转向，控制的是船体而不是脚。
-- 再按一次 `E` 下舵：输入还给走路，船保持航向并自然减速（不急停、不自动驾驶）。
+- 普通 `ARaftActor` 需要先建造固定 **船舵 Actor**（`ANavalHelmActor`）并按 `E` 上舵；
+  LifeRaft 没有舵台，角色站上其 MovementBase 后自动请求驾驶。
+- 上普通木筏后角色被钉在舵位上（`OperatorPoint`），`W/S` 变成进退、`A/D` 变成转向；
+  LifeRaft 则由 WASD 直接给出相机空间移动方向、鼠标给出船头朝向，两者互不耦合。
+- 再按一次 `E` 下舵：输入还给走路。LifeRaft 会抑制同一筏的自动重进，直到角色真正离开再登筏。
 - 舵轮会跟着当前实际转向量转动，作为纯表现反馈。
 
 整条链路与"炮"完全同构，只是把"开火"换成了"操舵"：
@@ -14,9 +16,9 @@
 | 世界里的 Actor | `ANavalHeavyWeaponActor` | `INavalHelmStation`：固定 `ANavalHelmActor` 或 LifeRaft 船体 |
 | 谁在用它 | Actor 自己的 `WeaponOperator` | 船上的 `UNavalHelmComponent::Operator` |
 | 上/下站位的能力 | `UOceanAdventureGameplayAbility_OperateHeavyWeapon` | `UOceanAdventureGameplayAbility_OperateHelm` |
-| 站位期间的输入 | 临时授予 `FireHeavyWeapon` | `OperateHelm` 生命周期内 push/pop `IMC_OceanHelm` |
+| 站位期间的输入 | 临时授予 `FireHeavyWeapon` | `OperateHelm` 按船型 push/pop `IMC_OceanHelm` 或 `IMC_OceanDirectHelm` |
 | 共同基类 | `UOceanAdventureGameplayAbility_NavalStation` | 同左 |
-| 输入 | `InputTag.Naval.Interact`（E） | 同左 |
+| 入口 | `InputTag.Naval.Interact`（E） | 普通舵台同左；LifeRaft 由 MovementBase 自动激活 |
 
 ## 按下 E 之后发生了什么
 
@@ -33,6 +35,12 @@ IA_Naval_Interact (E)
             └─ OperateHeavyWeapon: 被 Status.Naval.Steering 挡住（ActivationBlockedTags）
 ```
 
+LifeRaft 的入口没有绕开这条链：`UOceanAdventureHelmInputComponent` 每 0.1 秒只检查本地
+Pawn 的附着父级/MovementBase，不扫世界；发现 `DirectPlanar` 船体后调用 ASC 的
+`TryActivateAbilityByClass(OperateHelm)`。随后仍由同一个 Ability 选择舵站、预测吸附并通过
+TargetData 请求占用，服务端照常复检唯一 Operator。失败或主动按 E 退出后，同一筏不会高频重试；
+离开 MovementBase 后抑制才解除。
+
 上舵成功后：
 
 - `EnterStationPresentation()` 把角色 `AttachToActor` 到船舵上（不是每帧 teleport），
@@ -40,12 +48,15 @@ IA_Naval_Interact (E)
 - 站位能力应用 OceanAdventure 自己的 Infinite `NavalStationLock` GameplayEffect，同时授予
   `Gameplay.MovementStopped` 和当前站位状态标签。CMC、鼠标朝向和 TopDown facing
   都消费这个标签；退出时按 ActiveGameplayEffectHandle 原子移除，ASC 即使已换 Pawn 也不会残留。
-- `UOceanAdventureHelmInputComponent::EnableHelmInput()` 压入优先级 2 的
-  `IMC_OceanHelm`，`W/A/S/D` 被 `IA_Ocean_Helm_Throttle` /
-  `IA_Ocean_Helm_Steer` 吃掉，TopDown 的原生移动 action 收不到这些键。
+- `UOceanAdventureHelmInputComponent::EnableHelmInput(Model)` 压入优先级 2 的对应上下文。
+  普通木筏由 `IMC_OceanHelm` 把 WASD 写成 throttle/steer；LifeRaft 由
+  `IMC_OceanDirectHelm` 写入 `IA_Ocean_Helm_DirectMove`（Axis2D）。两者都会盖过
+  TopDown 原生移动 mapping，输入不会落到角色腿上。
 - `OperateHelm` 每 `ControlSampleInterval`（0.05s）从输入组件采样一次，仍旧走
   TargetData 通道发给服务端；
-  服务端 `SetControlIntent()` 只接受"它认为正在掌舵的那个 Actor"发来的值，其余一律丢弃。
+  普通木筏提交 throttle/steer；LifeRaft 先按控制器 Yaw 把 Axis2D 变成世界 XY，并复用
+  `GetCursorAimLocation()` 提交朝向目标。服务端按复制的 `MovementModel` 选择解释方式，
+  且只接受"它认为正在掌舵的那个 Actor"发来的值，其余一律丢弃。
 - 再按一次 `E`：`UAbilityTask_WaitInputPress` 收到同一个输入 → `EndAbility` → 发 Release、
   先弹出 `IMC_OceanHelm`，再移除站位 GE、解除附着，并上 0.45s 的
   `Status.Naval.StationExitLock`。原来的 Walking/Falling/Swimming 状态保持不变。
@@ -75,7 +86,18 @@ Actor 只是玩家能走到、能看到、能打到的那一层。
 
 LifeRaft 直接继承 `ARaftVesselActor`，没有 `IBuildStructureHost`、`UBuildStructureComponent`
 或 `UBuildStructureVisualComponent`。其 Definition 开启 direct helm interaction，船体本身实现
-`INavalHelmStation`；所以按 E 能开船，但世界中没有一个伪装的船舵 Actor。
+`INavalHelmStation`，并把 `MovementModel` 设为 `DirectPlanar`；所以站上去会自动走既有 GAS
+占用链，但世界中没有一个伪装的船舵 Actor。普通 `DA_Raft_Default` 保持 `Helm`。
+
+两套模型只共用船壳状态、吨位/推力/浮力系数和复制姿态，不共用控制积分：
+
+| 模型 | 平移 | 转向 | 松手与侧滑 |
+| --- | --- | --- | --- |
+| `DirectPlanar` | 世界 XY 目标速度，不依赖船头 | 有限角速度追鼠标目标 | 高制动、短外推，适合小救生筏 |
+| `Helm` | 沿船头施加推力 | 舵效随航速平滑增长，静止时为 0 | 低漂航减速度、低横向阻力，保留木筏惯性与甩尾 |
+
+`BPC_NavalLoad_RaftT0` 还按总吨位计算连续 `LinearResponse` / `AngularResponse`：增加浮筒和
+推进只能改善载重/推力分档，不能把已经拼大的木筏重新变成小快艇。
 
 木筏的这套船体组件由 Raft 这个 GameFeature 自己注入（`RaftNaval_AddVesselComponents`）：
 
@@ -92,7 +114,7 @@ Raft.uasset (GameFeatureData)
 
 ## 常见排查
 
-- **按 E 没反应**：先看 `LogOceanAdventure` 里的 `[NavalStation] No station found`。
+- **普通舵台按 E / LifeRaft 站上后没反应**：先看 `LogOceanAdventure` 里的 `[NavalStation] No station found`。
   多半是普通 Raft 还没建舵台、站得太远（搜索 300cm，舵站校验 260cm），或者
   这条船没被注入 `UNavalHelmComponent`（Raft Feature 未激活/资产脚本未重跑）。
 - **上去了立刻被弹下来**：服务端拒绝，日志里会打出 `Server occupy refused`；
@@ -100,7 +122,7 @@ Raft.uasset (GameFeatureData)
 - **上了舵船不动**：先看 `[Helm] Avatar ... has no OceanAdventureHelmInputComponent`、
   `Cannot enable helm input ... tagged native actions are not bound`。出现前者说明
   `OceanNaval_AddHelmInputComponent` 没注入，出现后者说明 PawnData 的
-  `NativeInputActions` 没保留两个舵 InputTag；重跑 `CreateOceanAdventureExperience.py`
+  `NativeInputActions` 没保留三个舵 InputTag；重跑 `CreateOceanAdventureExperience.py`
   后再跑 `CreateNavalP0Assets.py`，并重启编辑器。输入正常但仍不动时，再检查
   `AcceptsControlInput()`（舵芯/夺船/残骸）和推进部件。
 

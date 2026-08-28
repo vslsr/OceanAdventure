@@ -4,6 +4,7 @@ What this owns is everything that only means something once GAS and the match ex
 
     IMC_OceanNaval / DA_InputConfig_OceanNaval   InputTag -> InputAction, no hard-coded keys
     IMC_OceanHelm                                W/S -> signed throttle, A/D -> signed steer
+    IMC_OceanDirectHelm                          WASD -> one camera-relative Axis2D intent
     DA_AbilitySet_OceanNaval                     station/deploy abilities granted by PawnData
     BP_NavalP0_Beacon                            the sudden-death beacon
     B_Experience_NavalP0                         the P0 match, its match component, and the
@@ -11,7 +12,8 @@ What this owns is everything that only means something once GAS and the match ex
 
 The cannon is not here. Ground emplacement and deck gun are one weapon under design 7.10, so
 the Blueprint, its shell and their art live in the general framework plugin
-(/NavalCore/Naval/BP_Naval_Cannon, authored by NavalCore's CreateNavalCoreCannon.py) where
+(/NavalCore/Blueprints/Cannon/BP_Naval_Cannon, authored by NavalCore's
+CreateNavalCoreCannon.py) where
 both features are allowed to reach them. This feature only names it, through
 OceanAdventureNavalSettings.GroundHeavyWeaponClass in Config/DefaultGame.ini.
 
@@ -42,6 +44,7 @@ BASE_EXPERIENCE_PATH = f"{EXPERIENCE_ROOT}/BP_Experience_Ocean"
 INPUT_MAPPING_PATH = f"{INPUT_ROOT}/IMC_OceanNaval"
 INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanNaval"
 HELM_MAPPING_PATH = f"{INPUT_ROOT}/IMC_OceanHelm"
+DIRECT_HELM_MAPPING_PATH = f"{INPUT_ROOT}/IMC_OceanDirectHelm"
 ABILITY_SET_PATH = f"{NAVAL_ROOT}/DA_AbilitySet_OceanNaval"
 BEACON_PATH = f"{NAVAL_ROOT}/BP_NavalP0_Beacon"
 
@@ -67,6 +70,7 @@ HELM_ACTION_SPECS = (
     ("IA_Ocean_Helm_Throttle", "W/S"),
     ("IA_Ocean_Helm_Steer", "A/D"),
 )
+DIRECT_HELM_ACTION_NAME = "IA_Ocean_Helm_DirectMove"
 
 
 ABILITIES = (
@@ -265,8 +269,8 @@ def configure_input_assets():
     input_config.set_editor_property("ability_input_actions", ability_actions)
     save(input_config)
 
-    # The helm controls are continuous Axis1D actions, not ability activators. They are bound
-    # by UOceanAdventureHelmInputComponent only while the helm ability owns IMC_OceanHelm.
+    # These are continuous native actions, not ability activators. The component binds all
+    # three by tag, then activates only the mapping context selected by the vessel model.
     helm_actions = []
     for action_name, _ in HELM_ACTION_SPECS:
         action = load_or_create(
@@ -279,6 +283,15 @@ def configure_input_assets():
         save(action)
         helm_actions.append(action)
 
+    direct_move_action = load_or_create(
+        f"{INPUT_ROOT}/{DIRECT_HELM_ACTION_NAME}",
+        unreal.InputAction,
+        unreal.InputActionFactory() if hasattr(unreal, "InputActionFactory") else None,
+    )
+    direct_move_action.set_editor_property("value_type", unreal.InputActionValueType.AXIS2D)
+    direct_move_action.set_editor_property("triggers", [])
+    save(direct_move_action)
+
     # Lyra's native input path owns the action lookup. The helm actions are not ability
     # activators, but they still live in PawnData's InputConfig and are selected by explicit
     # InputTags rather than by physical keys or asset paths at runtime.
@@ -289,7 +302,9 @@ def configure_input_assets():
     helm_input_tags = [
         gameplay_tag("InputTag.Naval.Helm.Throttle"),
         gameplay_tag("InputTag.Naval.Helm.Steer"),
+        gameplay_tag("InputTag.Naval.Helm.DirectMove"),
     ]
+    native_helm_actions = helm_actions + [direct_move_action]
     replaced_tags = list(helm_input_tags)
     native_actions = [
         entry
@@ -300,15 +315,15 @@ def configure_input_assets():
         )
     ]
     preserved_native_count = len(native_actions)
-    for action, input_tag in zip(helm_actions, helm_input_tags):
+    for action, input_tag in zip(native_helm_actions, helm_input_tags):
         native_actions.append(unreal.LyraInputAction(input_action=action, input_tag=input_tag))
     base_input_config.set_editor_property("native_input_actions", native_actions)
     configured_native_actions = base_input_config.get_editor_property("native_input_actions")
     require(
-        len(configured_native_actions) == preserved_native_count + len(helm_actions),
+        len(configured_native_actions) == preserved_native_count + len(native_helm_actions),
         "Base InputConfig native actions changed by an unexpected amount while adding helm actions",
     )
-    for action, input_tag in zip(helm_actions, helm_input_tags):
+    for action, input_tag in zip(native_helm_actions, helm_input_tags):
         require(
             any(
                 asset_path(entry.get_editor_property("input_action")) == asset_path(action)
@@ -333,8 +348,23 @@ def configure_input_assets():
         "Failed to configure signed IMC_OceanHelm W/S/D/A mappings",
     )
     save(helm_mapping)
-    log("Configured IMC_OceanHelm with signed W/S throttle and A/D steer actions")
-    return input_mapping, input_config, helm_mapping
+
+    direct_mapping = load_or_create(
+        DIRECT_HELM_MAPPING_PATH,
+        unreal.InputMappingContext,
+        unreal.InputMappingContext_Factory()
+        if hasattr(unreal, "InputMappingContext_Factory")
+        else None,
+    )
+    require(
+        unreal.OceanAdventureAssetLibrary.configure_direct_helm_input_mapping(
+            direct_mapping, direct_move_action
+        ),
+        "Failed to configure IMC_OceanDirectHelm Axis2D W/S/D/A mappings",
+    )
+    save(direct_mapping)
+    log("Configured helm and direct-planar input contexts with tag-dispatched actions")
+    return input_mapping, input_config, helm_mapping, direct_mapping
 
 
 def configure_ability_set():
@@ -362,7 +392,7 @@ def configure_ability_set():
     return ability_set
 
 
-def configure_helm_input_component(helm_mapping):
+def configure_helm_input_component(helm_mapping, direct_mapping):
     """Set/validate editor-session CDO defaults; the native class also has a path fallback."""
     component_class = require_type(
         "OceanAdventureHelmInputComponent", "the OceanAdventureRuntime module"
@@ -370,12 +400,15 @@ def configure_helm_input_component(helm_mapping):
     component_cdo = unreal.get_default_object(component_class)
     throttle_tag = gameplay_tag("InputTag.Naval.Helm.Throttle")
     steer_tag = gameplay_tag("InputTag.Naval.Helm.Steer")
+    direct_move_tag = gameplay_tag("InputTag.Naval.Helm.DirectMove")
     component_cdo.set_editor_property("throttle_input_tag", throttle_tag)
     component_cdo.set_editor_property("steer_input_tag", steer_tag)
+    component_cdo.set_editor_property("direct_move_input_tag", direct_move_tag)
     component_cdo.set_editor_property("helm_mapping_priority", 2)
 
     configured_throttle = component_cdo.get_editor_property("throttle_input_tag")
     configured_steer = component_cdo.get_editor_property("steer_input_tag")
+    configured_direct_move = component_cdo.get_editor_property("direct_move_input_tag")
     configured_priority = int(component_cdo.get_editor_property("helm_mapping_priority"))
     require(
         gameplay_tags_equal(configured_throttle, throttle_tag),
@@ -386,11 +419,19 @@ def configure_helm_input_component(helm_mapping):
         "Helm input component did not retain InputTag.Naval.Helm.Steer",
     )
     require(
+        gameplay_tags_equal(configured_direct_move, direct_move_tag),
+        "Helm input component did not retain InputTag.Naval.Helm.DirectMove",
+    )
+    require(
         asset_path(helm_mapping) == f"{FEATURE_ROOT}/Input/IMC_OceanHelm",
         "Helm mapping asset path changed; native component fallback would not resolve it",
     )
+    require(
+        asset_path(direct_mapping) == f"{FEATURE_ROOT}/Input/IMC_OceanDirectHelm",
+        "Direct helm mapping asset path changed; native component fallback would not resolve it",
+    )
     require(configured_priority == 2, "Helm input component did not retain mapping priority 2")
-    log("Configured OceanAdventureHelmInputComponent with IMC_OceanHelm and both actions")
+    log("Configured OceanAdventureHelmInputComponent with helm/direct mappings and three actions")
     return component_class
 
 
@@ -398,9 +439,9 @@ def configure_beacon_blueprint():
     """The sudden-death beacon, as a Blueprint designers can drop into a level.
 
     The field cannon used to be authored here too. It is now the shared gun in
-    /NavalCore/Naval/BP_Naval_Cannon: the deck gun and the emplacement are the same weapon, and
-    only a general-framework asset can be named by both features without one of them reaching
-    into the other. This feature points at it through
+    /NavalCore/Blueprints/Cannon/BP_Naval_Cannon: the deck gun and the emplacement are the
+    same weapon, and only a general-framework asset can be named by both features without one
+    of them reaching into the other. This feature points at it through
     OceanAdventureNavalSettings.GroundHeavyWeaponClass.
     """
     beacon_class = require(
@@ -485,7 +526,7 @@ def configure_pawn_data(ability_set):
     )
     actual_input_config = pawn_data.get_editor_property("input_config")
     require(
-        actual_input_config == expected_input_config,
+        asset_path(actual_input_config) == asset_path(expected_input_config),
         (
             f"{PAWN_DATA_PATH} still uses {actual_input_config}; run "
             "CreateOceanAdventureExperience.py before CreateNavalP0Assets.py"
@@ -493,7 +534,7 @@ def configure_pawn_data(ability_set):
     )
 
     ability_sets = list(pawn_data.get_editor_property("ability_sets"))
-    if ability_set not in ability_sets:
+    if not any(asset_path(entry) == asset_path(ability_set) for entry in ability_sets):
         ability_sets.append(ability_set)
     pawn_data.set_editor_property("ability_sets", ability_sets)
     save(pawn_data)
@@ -592,9 +633,9 @@ def configure_experience(pawn_data):
 def main():
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([FEATURE_ROOT], True, True)
 
-    input_mapping, input_config, helm_mapping = configure_input_assets()
+    input_mapping, input_config, helm_mapping, direct_mapping = configure_input_assets()
     ability_set = configure_ability_set()
-    helm_component_class = configure_helm_input_component(helm_mapping)
+    helm_component_class = configure_helm_input_component(helm_mapping, direct_mapping)
     configure_beacon_blueprint()
     configure_game_feature_data(input_mapping, input_config, helm_component_class)
     pawn_data = configure_pawn_data(ability_set)

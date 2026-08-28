@@ -63,6 +63,15 @@ public:
 		UInputAction* ThrottleAction,
 		UInputAction* SteerAction);
 
+	/**
+	 * Rebuilds the direct-planar mapping as one Axis2D action: A/D write X and W/S write Y.
+	 * This remains an editor-only authoring bridge; runtime input is still tag-dispatched.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Ocean Adventure|Assets")
+	static bool ConfigureDirectHelmInputMapping(
+		UInputMappingContext* InputMapping,
+		UInputAction* DirectMoveAction);
+
 	/** Creates an Add Input Binding action owned by Outer. */
 	UFUNCTION(BlueprintCallable, Category = "Ocean Adventure|Assets")
 	static UGameFeatureAction* CreateAddInputBindingAction(

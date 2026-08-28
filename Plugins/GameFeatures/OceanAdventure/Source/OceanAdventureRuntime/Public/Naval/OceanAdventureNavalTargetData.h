@@ -14,7 +14,7 @@ enum class ENavalStationRequest : uint8
 	Occupy,
 	/** Leave the station. */
 	Release,
-	/** A throttle/steer or aim sample while occupying. */
+	/** A throttle/steer, direct-move/facing, or aim sample while occupying. */
 	Control,
 	/** Pull the trigger on a heavy weapon. */
 	Fire,
@@ -44,7 +44,7 @@ struct FOceanAdventureNavalTargetData : public FGameplayAbilityTargetData
 	UPROPERTY()
 	ENavalStationRequest Request = ENavalStationRequest::Occupy;
 
-	/** Where a heavy weapon is being pointed. Unused for helm control. */
+	/** Heavy-weapon aim, or the DirectPlanar hull-facing target. */
 	UPROPERTY()
 	FVector_NetQuantize100 AimLocation = FVector::ZeroVector;
 
@@ -70,10 +70,44 @@ struct FOceanAdventureNavalTargetData : public FGameplayAbilityTargetData
 	{
 		QuantizedThrottle = static_cast<int8>(FMath::RoundToInt(FMath::Clamp(Throttle, -1.0f, 1.0f) * 100.0f));
 		QuantizedSteer = static_cast<int8>(FMath::RoundToInt(FMath::Clamp(Steer, -1.0f, 1.0f) * 100.0f));
+		QuantizedWorldMoveX = 0;
+		QuantizedWorldMoveY = 0;
+		bHasFacingTarget = false;
 	}
 
 	float GetThrottle() const { return QuantizedThrottle / 100.0f; }
 	float GetSteer() const { return QuantizedSteer / 100.0f; }
+
+	/** World-space XY movement for DirectPlanar vessels, quantised independently of helm axes. */
+	UPROPERTY()
+	int8 QuantizedWorldMoveX = 0;
+
+	UPROPERTY()
+	int8 QuantizedWorldMoveY = 0;
+
+	UPROPERTY()
+	bool bHasFacingTarget = false;
+
+	void SetDirectControlIntent(
+		const FVector2D& WorldMoveIntent,
+		const FVector& FacingTarget,
+		bool bInHasFacingTarget)
+	{
+		const FVector2D Clamped = WorldMoveIntent.GetClampedToMaxSize(1.0f);
+		QuantizedThrottle = 0;
+		QuantizedSteer = 0;
+		QuantizedWorldMoveX = static_cast<int8>(
+			FMath::RoundToInt(FMath::Clamp(Clamped.X, -1.0f, 1.0f) * 100.0f));
+		QuantizedWorldMoveY = static_cast<int8>(
+			FMath::RoundToInt(FMath::Clamp(Clamped.Y, -1.0f, 1.0f) * 100.0f));
+		AimLocation = FacingTarget;
+		bHasFacingTarget = bInHasFacingTarget;
+	}
+
+	FVector2D GetWorldMoveIntent() const
+	{
+		return FVector2D(QuantizedWorldMoveX / 100.0f, QuantizedWorldMoveY / 100.0f);
+	}
 
 	virtual UScriptStruct* GetScriptStruct() const override
 	{
@@ -83,11 +117,14 @@ struct FOceanAdventureNavalTargetData : public FGameplayAbilityTargetData
 	virtual FString ToString() const override
 	{
 		return FString::Printf(
-			TEXT("NavalTargetData station=%s request=%d throttle=%.2f steer=%.2f"),
+			TEXT("NavalTargetData station=%s request=%d throttle=%.2f steer=%.2f move=(%.2f,%.2f) facing=%d"),
 			*GetNameSafe(StationActor.Get()),
 			static_cast<int32>(Request),
 			GetThrottle(),
-			GetSteer());
+			GetSteer(),
+			GetWorldMoveIntent().X,
+			GetWorldMoveIntent().Y,
+			bHasFacingTarget);
 	}
 
 	bool NetSerialize(FArchive& Ar, UPackageMap* Map, bool& bOutSuccess);

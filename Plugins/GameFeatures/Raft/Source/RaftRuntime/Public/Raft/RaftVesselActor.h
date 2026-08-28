@@ -68,6 +68,9 @@ protected:
 	/** Always the authored hull extent, never an envelope expanded by construction. */
 	FVector GetBaseDeckExtent() const;
 
+	/** Applies the data-selected model after GameFeature component injection is complete. */
+	void ApplyMovementDefinition();
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Raft")
 	TObjectPtr<URaftDefinition> RaftDefinition;
 

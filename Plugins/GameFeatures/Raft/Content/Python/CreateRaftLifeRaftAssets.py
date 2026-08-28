@@ -7,8 +7,9 @@ This is the focused entry point for regenerating:
     /Raft/Vehicles/LifeRaft/BP_Raft_LifeRaft
 
 It reparents BP_Raft_LifeRaft to ARaftVesselActor, verifies that no construction components
-remain, and enables direct E-to-drive interaction on the hull. It deliberately does not
-build the deck cannon, fixed helm piece, or vessel component Blueprints.
+remain, enables hull-based helm interaction, and selects the DirectPlanar movement model used by
+OceanAdventure's stand-on auto-drive path. It deliberately does not build the deck cannon, fixed
+helm piece, or vessel component Blueprints.
 
 Prerequisites:
 

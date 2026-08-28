@@ -72,11 +72,31 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
 	void SetControlIntent(AActor* Source, float InThrottle, float InSteer);
 
+	/**
+	 * Server-side DirectPlanar write. WorldMoveIntent is already in world XY space; the
+	 * movement component clamps it again and treats FacingTarget as orientation only.
+	 */
+	UFUNCTION(BlueprintCallable, BlueprintAuthorityOnly, Category = "Naval|Helm")
+	void SetDirectControlIntent(
+		AActor* Source,
+		FVector2D InWorldMoveIntent,
+		FVector InFacingTarget,
+		bool bInHasFacingTarget);
+
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
 	float GetThrottleIntent() const;
 
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
 	float GetSteerIntent() const;
+
+	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
+	FVector2D GetWorldMoveIntent() const;
+
+	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
+	FVector GetFacingTarget() const { return FacingTarget; }
+
+	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
+	bool HasFacingTarget() const { return AcceptsControlInput() && bHasFacingTarget; }
 
 	UFUNCTION(BlueprintPure, Category = "Naval|Helm")
 	ENavalHelmState GetHelmState() const;
@@ -184,6 +204,7 @@ private:
 
 	void BindOperatorDestroyed(AActor* NewOperator);
 	void UnbindOperatorDestroyed();
+	void ResetControlIntent();
 
 	void UpdateCapture(float DeltaTime);
 	void CompleteCapture();
@@ -206,6 +227,11 @@ private:
 
 	UPROPERTY(Replicated)
 	float SteerIntent = 0.0f;
+
+	/** DirectPlanar intent is server-only; clients receive the resulting replicated pose. */
+	FVector2D WorldMoveIntent = FVector2D::ZeroVector;
+	FVector FacingTarget = FVector::ZeroVector;
+	bool bHasFacingTarget = false;
 
 	/** Server clock reading of the first sweep that saw the operator without a controller. */
 	double OperatorLostControllerTime = 0.0;

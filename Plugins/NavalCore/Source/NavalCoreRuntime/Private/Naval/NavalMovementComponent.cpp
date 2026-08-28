@@ -98,6 +98,7 @@ void UNavalMovementComponent::GetLifetimeReplicatedProps(TArray<FLifetimePropert
 
 	DOREPLIFETIME(UNavalMovementComponent, CurrentSpeed);
 	DOREPLIFETIME(UNavalMovementComponent, SpeedScale);
+	DOREPLIFETIME(UNavalMovementComponent, MovementModel);
 	DOREPLIFETIME(UNavalMovementComponent, ReplicatedPose);
 }
 
@@ -189,21 +190,42 @@ void UNavalMovementComponent::RefreshPassengerMoveIgnoreActors()
 	TArray<FOverlapResult> PawnOverlaps;
 	const FCollisionQueryParams QueryParams(
 		SCENE_QUERY_STAT(NavalPassengerMoveIgnore), /*bTraceComplex=*/false, OwnerActor);
+	// CMC deliberately floats walking capsules roughly 2 cm above the floor.
+	const FCollisionShape PassengerOverlapShape =
+		UpdatedPrimitive->GetCollisionShape(/*Inflation=*/5.0f);
 	World->OverlapMultiByObjectType(
 		PawnOverlaps,
 		UpdatedPrimitive->GetComponentLocation(),
 		UpdatedPrimitive->GetComponentQuat(),
 		FCollisionObjectQueryParams(ECC_Pawn),
-		// CMC deliberately floats walking capsules roughly 2 cm above the floor.
-		UpdatedPrimitive->GetCollisionShape(/*Inflation=*/5.0f),
+		PassengerOverlapShape,
 		QueryParams);
 
 	for (const FOverlapResult& Overlap : PawnOverlaps)
 	{
 		APawn* Pawn = Cast<APawn>(Overlap.GetActor());
-		const UPrimitiveComponent* MovementBase = Pawn ? Pawn->GetMovementBase() : nullptr;
+		if (!Pawn)
+		{
+			continue;
+		}
+
+		const UPrimitiveComponent* MovementBase = Pawn->GetMovementBase();
 		const AActor* BaseActor = MovementBase ? MovementBase->GetOwner() : nullptr;
-		if (BaseActor == OwnerActor || (BaseActor && BaseActor->IsAttachedTo(OwnerActor)))
+		bool bIsPassenger =
+			BaseActor == OwnerActor || (BaseActor && BaseActor->IsAttachedTo(OwnerActor));
+		if (!bIsPassenger)
+		{
+			// After leaving a station, CMC may not establish its movement base until the next
+			// FindFloor. Keep a pawn still inside the local hull overlap ignored during that gap.
+			const FVector LocalPosition = UpdatedPrimitive->GetComponentTransform()
+				.InverseTransformPosition(Pawn->GetActorLocation());
+			const FVector LocalExtent = PassengerOverlapShape.GetExtent();
+			bIsPassenger = FMath::Abs(LocalPosition.X) <= LocalExtent.X
+				&& FMath::Abs(LocalPosition.Y) <= LocalExtent.Y
+				&& FMath::Abs(LocalPosition.Z) <= LocalExtent.Z;
+		}
+
+		if (bIsPassenger)
 		{
 			if (!UpdatedPrimitive->GetMoveIgnoreActors().Contains(Pawn))
 			{
@@ -266,9 +288,28 @@ void UNavalMovementComponent::SetSpeedScale(float NewSpeedScale)
 	}
 }
 
+void UNavalMovementComponent::SetMovementModel(ENavalMovementModel NewMovementModel)
+{
+	AActor* OwnerActor = GetOwner();
+	if (!OwnerActor || !OwnerActor->HasAuthority() || MovementModel == NewMovementModel)
+	{
+		return;
+	}
+
+	MovementModel = NewMovementModel;
+	Velocity = FVector::ZeroVector;
+	CurrentSpeed = 0.0f;
+	YawRateDegrees = 0.0f;
+	UpdateComponentVelocity();
+	OwnerActor->ForceNetUpdate();
+}
+
 float UNavalMovementComponent::GetSpeedFraction() const
 {
-	return MaxForwardSpeed > 0.0f ? FMath::Clamp(CurrentSpeed / MaxForwardSpeed, -1.0f, 1.0f) : 0.0f;
+	const float TunedMaximum = MaxForwardSpeed * FMath::Max(0.1f, SpeedScale);
+	return TunedMaximum > 0.0f
+		? FMath::Clamp(CurrentSpeed / TunedMaximum, -1.0f, 1.0f)
+		: 0.0f;
 }
 
 void UNavalMovementComponent::TickComponent(
@@ -324,9 +365,6 @@ void UNavalMovementComponent::TickAuthorityMovement(float DeltaTime)
 	const bool bWrecked = VesselComponent && VesselComponent->GetVesselState() == ENavalVesselState::Wreck;
 	const bool bHasControl = !bWrecked && HelmComponent && HelmComponent->AcceptsControlInput();
 
-	const float ThrottleIntent = bHasControl ? HelmComponent->GetThrottleIntent() : 0.0f;
-	const float SteerIntent = bHasControl ? HelmComponent->GetSteerIntent() : 0.0f;
-
 	// 舵芯只负责接收并分发移动指令: what it can actually deliver comes from the parts.
 	const float PropulsionCapability = VesselComponent
 		? FMath::Lerp(EmergencyPropulsionFraction, 1.0f, VesselComponent->GetPartCapability(ENavalPartType::Propulsion))
@@ -344,65 +382,151 @@ void UNavalMovementComponent::TickAuthorityMovement(float DeltaTime)
 	const FRotator CurrentYawRotation(0.0f, CurrentRotation.Yaw, 0.0f);
 	const FVector Forward = CurrentYawRotation.Vector();
 	const FVector Right = FRotationMatrix(CurrentYawRotation).GetUnitAxis(EAxis::Y);
+	FRotator NewRotation = CurrentRotation;
+	float YawDelta = 0.0f;
 
-	// Resolve force in the vessel's current frame. Unlike a target-speed interpolation this
-	// preserves momentum while W/S is released and lets the direction lag behind the hull when
-	// AD turns it, after which lateral water drag slowly aligns the velocity with the bow.
-	float ForwardSpeed = FVector::DotProduct(Velocity, Forward);
-	const float AccelerationRate = Acceleration * Handling.Acceleration * PropulsionCapability;
-	if (FMath::IsNearlyZero(ThrottleIntent))
+	if (MovementModel == ENavalMovementModel::DirectPlanar)
 	{
-		ForwardSpeed = FMath::FInterpConstantTo(ForwardSpeed, 0.0f, DeltaTime, DriftDeceleration);
+		// WASD is already transformed into world space by the local player's ability. The
+		// server only clamps magnitude and integrates toward the resulting desired velocity;
+		// hull facing never rotates that velocity.
+		const FVector2D MoveIntent2D = bHasControl
+			? HelmComponent->GetWorldMoveIntent()
+			: FVector2D::ZeroVector;
+		const FVector MoveIntent = FVector(MoveIntent2D.X, MoveIntent2D.Y, 0.0f)
+			.GetClampedToMaxSize(1.0f);
+		const FVector TargetVelocity = MoveIntent * ForwardCeiling;
+		float VelocityResponse = DirectBrakingDeceleration * Handling.LinearResponse;
+		if (!MoveIntent.IsNearlyZero())
+		{
+			const bool bChangingDirection = !Velocity.IsNearlyZero()
+				&& FVector::DotProduct(Velocity.GetSafeNormal2D(), MoveIntent.GetSafeNormal2D()) < 0.25f;
+			VelocityResponse = (bChangingDirection
+					? DirectDirectionChangeAcceleration
+					: DirectAcceleration)
+				* Handling.Acceleration
+				* Handling.LinearResponse
+				* PropulsionCapability;
+		}
+		Velocity = FMath::VInterpConstantTo(Velocity, TargetVelocity, DeltaTime, VelocityResponse);
+		Velocity.Z = 0.0f;
+
+		bool bHasValidFacing = false;
+		float FacingYawError = 0.0f;
+		if (bHasControl && HelmComponent->HasFacingTarget())
+		{
+			FVector AimOffset = HelmComponent->GetFacingTarget() - OwnerActor->GetActorLocation();
+			AimOffset.Z = 0.0f;
+			if (!AimOffset.ContainsNaN()
+				&& AimOffset.SizeSquared2D() > FMath::Square(DirectFacingDeadZone))
+			{
+				bHasValidFacing = true;
+				FacingYawError = FMath::FindDeltaAngleDegrees(
+					CurrentRotation.Yaw, AimOffset.Rotation().Yaw);
+			}
+		}
+
+		const float DesiredYawRate = bHasValidFacing
+			? FMath::Clamp(
+				FacingYawError / FMath::Max(DeltaTime, UE_SMALL_NUMBER),
+				-DirectMaxYawRateDegrees,
+				DirectMaxYawRateDegrees)
+			: 0.0f;
+		const float YawResponse = DirectYawAccelerationDegrees
+			* Handling.Turn
+			* Handling.AngularResponse
+			* RudderCapability;
+		YawRateDegrees = FMath::FInterpConstantTo(
+			YawRateDegrees, DesiredYawRate, DeltaTime, YawResponse);
+		YawDelta = YawRateDegrees * DeltaTime;
+		if (bHasValidFacing && FMath::Abs(YawDelta) > FMath::Abs(FacingYawError))
+		{
+			YawDelta = FacingYawError;
+			YawRateDegrees = 0.0f;
+		}
+
+		NewRotation.Yaw = FRotator::NormalizeAxis(NewRotation.Yaw + YawDelta);
+		CurrentSpeed = Velocity.Size2D();
 	}
 	else
 	{
-		const bool bOpposingForce = !FMath::IsNearlyZero(ForwardSpeed)
-			&& FMath::Sign(ThrottleIntent) != FMath::Sign(ForwardSpeed);
-		const float ForceRate = bOpposingForce ? BrakingDeceleration : AccelerationRate;
-		ForwardSpeed += FMath::Sign(ThrottleIntent) * ForceRate * DeltaTime;
+		const float ThrottleIntent = bHasControl ? HelmComponent->GetThrottleIntent() : 0.0f;
+		const float SteerIntent = bHasControl ? HelmComponent->GetSteerIntent() : 0.0f;
+
+		// Resolve force in the vessel's current frame. Unlike a target-speed interpolation this
+		// preserves momentum while W/S is released and lets the direction lag behind the hull when
+		// AD turns it, after which lateral water drag slowly aligns the velocity with the bow.
+		float ForwardSpeed = FVector::DotProduct(Velocity, Forward);
+		const float AccelerationRate = Acceleration
+			* Handling.Acceleration
+			* Handling.LinearResponse
+			* PropulsionCapability;
+		if (FMath::IsNearlyZero(ThrottleIntent))
+		{
+			ForwardSpeed = FMath::FInterpConstantTo(
+				ForwardSpeed,
+				0.0f,
+				DeltaTime,
+				DriftDeceleration * Handling.LinearResponse);
+		}
+		else
+		{
+			const bool bOpposingForce = !FMath::IsNearlyZero(ForwardSpeed)
+				&& FMath::Sign(ThrottleIntent) != FMath::Sign(ForwardSpeed);
+			const float ForceRate = bOpposingForce
+				? BrakingDeceleration * Handling.LinearResponse
+				: AccelerationRate;
+			ForwardSpeed += FMath::Sign(ThrottleIntent) * ForceRate * DeltaTime;
+		}
+
+		ForwardSpeed = FMath::Clamp(
+			ForwardSpeed,
+			-ForwardCeiling * MaxReverseSpeedFraction,
+			ForwardCeiling);
+		const float SpeedFraction = MaxForwardSpeed > 0.0f
+			? FMath::Abs(ForwardSpeed) / (MaxForwardSpeed * FMath::Max(0.1f, SpeedScale))
+			: 0.0f;
+		const float TurnAuthority = FMath::Lerp(
+			MinSpeedFractionForTurn,
+			1.0f,
+			FMath::InterpEaseInOut(
+				0.0f, 1.0f, FMath::Clamp(SpeedFraction, 0.0f, 1.0f), 2.0f));
+
+		const float YawTorque = SteerIntent
+			* YawAccelerationDegrees
+			* Handling.Turn
+			* Handling.AngularResponse
+			* RudderCapability
+			* TurnAuthority;
+		YawRateDegrees += YawTorque * DeltaTime;
+		YawRateDegrees = FMath::Clamp(YawRateDegrees, -MaxYawRateDegrees, MaxYawRateDegrees);
+		YawRateDegrees = FMath::FInterpTo(
+			YawRateDegrees,
+			0.0f,
+			DeltaTime,
+			YawDamping * Handling.AngularResponse);
+
+		YawDelta = YawRateDegrees * DeltaTime;
+		NewRotation.Yaw = FRotator::NormalizeAxis(NewRotation.Yaw + YawDelta);
+
+		const FRotator NewYawRotation(0.0f, NewRotation.Yaw, 0.0f);
+		const FVector NewForward = NewYawRotation.Vector();
+		const FVector NewRight = FRotationMatrix(NewYawRotation).GetUnitAxis(EAxis::Y);
+
+		// Keep the force-integrated world velocity through the yaw change. Only the component
+		// perpendicular to the new bow is damped, so the travel direction converges gradually.
+		const FVector ForceIntegratedVelocity = Forward * ForwardSpeed
+			+ Right * FVector::DotProduct(Velocity, Right);
+		const float NewForwardSpeed = FVector::DotProduct(ForceIntegratedVelocity, NewForward);
+		const float NewLateralSpeed = FMath::FInterpConstantTo(
+			FVector::DotProduct(ForceIntegratedVelocity, NewRight),
+			0.0f,
+			DeltaTime,
+			LateralDrag * Handling.LinearResponse);
+		Velocity = NewForward * NewForwardSpeed + NewRight * NewLateralSpeed;
+		Velocity.Z = 0.0f;
+		CurrentSpeed = FVector::DotProduct(Velocity, NewForward);
 	}
-
-	ForwardSpeed = FMath::Clamp(
-		ForwardSpeed,
-		-ForwardCeiling * MaxReverseSpeedFraction,
-		ForwardCeiling);
-	const float SpeedFraction = MaxForwardSpeed > 0.0f
-		? FMath::Abs(ForwardSpeed) / (MaxForwardSpeed * FMath::Max(0.1f, SpeedScale))
-		: 0.0f;
-	const float TurnAuthority = FMath::Max(
-		MinSpeedFractionForTurn, FMath::Clamp(SpeedFraction, 0.0f, 1.0f));
-
-	// Apply AD as torque, then angular drag. Because this path does not depend on speed, A/D
-	// still rotates a stationary boat; at speed the same torque produces a gradual heading
-	// transition rather than a frame-local snap.
-	const float YawTorque = SteerIntent
-		* YawAccelerationDegrees
-		* Handling.Turn
-		* RudderCapability
-		* TurnAuthority;
-	YawRateDegrees += YawTorque * DeltaTime;
-	YawRateDegrees = FMath::Clamp(YawRateDegrees, -MaxYawRateDegrees, MaxYawRateDegrees);
-	YawRateDegrees = FMath::FInterpTo(YawRateDegrees, 0.0f, DeltaTime, YawDamping);
-
-	const float YawDelta = YawRateDegrees * DeltaTime;
-	FRotator NewRotation = CurrentRotation;
-	NewRotation.Yaw = FRotator::NormalizeAxis(NewRotation.Yaw + YawDelta);
-
-	const FRotator NewYawRotation(0.0f, NewRotation.Yaw, 0.0f);
-	const FVector NewForward = NewYawRotation.Vector();
-	const FVector NewRight = FRotationMatrix(NewYawRotation).GetUnitAxis(EAxis::Y);
-
-	// Keep the force-integrated world velocity through the yaw change. Only the component
-	// perpendicular to the new bow is damped, so the travel direction converges gradually
-	// instead of rotating by the full hull yaw every frame.
-	const FVector ForceIntegratedVelocity = Forward * ForwardSpeed
-		+ Right * FVector::DotProduct(Velocity, Right);
-	const float NewForwardSpeed = FVector::DotProduct(ForceIntegratedVelocity, NewForward);
-	const float NewLateralSpeed = FMath::FInterpConstantTo(
-		FVector::DotProduct(ForceIntegratedVelocity, NewRight), 0.0f, DeltaTime, LateralDrag);
-	Velocity = NewForward * NewForwardSpeed + NewRight * NewLateralSpeed;
-	Velocity.Z = 0.0;
-	CurrentSpeed = FVector::DotProduct(Velocity, NewForward);
 
 	if (Velocity.IsNearlyZero(0.5f) && FMath::IsNearlyZero(YawDelta, 0.001f))
 	{
@@ -437,7 +561,10 @@ void UNavalMovementComponent::TickAuthorityMovement(float DeltaTime)
 		SlideAlongSurface(Delta, 1.0f - Hit.Time, BlockingNormal, Hit, /*bHandleImpact=*/false);
 		Velocity = FVector::VectorPlaneProject(Velocity, BlockingNormal);
 		Velocity.Z = 0.0;
-		CurrentSpeed = FVector::DotProduct(Velocity, NewForward);
+		const FVector NewForward = FRotator(0.0f, NewRotation.Yaw, 0.0f).Vector();
+		CurrentSpeed = MovementModel == ENavalMovementModel::DirectPlanar
+			? Velocity.Size2D()
+			: FVector::DotProduct(Velocity, NewForward);
 	}
 
 	// Rotation is still applied directly by MoveComponent. A later overlap pass can reject yaw
@@ -453,10 +580,13 @@ void UNavalMovementComponent::TickClientInterpolation(AActor& OwnerActor, float 
 		return;
 	}
 
+	const float MaxExtrapolation = MovementModel == ENavalMovementModel::DirectPlanar
+		? DirectClientMaxExtrapolationSeconds
+		: ClientMaxExtrapolationSeconds;
 	const float ElapsedSincePose = FMath::Clamp(
 		static_cast<float>(World->GetTimeSeconds() - LastReplicatedPoseTime),
 		0.0f,
-		ClientMaxExtrapolationSeconds);
+		MaxExtrapolation);
 	const FVector TargetLocation = FVector(ReplicatedPose.Location)
 		+ FVector(ReplicatedPose.PlanarVelocity) * ElapsedSincePose;
 	FRotator TargetRotation = ReplicatedPose.Rotation;
@@ -474,14 +604,20 @@ void UNavalMovementComponent::TickClientInterpolation(AActor& OwnerActor, float 
 	const bool bSnapRotation = ClientSnapAngleDegrees <= 0.0f
 		|| AngleToTargetDegrees >= ClientSnapAngleDegrees;
 
+	const float LocationHalfLife = MovementModel == ENavalMovementModel::DirectPlanar
+		? DirectClientLocationSmoothingHalfLife
+		: ClientLocationSmoothingHalfLife;
+	const float RotationHalfLife = MovementModel == ENavalMovementModel::DirectPlanar
+		? DirectClientRotationSmoothingHalfLife
+		: ClientRotationSmoothingHalfLife;
 	const float LocationAlpha = bSnapLocation
 		? 1.0f
 		: 1.0f - FMath::Pow(
-			0.5f, DeltaTime / FMath::Max(ClientLocationSmoothingHalfLife, UE_SMALL_NUMBER));
+			0.5f, DeltaTime / FMath::Max(LocationHalfLife, UE_SMALL_NUMBER));
 	const float RotationAlpha = bSnapRotation
 		? 1.0f
 		: 1.0f - FMath::Pow(
-			0.5f, DeltaTime / FMath::Max(ClientRotationSmoothingHalfLife, UE_SMALL_NUMBER));
+			0.5f, DeltaTime / FMath::Max(RotationHalfLife, UE_SMALL_NUMBER));
 	const FVector NewLocation = FMath::Lerp(
 		CurrentLocation, TargetLocation, FMath::Clamp(LocationAlpha, 0.0f, 1.0f));
 	const FQuat NewRotation = FQuat::Slerp(

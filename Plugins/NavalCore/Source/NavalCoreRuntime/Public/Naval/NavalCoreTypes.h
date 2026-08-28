@@ -6,6 +6,16 @@
 
 #include "NavalCoreTypes.generated.h"
 
+/** How a vessel turns player intent into planar motion. Selected by the host's data. */
+UENUM(BlueprintType)
+enum class ENavalMovementModel : uint8
+{
+	/** Throttle pushes along the bow and steering applies speed-dependent yaw torque. */
+	Helm,
+	/** World-space WASD movement and mouse-facing yaw are independent. */
+	DirectPlanar
+};
+
 /**
  * What a damageable naval part is, for rules that care about the kind rather than the asset.
  *
@@ -197,11 +207,21 @@ struct NAVALCORERUNTIME_API FNavalHandlingScalars
 	UPROPERTY(BlueprintReadOnly, Category = "Naval|Movement")
 	float Turn = 1.0f;
 
+	/** Continuous mass response. Lower values preserve linear momentum for longer. */
+	UPROPERTY(BlueprintReadOnly, Category = "Naval|Movement")
+	float LinearResponse = 1.0f;
+
+	/** Continuous mass response for yaw acceleration. */
+	UPROPERTY(BlueprintReadOnly, Category = "Naval|Movement")
+	float AngularResponse = 1.0f;
+
 	FNavalHandlingScalars& CombineWith(const FNavalHandlingScalars& Other)
 	{
 		TopSpeed *= Other.TopSpeed;
 		Acceleration *= Other.Acceleration;
 		Turn *= Other.Turn;
+		LinearResponse *= Other.LinearResponse;
+		AngularResponse *= Other.AngularResponse;
 		return *this;
 	}
 };

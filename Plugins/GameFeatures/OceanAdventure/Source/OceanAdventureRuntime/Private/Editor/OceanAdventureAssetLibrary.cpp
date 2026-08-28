@@ -188,6 +188,77 @@ bool UOceanAdventureAssetLibrary::ConfigureHelmInputMapping(
 	return true;
 }
 
+bool UOceanAdventureAssetLibrary::ConfigureDirectHelmInputMapping(
+	UInputMappingContext* InputMapping,
+	UInputAction* DirectMoveAction)
+{
+	if (!IsValid(InputMapping) || !IsValid(DirectMoveAction))
+	{
+		UE_LOG(LogOceanAdventure, Error, TEXT("Cannot configure direct helm mapping with null assets"));
+		return false;
+	}
+
+	InputMapping->Modify();
+	InputMapping->UnmapAllKeysFromAction(DirectMoveAction);
+
+	FEnhancedActionKeyMapping& MoveForward =
+		InputMapping->MapKey(DirectMoveAction, FKey(FName(TEXT("W"))));
+	UInputModifierSwizzleAxis* ForwardSwizzle =
+		NewObject<UInputModifierSwizzleAxis>(InputMapping);
+	ForwardSwizzle->Order = EInputAxisSwizzle::YXZ;
+	MoveForward.Modifiers.Add(ForwardSwizzle);
+
+	FEnhancedActionKeyMapping& MoveBackward =
+		InputMapping->MapKey(DirectMoveAction, FKey(FName(TEXT("S"))));
+	MoveBackward.Modifiers.Add(NewObject<UInputModifierNegate>(InputMapping));
+	UInputModifierSwizzleAxis* BackwardSwizzle =
+		NewObject<UInputModifierSwizzleAxis>(InputMapping);
+	BackwardSwizzle->Order = EInputAxisSwizzle::YXZ;
+	MoveBackward.Modifiers.Add(BackwardSwizzle);
+
+	InputMapping->MapKey(DirectMoveAction, FKey(FName(TEXT("D"))));
+	FEnhancedActionKeyMapping& MoveLeft =
+		InputMapping->MapKey(DirectMoveAction, FKey(FName(TEXT("A"))));
+	MoveLeft.Modifiers.Add(NewObject<UInputModifierNegate>(InputMapping));
+
+	const TArray<FEnhancedActionKeyMapping>& Mappings = InputMapping->GetMappings();
+	auto HasModifier = [](const FEnhancedActionKeyMapping& Mapping, const UClass* ModifierClass)
+	{
+		return Mapping.Modifiers.ContainsByPredicate(
+			[ModifierClass](const TObjectPtr<UInputModifier>& Modifier)
+			{
+				return Modifier && Modifier->IsA(ModifierClass);
+			});
+	};
+	auto HasMapping = [&Mappings, DirectMoveAction, &HasModifier](
+		const TCHAR* KeyName,
+		bool bNeedsNegate,
+		bool bNeedsSwizzle)
+	{
+		return Mappings.ContainsByPredicate(
+			[DirectMoveAction, KeyName, bNeedsNegate, bNeedsSwizzle, &HasModifier](
+				const FEnhancedActionKeyMapping& Mapping)
+			{
+				return Mapping.Action == DirectMoveAction
+					&& Mapping.Key == FKey(FName(KeyName))
+					&& HasModifier(Mapping, UInputModifierNegate::StaticClass()) == bNeedsNegate
+					&& HasModifier(Mapping, UInputModifierSwizzleAxis::StaticClass()) == bNeedsSwizzle;
+			});
+	};
+
+	if (!HasMapping(TEXT("W"), false, true)
+		|| !HasMapping(TEXT("S"), true, true)
+		|| !HasMapping(TEXT("D"), false, false)
+		|| !HasMapping(TEXT("A"), true, false))
+	{
+		UE_LOG(LogOceanAdventure, Error, TEXT("Direct helm input mapping did not retain Axis2D W/S/D/A bindings"));
+		return false;
+	}
+
+	InputMapping->MarkPackageDirty();
+	return true;
+}
+
 bool UOceanAdventureAssetLibrary::ConfigureAbilitySetGameplayAbilities(
 	ULyraAbilitySet* AbilitySet,
 	const TArray<TSubclassOf<ULyraGameplayAbility>>& AbilityClasses,

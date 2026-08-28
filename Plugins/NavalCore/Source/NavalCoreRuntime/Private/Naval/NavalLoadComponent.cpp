@@ -271,6 +271,22 @@ FNavalHandlingScalars UNavalLoadComponent::GetHandlingScalars() const
 {
 	FNavalHandlingScalars Scalars = NavalLoad::ScalarsForLoadBand(LoadState.LoadBand);
 	Scalars.CombineWith(NavalLoad::ScalarsForThrustBand(LoadState.ThrustBand));
+
+	// Bands answer "is this load supported?" Continuous inertia answers "how much vessel has
+	// been built?" Keeping them separate prevents extra pontoons and thrust from turning a
+	// sprawling wooden platform back into a small, twitchy vehicle.
+	const float MassRatio = FMath::Max(
+		1.0f, LoadState.Tonnage / FMath::Max(1.0f, ReferenceTonnageForInertia));
+	const float LinearFloor = FMath::Clamp(MinimumLinearResponse, 0.1f, 1.0f);
+	const float AngularFloor = FMath::Clamp(MinimumAngularResponse, 0.1f, 1.0f);
+	Scalars.LinearResponse = FMath::Clamp(
+		FMath::Pow(MassRatio, -FMath::Max(0.0f, LinearInertiaExponent)),
+		LinearFloor,
+		1.0f);
+	Scalars.AngularResponse = FMath::Clamp(
+		FMath::Pow(MassRatio, -FMath::Max(0.0f, AngularInertiaExponent)),
+		AngularFloor,
+		1.0f);
 	return Scalars;
 }
 

@@ -9,6 +9,7 @@
 #include "Engine/CollisionProfile.h"
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalHelmComponent.h"
+#include "Naval/NavalMovementComponent.h"
 #include "Raft/RaftBuoyancyComponent.h"
 #include "Raft/RaftDefinition.h"
 #include "RaftRuntimeModule.h"
@@ -71,6 +72,7 @@ void ARaftVesselActor::BeginPlay()
 	Super::BeginPlay();
 	UGameFrameworkComponentManager::SendGameFrameworkComponentExtensionEvent(
 		this, UGameFrameworkComponentManager::NAME_GameActorReady);
+	ApplyMovementDefinition();
 }
 
 void ARaftVesselActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
@@ -119,6 +121,23 @@ void ARaftVesselActor::ApplyDefinition()
 	// Component hierarchy, mesh, collision and authored points belong to the derived Blueprint.
 	// The definition only applies the shared tuning that has non-Actor consumers.
 	BuoyancyComponent->ApplyDefinition(RaftDefinition);
+	ApplyMovementDefinition();
+}
+
+void ARaftVesselActor::ApplyMovementDefinition()
+{
+	if (!HasAuthority() || !RaftDefinition)
+	{
+		return;
+	}
+
+	// The movement component is injected by Raft's GameFeatureData. BeginPlay calls this after
+	// NAME_GameActorReady so both placed and dynamically spawned life rafts receive the model;
+	// ApplyDefinition also covers editor-authored component layouts.
+	if (UNavalMovementComponent* Movement = FindComponentByClass<UNavalMovementComponent>())
+	{
+		Movement->SetMovementModel(RaftDefinition->GetMovementModel());
+	}
 }
 
 FVector ARaftVesselActor::GetBaseDeckExtent() const

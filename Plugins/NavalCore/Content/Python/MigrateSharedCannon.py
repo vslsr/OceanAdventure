@@ -3,7 +3,8 @@
 The gun used to exist twice: /OceanAdventure/Naval/BP_Naval_GroundCannon carried the art and
 the ballistics, /Raft/Naval/BP_Raft_HeavyCannon was an empty subclass of the same C++ class
 that the build system spawned on a deck. Design 7.10 says those are one weapon, so this
-collapses them into /NavalCore/Naval/BP_Naval_Cannon and points both call sites at it.
+collapses them into /NavalCore/Blueprints/Cannon/BP_Naval_Cannon and points both call sites
+at it.
 
 Assets are renamed rather than copied: a .uasset stores its own package path, so moving one on
 disk breaks it, and only unreal.EditorAssetLibrary.rename_asset leaves the redirectors that
@@ -39,13 +40,13 @@ import unreal
 
 
 PLUGIN_ROOT = "/NavalCore"
-NAVAL_ROOT = f"{PLUGIN_ROOT}/Naval"
-ART_ROOT = f"{PLUGIN_ROOT}/NavalArts"
+BLUEPRINT_ROOT = f"{PLUGIN_ROOT}/Blueprints/Cannon"
+ART_ROOT = f"{PLUGIN_ROOT}/Arts"
 MESH_ROOT = f"{ART_ROOT}/Cannon/Meshes"
 MATERIAL_ROOT = f"{ART_ROOT}/Cannon/Materials"
 
-CANNON_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Naval_Cannon"
-PROJECTILE_BLUEPRINT_PATH = f"{NAVAL_ROOT}/BP_Naval_CannonballProjectile"
+CANNON_BLUEPRINT_PATH = f"{BLUEPRINT_ROOT}/BP_Naval_Cannon"
+PROJECTILE_BLUEPRINT_PATH = f"{BLUEPRINT_ROOT}/BP_Naval_CannonballProjectile"
 CANNON_MESH_PATH = f"{MESH_ROOT}/SM_Naval_Cannon"
 CANNONBALL_MESH_PATH = f"{MESH_ROOT}/SM_Naval_Cannonball"
 
@@ -104,23 +105,7 @@ def require(value, message):
     return value
 
 
-def find_asset_by_name(asset_name):
-    registry = unreal.AssetRegistryHelpers.get_asset_registry()
-    for asset_data in registry.get_assets_by_path(PLUGIN_ROOT, recursive=True):
-        if str(asset_data.asset_name) == asset_name:
-            return str(asset_data.package_name)
-    return None
-
-
 def move_asset(source, destination):
-    landed = find_asset_by_name(destination.rpartition("/")[2])
-    if landed and landed != destination:
-        if unreal.EditorAssetLibrary.does_asset_exist(source):
-            warn(f"{source} still exists even though {landed} is already in place; delete one")
-        else:
-            log(f"Already migrated, filed at {landed}")
-        return False
-
     if unreal.EditorAssetLibrary.does_asset_exist(destination):
         if unreal.EditorAssetLibrary.does_asset_exist(source):
             warn(
@@ -200,7 +185,6 @@ def resave_migrated_assets():
     this has to run before the editor is restarted.
     """
     for _, destination in MOVES:
-        destination = find_asset_by_name(destination.rpartition("/")[2]) or destination
         asset = (
             unreal.EditorAssetLibrary.load_asset(destination)
             if unreal.EditorAssetLibrary.does_asset_exist(destination)
@@ -317,8 +301,7 @@ def verify():
         if defaults.get_editor_property("projectile_class") is None:
             problems.append(f"{CANNON_BLUEPRINT_PATH} has no ProjectileClass")
 
-    for default_path in (CANNON_MESH_PATH, CANNONBALL_MESH_PATH):
-        mesh_path = find_asset_by_name(default_path.rpartition("/")[2]) or default_path
+    for mesh_path in (CANNON_MESH_PATH, CANNONBALL_MESH_PATH):
         if not unreal.EditorAssetLibrary.does_asset_exist(mesh_path):
             problems.append(f"{mesh_path} is missing")
             continue

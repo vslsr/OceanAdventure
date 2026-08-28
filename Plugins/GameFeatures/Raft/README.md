@@ -34,10 +34,10 @@ The two hull definitions intentionally have different responsibilities:
 
 ```text
 DA_Raft_Default
-└─ BP_Raft_Default       ARaftActor: buildable main raft with append-only build catalog
+└─ BP_Raft_Default       ARaftActor: buildable main raft, Helm force/inertia movement model
 
 DA_Raft_LifeRaft
-└─ BP_Raft_LifeRaft      ARaftVesselActor: direct E driving, no build interface/components
+└─ BP_Raft_LifeRaft      ARaftVesselActor: DirectPlanar movement, no build interface/components
 ```
 
 All three emergency-hull assets (`SM_LifeRaft`, `DA_Raft_LifeRaft`, and
@@ -47,12 +47,18 @@ All three emergency-hull assets (`SM_LifeRaft`, `DA_Raft_LifeRaft`, and
 First execute `blender/script/python/SM_LifeRaft.py` in Blender. It regenerates
 `blender/models/SM_LifeRaft.blend` and `SM_LifeRaft.fbx` without touching unrelated objects.
 Then run `CreateRaftLifeRaftAssets.py` for the life raft alone. The full
-`CreateRaftNavalAssets.py` pass additionally requires `/NavalCore/Naval/BP_Naval_Cannon`.
+`CreateRaftNavalAssets.py` pass additionally requires
+`/NavalCore/Blueprints/Cannon/BP_Naval_Cannon`.
 
 The main raft does not receive a helm automatically. In a server console, select the fixed
 helm with `BuildSelect Raft.Piece.Prop.Helm` and place it with `BuildPlace X Y Level`.
-The life raft is the intentional exception: press `E` near its hull to drive it directly; no
-helm Actor is spawned or built.
+The life raft is the intentional exception: step onto its movement base to activate the existing
+GAS helm ability automatically; press `E` to step out, and leave/re-board before auto-driving it
+again. No helm Actor is spawned or built. While driving it, WASD selects a camera-relative world
+movement direction and the mouse selects hull facing; those two intents are independent. The
+buildable raft keeps bow thrust, speed-dependent steering, coasting and lateral slip. Its response
+also falls continuously as total tonnage grows, even when extra pontoons and propulsion keep the
+load bands healthy.
 
 ## Creative building MVP
 
