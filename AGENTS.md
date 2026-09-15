@@ -52,6 +52,10 @@
   ```
 
   脚本按 `.agents/skills/` 重建各工具目录里的软链，遇到真实目录会报警告而不是默默覆盖。
+- **插件自带的 Skill**（`.agents/plugins/<plugin>/skills/<name>/`）也在 `.agents/skills/` 里露出，但是**软链**：
+  那个目录归插件的 sync 脚本所有，它会按远端 catalog 把对不上的条目 `rm -rf`，所以不能把真实 Skill
+  搬进去，也不能把插件的 skills 目录指向 `.agents/skills/`——下次开会话就被删光。
+  `sync-skill-links.sh` 负责挂载，并在插件那边删掉 Skill 后清理断链。
 - 上游 Skill 包里非 Skill 本体的资料（课程讲义、许可证、示意图、包自带的校验脚本）放在
   `.agents/vendor/<包名>/`，只作参考，不参与 Skill 加载。
 
