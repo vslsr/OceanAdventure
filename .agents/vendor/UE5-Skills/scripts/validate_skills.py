@@ -11,7 +11,7 @@ from pathlib import Path
 ROOT = (
     Path(sys.argv[1]).resolve()
     if len(sys.argv) > 1
-    else Path(__file__).resolve().parents[4] / "skills"
+    else Path(__file__).resolve().parents[3] / "skills"
 )
 SKILL_GLOB = "ue5-*"
 REQUIRED_FRONTMATTER_KEYS = ("name", "description")

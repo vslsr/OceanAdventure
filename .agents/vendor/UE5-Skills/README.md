@@ -19,11 +19,11 @@ This repository provides reusable skill workflows to help with:
 
 ### Skills Overview Screenshot
 
-![UE5 Skills Overview](./skills/assets/ue5-skills-overview.png)
+![UE5 Skills Overview](./assets/ue5-skills-overview.png)
 
 > Screenshot of the Codex Skills panel showing the installed UE5 skill set and enabled status (captured on March 3, 2026).
 
-![UE5 Skills List (AI Q&A - English)](./skills/assets/skills-list-ai-qa-en.png)
+![UE5 Skills List (AI Q&A - English)](./assets/skills-list-ai-qa-en.png)
 
 > Screenshot of the UE5 skills list for AI Q&A (English version, captured on March 3, 2026).
 
@@ -69,7 +69,7 @@ What changed in upgraded skills:
 2. If module names appear, route with `ue5-module-router`.
 3. Execute the selected target skill workflow.
 
-More details are in [skills/README.md](./skills/README.md).
+More details are in [README-skills.md](./README-skills.md).
 
 ### Validation
 
@@ -112,11 +112,11 @@ This project is licensed under the MIT License. See [LICENSE](./LICENSE).
 
 ### Skills 总览截图
 
-![UE5 Skills 总览](./skills/assets/ue5-skills-overview.png)
+![UE5 Skills 总览](./assets/ue5-skills-overview.png)
 
 > 该图为 Codex Skills 面板截图，展示当前已安装的 UE5 技能集合及启用状态（截图时间：2026年3月3日）。
 
-![UE5 技能列表（AI问答-中文）](./skills/assets/skills-list-ai-qa-zh.png)
+![UE5 技能列表（AI问答-中文）](./assets/skills-list-ai-qa-zh.png)
 
 > 该图为 UE5 技能列表（AI问答）中文截图（截图时间：2026年3月3日）。
 
@@ -160,7 +160,7 @@ This project is licensed under the MIT License. See [LICENSE](./LICENSE).
 2. 如果请求里出现模块名，使用 `ue5-module-router` 做精确路由。
 3. 按路由结果执行目标技能工作流。
 
-更多细节见 [skills/README.md](./skills/README.md)。
+更多细节见 [README-skills.md](./README-skills.md)。
 
 ### 校验
 
