@@ -57,6 +57,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "LineArtCore",
+			"Enabled": true
+		},
+		{
 			"Name": "OceanCore",
 			"Enabled": true
 		},

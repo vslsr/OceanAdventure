@@ -1,0 +1,197 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+// Line-art environment lighting.
+//
+// A direct port of SkyLand's src/shaders/environmentLighting.ts and the fragment shader in
+// src/materials/createFillMaterial.ts. Kept as shader text rather than material nodes for
+// two reasons: it stays diffable against the source it was ported from, and the whole
+// model is about thirty lines of arithmetic that would become an unreadable node mat.
+//
+// THREE CONVERSIONS FROM THE SOURCE. Each one fails silently if missed:
+//
+//   1. Up is +Z here, +Y in three.js.  Hemisphere tint and the ground-facing ambient term
+//      read WorldNormal.z, not .y.  Reading the wrong axis still renders -- it just makes
+//      everything look lit from the side.
+//   2. Lengths are centimetres here, metres in the source.  Every radius, fog distance and
+//      noise frequency below carries the 100x already.
+//   3. These functions take every value as a parameter instead of reading uniforms.  The
+//      caller is a Custom node, which has no access to the parameter collection by name;
+//      the material graph wires collection parameters into these inputs.
+//
+// Nothing here is lit by the engine: the materials are Unlit and this is the entire
+// lighting model.  That is the point -- it is what lets the mobile forward path skip the
+// lighting pass, the shadow pass, reflection captures and the sky light outright.
+
+/** Highest number of point lights evaluated in one frame. Must match LINE_ART_MAX_POINT_LIGHTS. */
+#define LINE_ART_MAX_POINT_LIGHTS 4
+
+/**
+ * Hemisphere tint.
+ *
+ * Both tints arrive normalised to an average of 1, so this changes hue without changing
+ * brightness: at dusk upward faces go warm and downward faces cool, while noon leaves the
+ * image identical to having no hemisphere term at all.
+ */
+float3 LineArtHemisphereTint(float3 WorldNormal, float3 SkyTint, float3 BounceTint)
+{
+	const float Upward = WorldNormal.z * 0.5f + 0.5f;
+	return lerp(BounceTint, SkyTint, Upward);
+}
+
+float LineArtCloudHash(float2 Cell)
+{
+	return frac(sin(dot(Cell, float2(127.1f, 311.7f))) * 43758.5453123f);
+}
+
+float LineArtCloudNoise(float2 Point)
+{
+	const float2 Cell = floor(Point);
+	const float2 Offset = frac(Point);
+	const float2 Weight = Offset * Offset * (3.0f - 2.0f * Offset);
+
+	const float LowerLeft = LineArtCloudHash(Cell);
+	const float LowerRight = LineArtCloudHash(Cell + float2(1.0f, 0.0f));
+	const float UpperLeft = LineArtCloudHash(Cell + float2(0.0f, 1.0f));
+	const float UpperRight = LineArtCloudHash(Cell + float2(1.0f, 1.0f));
+
+	return lerp(
+		lerp(LowerLeft, LowerRight, Weight.x),
+		lerp(UpperLeft, UpperRight, Weight.x),
+		Weight.y);
+}
+
+/**
+ * Cloud shadow.
+ *
+ * Two layers of scrolling value noise, driven by the weather's cloud cover and drifting
+ * with the wind. It multiplies the ambient term, so ground, props and grass are all swept
+ * by the same shadow -- which reads as "overcast" in a way that flatly darkening the scene
+ * never does.
+ *
+ * 0.00055 is the source's 0.055 per metre converted to centimetres.
+ */
+float LineArtCloudShadow(float2 WorldXY, float2 Offset, float Strength)
+{
+	if (Strength <= 0.002f)
+	{
+		return 1.0f;
+	}
+
+	const float2 Point = WorldXY * 0.00055f + Offset;
+	const float Shape = LineArtCloudNoise(Point) * 0.68f + LineArtCloudNoise(Point * 2.3f + 4.7f) * 0.32f;
+	return 1.0f - smoothstep(0.44f, 0.82f, Shape) * Strength;
+}
+
+/**
+ * Directional scattering fog.
+ *
+ * Fog is not one flat sky colour: looking towards the sun warms it, looking away keeps it
+ * cool. Without this term, fog covering the frame (open sea, open plain) collapses into a
+ * single flat block and sunset becomes "the whole screen turns orange".
+ */
+float3 LineArtScatteredFogColor(float3 WorldPosition, float3 CameraPosition, float3 SunDirection,
+	float3 FogColor, float3 ScatterColor, float ScatterStrength)
+{
+	if (ScatterStrength <= 0.002f)
+	{
+		return FogColor;
+	}
+
+	const float3 ViewDirection = normalize(WorldPosition - CameraPosition);
+	const float TowardSun = max(dot(ViewDirection, SunDirection), 0.0f);
+	const float InScatter = pow(TowardSun, 4.0f) * ScatterStrength;
+	return lerp(FogColor, ScatterColor, InScatter);
+}
+
+/**
+ * Surface shading: half-lambert key light plus tinted hemisphere ambient.
+ *
+ * The lit-to-unlit ratio is close to 1.7:1 so objects read as volumes instead of flat
+ * patches the same value as the ground. The grazing term widens that ratio as the sun
+ * drops, which is what gives dawn and dusk a real lit side rather than just an overall
+ * colour shift.
+ */
+float3 LineArtSurfaceColor(float3 BaseColor, float3 WorldNormal, float3 WorldPosition,
+	float3 SunDirection, float Daylight, float3 AmbientColor, float3 SkyTint, float3 BounceTint,
+	float2 CloudShadowOffset, float CloudShadowStrength)
+{
+	const float3 Normal = normalize(WorldNormal);
+	const float3 LightDirection = normalize(SunDirection);
+
+	const float Diffuse = max(dot(Normal, LightDirection), 0.0f);
+	const float Grazing = 1.0f - saturate(LightDirection.z);
+	const float Directional = (0.14f + Daylight * 0.30f) * (1.0f + Grazing * 0.85f);
+	const float SoftLight = (0.68f - Grazing * 0.06f) + Diffuse * Directional;
+
+	const float3 Ambient = AmbientColor
+		* LineArtHemisphereTint(Normal, SkyTint, BounceTint)
+		* LineArtCloudShadow(WorldPosition.xy, CloudShadowOffset, CloudShadowStrength);
+
+	return BaseColor * Ambient * SoftLight + Ambient * 0.025f * (Normal.z * 0.5f + 0.5f);
+}
+
+/**
+ * One point light, in the reference project's fireplace style.
+ *
+ * Three details are copied deliberately; together they are what makes everything near a
+ * campfire turn warm without turning physical:
+ *
+ *   - the falloff keeps a linear tail (t*t*0.78 + t*0.22).  Pure inverse-square cuts a
+ *     visible hard ring at the radius; the tail lets the glow dissolve into the grass.
+ *   - near and edge colours differ, so firelight has an ember gradient instead of being
+ *     one flat orange.
+ *   - a bounce term survives facing away from the flame, so backlit surfaces still show
+ *     their outline instead of going pure black.
+ *
+ * The light is ADDED, not multiplied by albedo. That is not physically right and it is the
+ * point: paper-toned ground and props warm together, which is what the style wants.
+ *
+ * Flicker and daylight falloff are folded into Intensity by the game side -- they are per
+ * light, not per pixel.
+ */
+float3 LineArtPointLightRadiance(float3 WorldPosition, float3 WorldNormal,
+	float4 LightPositionRadius, float4 LightColorIntensity, float3 LightEdgeColor)
+{
+	const float Strength = LightColorIntensity.a;
+	if (Strength <= 0.002f)
+	{
+		return float3(0.0f, 0.0f, 0.0f);
+	}
+
+	const float3 ToLight = LightPositionRadius.xyz - WorldPosition;
+	const float LightDistance = length(ToLight);
+	const float Reach = saturate(1.0f - LightDistance / max(LightPositionRadius.w, 0.0001f));
+
+	const float Attenuation = Reach * Reach * 0.78f + Reach * 0.22f;
+	const float Facing = dot(normalize(WorldNormal), ToLight / max(LightDistance, 0.0001f));
+	const float Direct = Attenuation * smoothstep(-0.08f, 0.45f, Facing) * 0.55f;
+	const float Bounce = Attenuation * 0.18f * (0.35f + 0.65f * smoothstep(-0.5f, 0.3f, Facing));
+
+	return lerp(LightEdgeColor, LightColorIntensity.rgb, Reach) * Strength * (Direct + Bounce);
+}
+
+/** Distance fog, applied after point lights so firelight is eaten by distance like everything else. */
+float3 LineArtApplyFog(float3 Color, float3 WorldPosition, float3 CameraPosition, float3 SunDirection,
+	float3 FogColor, float3 ScatterColor, float ScatterStrength, float FogNear, float FogFar)
+{
+	const float CameraDistance = distance(CameraPosition, WorldPosition);
+	const float FogFactor = smoothstep(FogNear, FogFar, CameraDistance);
+	const float3 Scattered = LineArtScatteredFogColor(WorldPosition, CameraPosition, SunDirection,
+		FogColor, ScatterColor, ScatterStrength);
+	return lerp(Color, Scattered, FogFactor);
+}
+
+/**
+ * Outline hull thickness, in world units, for a line that stays a constant width on screen.
+ *
+ * WebGL could not vary line width at all, so the entire palette was tuned against a fixed
+ * 1px line; scaling by depth reproduces that exactly. A constant WORLD thickness instead
+ * would make distant outlines swallow the shapes they are drawing.
+ */
+float LineArtOutlineThickness(float PixelDepth, float ThicknessPixels, float ViewportHeight, float TanHalfFov)
+{
+	const float WorldUnitsPerPixel = (2.0f * PixelDepth * TanHalfFov) / max(ViewportHeight, 1.0f);
+	return ThicknessPixels * WorldUnitsPerPixel;
+}

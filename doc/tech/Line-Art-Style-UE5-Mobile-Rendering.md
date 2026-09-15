@@ -15,6 +15,38 @@ Lyra 的默认配置是为主机和 PC 的延迟渲染调的，与线稿 + 移�
 
 ---
 
+## 0. 本轮已落地（第 1 步）
+
+`Plugins/LineArtCore/` —— 一个通用插件，按 `AGENTS.md` 的归属规则承载跨 GameFeature 的线稿能力。
+
+| 文件 | 作用 |
+| --- | --- |
+| `Shaders/LineArtEnvironment.ush` | `environmentLighting.ts` + `createFillMaterial.ts` 的 HLSL 移植，材质用 Custom 节点 `#include` 它 |
+| `Public/LineArtParameterNames.h` | MPC 参数名契约，C++ / Python / 着色器三方共用 |
+| `Environment/LineArtEnvironmentSubsystem` | `applyEnvironmentInk()` 的移植：每帧算墨色、写 MPC、挑最近 4 盏点光源 |
+| `Environment/LineArtPointLightComponent` | 篝火类光源的纯数据组件（不是 `UPointLightComponent`） |
+| `Environment/LineArtCoreSettings` | 墨色常量与默认环境，Project Settings > Game > Line Art Core |
+| `Content/Python/CreateLineArtCoreAssets.py` | 生成 MPC 与三支母材质，可重复运行 |
+
+三条移植时**必须换算、且漏了不会报错**的量，集中在 `LineArtEnvironmentState` 与 `.ush` 的注释里：
+上方向 +Y → +Z、长度 米 → 厘米、着色器从读 uniform 改为收参数。
+
+**参数名漂移是这套结构唯一的静默故障**：材质照常编译，只是取到一个永远不更新的旧值。
+所以 `ULineArtEnvironmentSubsystem::SetScalar/SetVector` 检查每一次写入的返回值，
+对每个名字报一次 `LogLineArtCore` 错误。
+
+### 本轮同时定下、但尚未动工的两条
+
+| 决定 | 影响 |
+| --- | --- |
+| 地形换成 SkyLand 的 2 米方块（13 形状枚举 + 地形编辑） | `OceanCore` 的噪声高度场退役或只留远景；§2.4 的折边捷径按方块网格重算 |
+| 服务端权威改用 Lyra/UE 原生复制 | 放弃「两端同一份 Rapier WASM」，6cm 和解容差那套要在 UE 侧重做 |
+
+第二条与 §4 里「物理不要动」的建议相反：那条建议是在**保留 Web 端**的前提下写的，
+既然整体换引擎，Node + Rapier 的权威就不再有留存价值。记在这里以免后来者按旧建议行事。
+
+---
+
 ## 1. 先把风格拆成六条可移植的规则
 
 迁移的**不是资产，是规则**。逐条附参考实现出处：
