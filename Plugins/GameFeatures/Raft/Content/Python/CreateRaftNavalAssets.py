@@ -268,6 +268,25 @@ def require(value, message):
     return value
 
 
+def require_editor_asset_mode():
+    """Block authoring while PIE owns live references to generated content assets."""
+    subsystem = require(
+        unreal.get_editor_subsystem(unreal.LevelEditorSubsystem),
+        "LevelEditorSubsystem is unavailable; run this script in the full Unreal Editor",
+    )
+    require(
+        not subsystem.is_in_play_in_editor(),
+        "Cannot create Raft naval assets while Play/PIE is active. Click Stop, then run this script again.",
+    )
+
+
+def asset_path(asset):
+    """Stable package path for UObject comparisons across UE Python wrapper reads."""
+    if asset is None:
+        return ""
+    return str(asset.get_path_name()).split(".", 1)[0]
+
+
 def require_type(type_name, hint):
     return require(getattr(unreal, type_name, None), f"{type_name} is unavailable; compile {hint} first")
 
@@ -932,6 +951,7 @@ def configure_game_feature_data(component_classes):
 
 
 def main():
+    require_editor_asset_mode()
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous(
         [FEATURE_ROOT, NAVAL_CORE_ROOT], True, True
     )
@@ -969,11 +989,30 @@ def main():
     # Network indices are append-only: existing entries keep their index and new pieces are
     # only ever added at the end.
     pieces = list(catalog.get_editor_property("pieces"))
+    existing_paths = {asset_path(piece) for piece in pieces if piece is not None}
     for piece in managed_pieces:
-        if piece not in pieces:
-            pieces.append(piece)
+        piece_path = require(asset_path(piece), "Cannot append an empty Raft build-piece asset")
+        if piece_path in existing_paths:
+            continue
+        pieces.append(piece)
+        existing_paths.add(piece_path)
     catalog.set_editor_property("pieces", pieces)
     save(catalog)
+
+    configured_paths = [
+        asset_path(piece)
+        for piece in catalog.get_editor_property("pieces")
+        if piece is not None
+    ]
+    for piece in managed_pieces:
+        piece_path = asset_path(piece)
+        require(
+            configured_paths.count(piece_path) == 1,
+            (
+                f"Raft build catalog must contain exactly one {piece_path}; "
+                f"got {configured_paths.count(piece_path)}"
+            ),
+        )
 
     configure_life_raft()
     configure_game_feature_data(configure_component_blueprints())

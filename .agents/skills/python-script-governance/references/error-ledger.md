@@ -12,6 +12,9 @@
 | PY-UE-004 | 2026-08-28 | Unreal Editor-Cmd / DDC 启动 | `no writable nodes available` | VERIFIED | 1 |
 | PY-UE-005 | 2026-08-28 | Unreal Python / 资产布局迁移 | `FindAssetPackageReferencers failed` / `AsyncLoading2.cpp !bHasFailed` | VERIFIED | 2 |
 | PY-UE-006 | 2026-08-28 | Unreal Commandlet / Interchange 导入 | `SlateApplication CurrentApplication.IsValid()` | VERIFIED | 1 |
+| PY-UE-007 | 2026-08-28 | Unreal Python / StaticMesh 材质读回 | `'StaticMesh' object has no attribute 'get_static_materials'` | VERIFIED | 1 |
+| PY-UE-008 | 2026-08-28 | Unreal Python / PIE 资产编辑 | `The Editor is currently in a play mode` / 误报资产缺失或创建失败 | VERIFIED | 3 |
+| PY-UE-009 | 2026-08-28 | Unreal Python / 读回探针 | `'NoneType' object has no attribute 'get_editor_property'` | VERIFIED | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
 | PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
@@ -77,7 +80,7 @@
 
 ## PY-UE-004：受限环境没有可写 DDC 节点
 
-- 日期：2026-08-28；发生一次。
+- 日期：2026-08-28；发生三次。
 - 宿主与入口：UE 5.7.4 `UnrealEditor-Cmd.exe`，`-run=pythonscript` 执行
   `Plugins/NavalCore/Content/Python/MigrateNavalCoreContentLayout.py`。
 - 原始错误：
@@ -184,6 +187,120 @@
   宿主验证分别覆盖 OceanAdventure 与 Raft，均为退出码 0、`Success - 0 error(s)`。Raft 重跑加载
   并复用 `/Raft/Vehicles/LifeRaft/SM_LifeRaft`，未再次进入 `ImportAssetTasks`，稳定命名的
   GameFeature Action 与资产配置未出现重复增长。
+- 状态：`VERIFIED`。
+- 发生次数：1。
+
+## PY-UE-007：StaticMesh 包装器未暴露 get_static_materials
+
+- 日期：2026-08-28；发生一次。
+- 宿主与入口：UE 5.7 Unreal Editor，通过 Nwiro MCP `execute_python` 执行只读材质读回探针。
+- 脚本：内联只读探针；目标资产
+  `/NavalCore/Arts/Cannon/Meshes/SM_Naval_Cannon`。仓库脚本
+  `Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py` 未在本次失败中执行。
+- 原始错误：
+
+  ```text
+  Traceback (most recent call last):
+
+    File "<string>", line 3, in <module>
+
+  AttributeError: 'StaticMesh' object has no attribute 'get_static_materials'
+  ```
+
+- 首次错误转换：只读探针直接调用 `mesh.get_static_materials()`。
+- 根因：UE 5.7 当前 `StaticMesh` Python 包装器没有暴露该便利方法；同一属性可通过
+  `mesh.get_editor_property("static_materials")` 读取。仓库修复脚本已经使用
+  `getattr(mesh, "get_static_materials", None)` 并在缺失时回退到反射属性，因此材质修复与双跑验证未受影响。
+- 预防规则：StaticMesh 材质数组读回必须先探测 `get_static_materials`；不可用时固定读取
+  `static_materials`，不得在临时验证探针中省略与正式脚本相同的兼容分支。
+- 修复：使用与正式修复脚本相同的 `getattr` 探测与 `static_materials` 反射属性回退，重新运行材质实例 Parent 与六槽读回探针。
+- 验证证据：同一 UE 5.7 Editor 宿主重跑成功，六个槽分别读回 Wood、DarkWood、DarkMetal、WheelRim、Bronze、Bore；六个材质实例均解析到
+  `/InterchangeAssets/Materials/FBXLegacyPhongSurfaceMaterial` Parent，未再出现 traceback。
+- 状态：`VERIFIED`。
+- 发生次数：1。
+
+## PY-UE-008：PIE 中 EditorAssetLibrary 拒绝资产查询
+
+- 日期：2026-08-28；发生一次。
+- 宿主与入口：UE 5.7 Unreal Editor Output Log，Cmd 模式执行
+  `py "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py"`。
+- 脚本：
+  - `Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py`；
+  - `Plugins/GameFeatures/Raft/Content/Python/CreateRaftNavalAssets.py`；
+  - `Plugins/GameFeatures/OceanAdventure/Content/Python/CreateNavalP0Assets.py`。
+- 原始错误：
+
+  ```text
+  LogUtils: Error: The Editor is currently in a play mode.
+  LogPython: Error: Traceback (most recent call last):
+  LogPython: Error:   File "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py", line 171, in <module>
+  LogPython: Error:     main()
+  LogPython: Error:   File "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py", line 133, in main
+  LogPython: Error:     mesh = load_asset(MESH_PATH)
+  LogPython: Error:   File "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py", line 46, in load_asset
+  LogPython: Error:     require(
+  LogPython: Error:   File "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py", line 35, in require
+  LogPython: Error:     raise RuntimeError(message)
+  LogPython: Error: RuntimeError: Required asset does not exist: /NavalCore/Arts/Cannon/Meshes/SM_Naval_Cannon
+  ```
+
+  同一 PIE 会话随后复发：
+
+  ```text
+  LogUtils: Error: The Editor is currently in a play mode.
+  RuntimeError: Missing /Raft/Build/Materials/M_Raft_BuildPreview_Invalid; run CreateRaftBuildPieceAssets.py first
+  ```
+
+  ```text
+  LogUtils: Error: The Editor is currently in a play mode.
+  InputMappingContext /OceanAdventure/Input/IMC_OceanNaval.IMC_OceanNaval正在使用中。
+  External referencers:
+    LyraPlayerInput /OceanAdventure/Maps/UEDPIE_0_L_NavalP0...LyraPlayerInput_0
+  RuntimeError: Unable to create /OceanAdventure/Input/IMC_OceanNaval
+  ```
+
+- 首次错误转换：`load_asset()` 在 PIE 中调用
+  `EditorAssetLibrary.does_asset_exist()`；宿主先拒绝编辑器资产操作，函数随后返回假值，脚本把宿主限制误报为资产不存在。
+- 根因：这些脚本只能在非 Play 的完整 Editor 会话中修改并保存资产，但没有在首次
+  `EditorAssetLibrary` 调用前检测 PIE 状态，也没有把执行前提写成可执行门禁。PIE 中查询返回假值后，
+  Naval 脚本还进入“创建缺失资产”分支，碰到 `LyraPlayerInput` 对正在使用的 IMC 的外部引用。
+- 伴随噪声：`AutomationController` 的 large delta 与 `PSOHitching` 计数是 PIE 运行噪声，不是 Python 根因。
+- 复发原因：首次错误发生后尚未来得及把门禁写入脚本，用户在同一 PIE 会话继续执行了另外两个资产脚本；原有的文档性执行说明不能阻断错误宿主。
+- 预防规则：所有通过 `EditorAssetLibrary` 修改内容资产的完整 Editor 脚本，应在首次资产查询前调用 UE 5.7 已验证的
+  `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).is_in_play_in_editor()` fail-fast；提示必须明确要求点击 Stop 后重跑，不能继续并误报目标资产缺失或进入创建分支。
+- 修复：已在真实 UE 5.7 Editor 反射中确认 `LevelEditorSubsystem.is_in_play_in_editor() -> bool`，并在三个入口的
+  `main()` 首次 Asset Registry / EditorAssetLibrary 调用前增加统一门禁。门禁在 PIE 时明确要求点击 Stop 后重跑。
+- 验证证据：修复前的真实 Editor 探针读回 `IS_IN_PLAY_IN_EDITOR=True`，证明所选 API 能识别错误宿主状态。随后重新启动完整 UE 5.7 Editor，读回
+  `IS_IN_PLAY_IN_EDITOR=False`，并确认 `IMC_OceanNaval`、`M_Raft_BuildPreview_Invalid`、`SM_Naval_Cannon` 均存在；三个修复后脚本分别连续执行两次成功，无 traceback。最终读回确认 Raft Catalog 为 10 条且无重复、Naval Fire 不消费输入、炮网格六个材质槽全部正确。
+- 状态：`VERIFIED`。
+- 发生次数：3。
+
+## PY-UE-009：读回探针的 require helper 漏返回值
+
+- 日期：2026-08-28；发生一次。
+- 宿主与入口：UE 5.7 Unreal Editor，通过 Nwiro MCP `execute_python` 执行内联只读汇总探针。
+- 脚本：内联只读探针；仓库中的三个资产脚本均已在此前连续运行两次成功，本次没有执行或修改它们。
+- 原始错误：
+
+  ```text
+  Traceback (most recent call last):
+
+    File "<string>", line 8, in <module>
+
+  AttributeError: 'NoneType' object has no attribute 'get_editor_property'
+  ```
+
+- 首次错误转换：探针执行
+  `catalog = require(EditorAssetLibrary.load_asset(...), ...)` 后读取
+  `catalog.get_editor_property("pieces")`。
+- 根因：内联探针的 `require(value, message)` 只在假值时抛错，却漏写成功路径的
+  `return value`；Catalog 实际加载成功，但 helper 把局部变量变成了 `None`。
+- 预防规则：内联读回探针复用项目既有 helper 语义时，`require` 的成功路径必须显式返回输入值；在第一个资产字段读取前先打印或断言包装类型。
+- 修复：补回内联 helper 的 `return value`，并在首次字段访问前断言 Catalog 包装类型为
+  `BuildPieceCatalog`。
+- 验证证据：同一 UE 5.7 Editor 宿主重新执行纯读回探针成功，输出
+  `READBACK_OK IS_IN_PLAY=False`、`READBACK_RAFT_CATALOG_COUNT=10 DUPLICATES=0`、
+  `READBACK_NAVAL_FIRE_CONSUME=False` 和六个正确炮材质槽映射；无 traceback。
 - 状态：`VERIFIED`。
 - 发生次数：1。
 

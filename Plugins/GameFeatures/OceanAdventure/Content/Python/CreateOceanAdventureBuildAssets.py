@@ -8,6 +8,12 @@ because that base-experience generator rewrites PawnData and GameFeatureData. Sa
 
 import unreal
 
+from CreateNavalP0Assets import (
+    asset_path,
+    configure_input_action_consumption,
+    configure_unique_asset_array_entry,
+)
+
 
 FEATURE_ROOT = "/OceanAdventure"
 INPUT_ROOT = f"{FEATURE_ROOT}/Input"
@@ -16,11 +22,11 @@ GAME_FEATURE_DATA_PATH = f"{FEATURE_ROOT}/OceanAdventure"
 PAWN_DATA_PATH = f"{FEATURE_ROOT}/Character/DA_OceanAdventure_PawnData"
 BASE_INPUT_CONFIG_PATH = f"{INPUT_ROOT}/DA_InputConfig_OceanAdventure"
 
-# Key bindings. Confirm intentionally uses the left mouse button for build mode; movement
-# is now WASD and has no left-click binding to conflict with this action:
-# the placement ability only activates while Status.Build.Active is present. Every action is
-# configured with InputTriggerPressed because Lyra binds ability input to Triggered; without
-# an edge trigger, an instant ability reactivates once per frame while the key remains held.
+# Key bindings. Confirm intentionally shares LeftMouseButton with naval fire. Both actions are
+# non-consuming so Enhanced Input retains both mappings; their mutually-exclusive GAS tags
+# decide which ability can activate. Every build action uses InputTriggerPressed because Lyra
+# binds ability input to Triggered; without an edge trigger, an instant ability reactivates
+# once per frame while the key remains held.
 ACTIONS = (
     ("IA_Build_Mode", "InputTag.Build.Mode", "B",
      "/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_BuildMode"),
@@ -29,6 +35,8 @@ ACTIONS = (
     ("IA_Build_Remove", "InputTag.Build.Remove", "X",
      "/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_RemovePiece"),
 )
+
+SHARED_KEY_TAGS = frozenset({"InputTag.Build.Confirm"})
 
 OWNED_ACTION_CLASSES = {
     "OceanBuild_AddInputMapping": "GameFeatureAction_AddInputContextMapping",
@@ -196,6 +204,9 @@ def main():
             f"Failed to create {action_name}",
         )
         action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+        if tag_name in SHARED_KEY_TAGS:
+            property_name = configure_input_action_consumption(action, False)
+            log(f"Configured {action_name}.{property_name}=False for shared LeftMouseButton")
         configure_pressed_trigger(action)
         save(action)
 
@@ -250,16 +261,13 @@ def main():
     )
     actual_input_config = pawn_data.get_editor_property("input_config")
     require(
-        actual_input_config == expected_input_config,
+        asset_path(actual_input_config) == asset_path(expected_input_config),
         (
             f"{PAWN_DATA_PATH} still uses {actual_input_config}; run "
             "CreateOceanAdventureExperience.py before creating build assets"
         ),
     )
-    ability_sets = list(pawn_data.get_editor_property("ability_sets"))
-    if ability_set not in ability_sets:
-        ability_sets.append(ability_set)
-    pawn_data.set_editor_property("ability_sets", ability_sets)
+    configure_unique_asset_array_entry(pawn_data, "ability_sets", ability_set)
     save(pawn_data)
 
     game_feature_data = require(
