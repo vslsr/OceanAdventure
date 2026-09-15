@@ -4,7 +4,9 @@ Run this script from Blender's Scripting workspace. It only replaces the
 ``WoodBow_Generated`` collection and exports one skeletal FBX:
 
     blender/models/SK_WoodBow.fbx          mesh + skeleton, no animation
+    blender/models/A_WoodBow_Idle.fbx      carried at rest, looping
     blender/models/A_WoodBow_Draw.fbx      the draw, sampled by charge
+    blender/models/A_WoodBow_Aim.fbx       held at full draw, looping
     blender/models/A_WoodBow_Release.fbx   the loose, played by time
 
 The riser, both limbs, and the string are combined into one skinned mesh. Nothing
@@ -12,12 +14,23 @@ about the draw is baked into geometry: pulling the bow rotates ``limb_upper`` /
 ``limb_lower`` and translates ``string_mid``, so the mesh is built once and the
 runtime only writes bone transforms.
 
-Two clips come out with it, and they are driven differently on purpose. The draw is a
-*pose*, not a performance: two linear keyframes from braced to full draw, which Unreal
-samples at an explicit time of ``charge`` rather than playing back. Any easing belongs to
-the charge curve, so baking easing into these keys would apply it twice. The release is
-the opposite -- a damped wobble that only makes sense against the clock -- so it is baked
-per frame from the same curves SkyLand evaluates per render frame.
+Four clips come out with it, covering the states the bow is actually in -- idle, drawing,
+aiming, shooting -- and they are driven three different ways on purpose.
+
+The draw is a *pose*, not a performance: two linear keyframes from braced to full draw,
+which Unreal samples at an explicit time of ``charge`` rather than playing back. Any
+easing belongs to the charge curve, so baking easing into these keys would apply it twice.
+
+The release is the opposite -- a damped wobble that only makes sense against the clock --
+so it is baked per frame from the same curves SkyLand evaluates per render frame.
+
+Idle and aim are the third kind: loops the bow sits in for as long as the player leaves it
+there. Idle breathes the braced string forward and back; aim trembles around full draw,
+because a held bow that is perfectly still reads as a paused game. Both are sampled over a
+whole number of cycles and close exactly on their first key, and both are authored so that
+their first frame *is* the neighbouring clip's end pose: idle rests where the draw starts,
+aim holds where the draw ends and where the release begins. That is what lets the
+AnimBlueprint switch states without a crossfade papering over a step.
 
 The string is the reason this rig exists. Its vertices are blended linearly
 between ``string_mid`` and the tip bone on their side, which turns a straight
@@ -98,9 +111,42 @@ RELEASE_RETURN_RATIO = 0.3
 #: because wood is stiffer than a cord and the two settling together reads as rubber.
 LIMB_RECOVER_RATIO = 1.0 / 3.0
 
+# --- Idle and aim loops -----------------------------------------------------
+# The two states the bow spends most of its screen time in, and the two that were
+# missing: carried at rest, and held at full draw waiting for the shot. A bow that
+# freezes on a single pose between shots reads as a prop, not a weapon.
+# Both clips loop, so every curve below runs a whole number of cycles over its own
+# length and the last key lands exactly back on the first.
+#: How long one idle breath takes, seconds.
+BOW_IDLE_SECONDS = 2.4
+#: Breathing cycles inside one idle loop.
+IDLE_BREATH_CYCLES = 1
+#: How far the braced string drifts with the archer's breathing, metres. Small on
+#: purpose: this is a strung bow being carried, not a plucked one.
+IDLE_STRING_SWAY = 0.004
+#: How far the limbs flex with that breath, radians (0.35 degrees).
+IDLE_LIMB_SWAY = math.radians(0.35)
+#: How long one aim tremble cycle set takes, seconds.
+BOW_AIM_SECONDS = 1.6
+#: Tremble cycles inside one aim loop. Faster than breathing, because this is the
+#: strain of holding a drawn bow rather than the breath underneath it.
+AIM_TREMBLE_CYCLES = 3
+#: How far the held string trembles either side of full draw, metres.
+AIM_STRING_TREMBLE = 0.006
+#: How far the limbs answer that tremble, radians (0.5 degrees).
+AIM_LIMB_TREMBLE = math.radians(0.5)
+#: Keys per second for the two loops. Their curves are slow sines, so keying them at
+#: the release's rate would multiply keys without adding motion. Must divide
+#: ANIMATION_FPS: the loops are keyed on the same frame ruler everything else uses.
+LOOP_KEY_FPS = 30
+
+IDLE_ACTION_NAME = "WoodBow_Idle"
 DRAW_ACTION_NAME = "WoodBow_Draw"
+AIM_ACTION_NAME = "WoodBow_Aim"
 RELEASE_ACTION_NAME = "WoodBow_Release"
+IDLE_FBX_NAME = "A_WoodBow_Idle.fbx"
 DRAW_FBX_NAME = "A_WoodBow_Draw.fbx"
+AIM_FBX_NAME = "A_WoodBow_Aim.fbx"
 RELEASE_FBX_NAME = "A_WoodBow_Release.fbx"
 #: The draw clip is sampled by charge, never played, so its length is just a 0..1 ruler.
 DRAW_FRAME_COUNT = 24
@@ -333,6 +379,87 @@ def draw_samples():
         (0.0, draw_limb_bend(0.0), draw_string_pull(0.0)),
         (float(DRAW_FRAME_COUNT), draw_limb_bend(1.0), draw_string_pull(1.0)),
     ]
+
+
+def idle_string_pull(elapsed_seconds):
+    """Where the braced string sits *elapsed_seconds* into the idle loop.
+
+    Raised cosine rather than a sine: it starts and ends at exactly zero, and it never
+    goes negative. A negative value here would mean the string bowing *away* from the
+    archer, past its own brace height, which is the one place a strung cord cannot go.
+    """
+    phase = 2.0 * math.pi * IDLE_BREATH_CYCLES * elapsed_seconds / BOW_IDLE_SECONDS
+    return IDLE_STRING_SWAY * 0.5 * (1.0 - math.cos(phase))
+
+
+def idle_limb_bend(elapsed_seconds):
+    """How far the limbs flex with the idle breath, in phase with the string."""
+    phase = 2.0 * math.pi * IDLE_BREATH_CYCLES * elapsed_seconds / BOW_IDLE_SECONDS
+    return IDLE_LIMB_SWAY * 0.5 * (1.0 - math.cos(phase))
+
+
+def aim_string_pull(elapsed_seconds):
+    """Where the held string sits *elapsed_seconds* into the aim loop.
+
+    Centred on full draw and symmetric, so frame 0 of this clip is the pose the draw
+    ramp ends on and the pose the release starts from. Blending into or out of the hold
+    therefore costs nothing -- there is no step to hide behind a crossfade.
+    """
+    phase = 2.0 * math.pi * AIM_TREMBLE_CYCLES * elapsed_seconds / BOW_AIM_SECONDS
+    return BOW_STRING_PULL + AIM_STRING_TREMBLE * math.sin(phase)
+
+
+def aim_limb_bend(elapsed_seconds):
+    """How far back the limb tips sit while the draw is held."""
+    phase = 2.0 * math.pi * AIM_TREMBLE_CYCLES * elapsed_seconds / BOW_AIM_SECONDS
+    return BOW_LIMB_BEND_RADIANS + AIM_LIMB_TREMBLE * math.sin(phase)
+
+
+def loop_key_step():
+    """Frames between keys on the looping clips, on the ANIMATION_FPS ruler."""
+    if ANIMATION_FPS % LOOP_KEY_FPS != 0:
+        raise RuntimeError(
+            f"LOOP_KEY_FPS={LOOP_KEY_FPS} must divide ANIMATION_FPS={ANIMATION_FPS}, or the "
+            "loops cannot close on a whole key."
+        )
+    return ANIMATION_FPS // LOOP_KEY_FPS
+
+
+def loop_frame_count(seconds):
+    frames = seconds * ANIMATION_FPS
+    total = int(round(frames))
+    step = loop_key_step()
+    if abs(frames - total) > 1e-6 or total % step != 0:
+        raise RuntimeError(
+            f"A {seconds}s loop is {frames} frames at {ANIMATION_FPS}fps, which is not a whole "
+            f"multiple of the {step}-frame key step. Pick a length that is."
+        )
+    return total
+
+
+def loop_samples(seconds, limb_bend_at, string_pull_at_time):
+    """Sample a looping clip across one whole period, inclusive of both ends.
+
+    The final key is restated from t=0 rather than evaluated at t=period. The two are
+    equal in algebra, but not in floating point, and a loop that ends a micrometre off
+    where it began ticks once per cycle forever.
+    """
+    total = loop_frame_count(seconds)
+    step = loop_key_step()
+    samples = [
+        (float(frame), limb_bend_at(frame / ANIMATION_FPS), string_pull_at_time(frame / ANIMATION_FPS))
+        for frame in range(0, total, step)
+    ]
+    samples.append((float(total), limb_bend_at(0.0), string_pull_at_time(0.0)))
+    return samples
+
+
+def idle_samples():
+    return loop_samples(BOW_IDLE_SECONDS, idle_limb_bend, idle_string_pull)
+
+
+def aim_samples():
+    return loop_samples(BOW_AIM_SECONDS, aim_limb_bend, aim_string_pull)
 
 
 def release_frame_count():
@@ -937,6 +1064,82 @@ def validate_clips(rig, draw_action, release_action, brace_height):
     return played
 
 
+def validate_loop_clip(rig, action, seconds, base_pull, amplitude, brace_height):
+    """Play a looping clip back and check it loops, and that it moves while it does.
+
+    Two failures this catches, both of which export cleanly and neither of which raises:
+    a loop whose last key drifted off its first, which ticks once every cycle for as long
+    as the bow is on screen; and a loop that baked flat, which is indistinguishable from
+    the missing clip it was written to replace.
+    """
+    total = loop_frame_count(seconds)
+    rig.animation_data.action = action
+    played = []
+    for frame in range(0, total + 1, loop_key_step()):
+        bpy.context.scene.frame_set(frame)
+        bpy.context.view_layer.update()
+        played.append(string_pull_at(rig, brace_height))
+
+    if abs(played[0] - base_pull) > max(1e-4, amplitude * 0.05):
+        raise RuntimeError(
+            f"{action.name} starts at {played[0]:.5f}m, expected {base_pull:.5f}m. Its first "
+            "frame is the pose the neighbouring clips blend from, so it cannot drift."
+        )
+    if abs(played[-1] - played[0]) > 1e-5:
+        raise RuntimeError(
+            f"{action.name} ends {played[-1] - played[0]:+.6f}m away from where it started; "
+            "the loop would tick once per cycle."
+        )
+    travel = max(played) - min(played)
+    if travel < amplitude * 0.5:
+        raise RuntimeError(
+            f"{action.name} only moves {travel:.5f}m across its loop, expected about "
+            f"{amplitude:.5f}m. The clip baked flat -- check that the pose was applied before "
+            "each key rather than after."
+        )
+    return played
+
+
+def validate_state_clips(rig, idle_action, aim_action, draw_action, brace_height):
+    """Check the four clips join up into idle -> draw -> aim -> release without a step.
+
+    Each clip is correct on its own and the set can still be wrong: what the player sees
+    at a state change is the seam, and a seam is a property of the pair, not of either
+    clip. So the ends are compared here, once, rather than trusted four times.
+    """
+    idle_played = validate_loop_clip(
+        rig, idle_action, BOW_IDLE_SECONDS, 0.0, IDLE_STRING_SWAY, brace_height
+    )
+    if min(idle_played) < -1e-4 or max(idle_played) > IDLE_STRING_SWAY * 1.5:
+        raise RuntimeError(
+            f"{idle_action.name} ranges {min(idle_played):+.5f}m..{max(idle_played):+.5f}m; a "
+            f"braced string may only breathe forward, between 0 and {IDLE_STRING_SWAY:.5f}m."
+        )
+    aim_played = validate_loop_clip(
+        rig, aim_action, BOW_AIM_SECONDS, BOW_STRING_PULL, AIM_STRING_TREMBLE * 2.0, brace_height
+    )
+
+    # Idle's rest pose is the draw's first frame, and the hold is the draw's last.
+    rig.animation_data.action = draw_action
+    bpy.context.scene.frame_set(0)
+    bpy.context.view_layer.update()
+    draw_start = string_pull_at(rig, brace_height)
+    bpy.context.scene.frame_set(DRAW_FRAME_COUNT)
+    bpy.context.view_layer.update()
+    draw_end = string_pull_at(rig, brace_height)
+    if abs(idle_played[0] - draw_start) > 1e-4:
+        raise RuntimeError(
+            f"{idle_action.name} rests at {idle_played[0]:.5f}m but {draw_action.name} starts "
+            f"at {draw_start:.5f}m; the string would jump the moment the player pulls."
+        )
+    if abs(aim_played[0] - draw_end) > 1e-4:
+        raise RuntimeError(
+            f"{aim_action.name} holds at {aim_played[0]:.5f}m but {draw_action.name} ends at "
+            f"{draw_end:.5f}m; the string would jump the moment the draw completes."
+        )
+    return idle_played, aim_played
+
+
 def export_action_fbx(rig, action, file_name, frame_end):
     """One FBX per clip: armature only, no mesh. The Unreal import pairs it with SK_WoodBow."""
     output_dir = find_project_root() / "blender" / "models"
@@ -1050,10 +1253,21 @@ def build_wood_bow():
     # here is how a bow ends up permanently half-drawn in the content browser.
     output_path = export_ue5_fbx(mesh, rig)
 
+    idle_action = bake_action(rig, IDLE_ACTION_NAME, idle_samples())
     draw_action = bake_action(rig, DRAW_ACTION_NAME, draw_samples())
+    aim_action = bake_action(rig, AIM_ACTION_NAME, aim_samples())
     release_action = bake_action(rig, RELEASE_ACTION_NAME, release_samples())
     played = validate_clips(rig, draw_action, release_action, BOW_BRACE_HEIGHT)
+    idle_played, aim_played = validate_state_clips(
+        rig, idle_action, aim_action, draw_action, BOW_BRACE_HEIGHT
+    )
+    idle_path = export_action_fbx(
+        rig, idle_action, IDLE_FBX_NAME, loop_frame_count(BOW_IDLE_SECONDS)
+    )
     draw_path = export_action_fbx(rig, draw_action, DRAW_FBX_NAME, DRAW_FRAME_COUNT)
+    aim_path = export_action_fbx(
+        rig, aim_action, AIM_FBX_NAME, loop_frame_count(BOW_AIM_SECONDS)
+    )
     release_path = export_action_fbx(
         rig, release_action, RELEASE_FBX_NAME, release_frame_count()
     )
@@ -1071,9 +1285,15 @@ def build_wood_bow():
         f"{math.degrees(BOW_LIMB_BEND_RADIANS):.1f}deg"
     )
     print(
-        f"Clips baked at {ANIMATION_FPS}fps: {DRAW_ACTION_NAME} "
-        f"({DRAW_FRAME_COUNT} frames, sample it by charge), {RELEASE_ACTION_NAME} "
+        f"Clips baked at {ANIMATION_FPS}fps: {IDLE_ACTION_NAME} "
+        f"({BOW_IDLE_SECONDS}s loop), {DRAW_ACTION_NAME} "
+        f"({DRAW_FRAME_COUNT} frames, sample it by charge), {AIM_ACTION_NAME} "
+        f"({BOW_AIM_SECONDS}s loop), {RELEASE_ACTION_NAME} "
         f"({release_frame_count()} frames, play it by time)"
+    )
+    print(
+        f"Idle verified: breathes 0 -> {max(idle_played):+.5f}m and closes its loop; "
+        f"aim verified: holds {min(aim_played):+.5f}m..{max(aim_played):+.5f}m around full draw"
     )
     print(
         f"Release verified: springs to {min(played):+.4f}m past rest, settles at "
@@ -1082,7 +1302,9 @@ def build_wood_bow():
     print("Attach the arrow to an Unreal Skeleton socket named 'nock' on string_mid.")
     print(f"UE5 skeletal FBX exported: {output_path}")
     print(f"FBX size: {output_path.stat().st_size // 1024} KB")
+    print(f"Idle clip exported:    {idle_path}")
     print(f"Draw clip exported:    {draw_path}")
+    print(f"Aim clip exported:     {aim_path}")
     print(f"Release clip exported: {release_path}")
 
 

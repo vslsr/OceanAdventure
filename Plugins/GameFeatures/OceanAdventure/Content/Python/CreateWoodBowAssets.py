@@ -3,7 +3,9 @@
     /OceanAdventure/Weapons/Bow/SK_WoodBow          the skinned bow
     <its skeleton>                                  reused across runs, never re-created
     socket 'nock' on bone string_mid                where the arrow attaches
+    /OceanAdventure/Weapons/Bow/A_WoodBow_Idle      carried at rest, looping
     /OceanAdventure/Weapons/Bow/A_WoodBow_Draw      braced -> full draw
+    /OceanAdventure/Weapons/Bow/A_WoodBow_Aim       held at full draw, looping
     /OceanAdventure/Weapons/Bow/A_WoodBow_Release   the loose, with its wobble
 
 The source is authored by ``blender/script/python/create_wood_bow.py`` and exported to
@@ -19,10 +21,16 @@ Run in the full Unreal Editor (Output Log, Cmd mode)::
 Safe to re-run. In the full Editor a re-run re-imports the FBX, so a Blender revision lands;
 in a PythonScript commandlet it reuses what exists instead (see import_or_reuse_bow below).
 
-The two clips are driven differently and the AnimBlueprint must treat them that way.
-A_WoodBow_Draw is a pose ramp, not a performance: sample it at an explicit time of
+The four clips are driven three different ways and the AnimBlueprint must treat them that
+way. A_WoodBow_Draw is a pose ramp, not a performance: sample it at an explicit time of
 ``charge * length`` rather than playing it. A_WoodBow_Release is the opposite -- play it
-once, on the clock, when the arrow leaves.
+once, on the clock, when the arrow leaves. A_WoodBow_Idle and A_WoodBow_Aim are loops:
+play them looping while the bow is carried and while the draw is held respectively.
+
+The seams are already authored, in Blender: idle rests on the draw's first pose, aim holds
+the draw's last, and the release starts from that same held pose. State changes therefore
+need no crossfade to hide a step, and a crossfade long enough to hide one would only smear
+the snap out of the loose.
 
 What this script deliberately does NOT do: author ABP_WoodBow's AnimGraph. Anim graph nodes
 are not exposed to Python, so wiring those two clips together is hand work. This script's
@@ -42,7 +50,20 @@ BOW_MESH_NAME = "SK_WoodBow"
 BOW_MESH_PATH = f"{BOW_ROOT}/{BOW_MESH_NAME}"
 
 #: The clips, exported by the same Blender script. Asset name doubles as the FBX stem.
-BOW_CLIPS = ("A_WoodBow_Draw", "A_WoodBow_Release")
+BOW_CLIPS = ("A_WoodBow_Idle", "A_WoodBow_Draw", "A_WoodBow_Aim", "A_WoodBow_Release")
+
+#: Clips whose duration is a stated design value in the Blender script, mapped to the
+#: literal that states it. These are the ones whose timing can be proved to have survived
+#: the trip through FBX; the draw's length is just a 0..1 ruler and proves nothing.
+BOW_CLIP_DURATION_CONTRACT = {
+    "A_WoodBow_Idle": "BOW_IDLE_SECONDS",
+    "A_WoodBow_Aim": "BOW_AIM_SECONDS",
+    "A_WoodBow_Release": "BOW_RELEASE_SECONDS",
+}
+
+#: Clips the AnimBlueprint plays looping. Unreal decides looping at the play node, not on
+#: the asset, so this script cannot set it -- it reports it, and the graph honours it.
+BOW_LOOPING_CLIPS = ("A_WoodBow_Idle", "A_WoodBow_Aim")
 
 PROJECT_ROOT = Path(unreal.Paths.project_dir()).resolve()
 BLENDER_MODELS = PROJECT_ROOT / "blender" / "models"
@@ -134,7 +155,13 @@ def read_blender_contract():
         )
         return None
 
-    wanted = ("EXPECTED_BONES", "ANIMATION_FPS", "BOW_RELEASE_SECONDS")
+    wanted = (
+        "EXPECTED_BONES",
+        "ANIMATION_FPS",
+        "BOW_RELEASE_SECONDS",
+        "BOW_IDLE_SECONDS",
+        "BOW_AIM_SECONDS",
+    )
     found = {}
     tree = ast.parse(BOW_BLENDER_SCRIPT.read_text(encoding="utf-8"))
     for node in tree.body:
@@ -383,17 +410,29 @@ def validate_clips(clips, skeleton, contract):
         length = float(call_first_available(clip, ("get_play_length",)))
         require(length > 0.0, f"{asset_path} imported with zero length")
 
-        if contract is not None and asset_path.endswith("A_WoodBow_Release"):
-            # The loose is the one clip whose duration is a stated design value, so it is
-            # the one that can prove the trip through FBX kept the timing.
-            expected = float(contract["BOW_RELEASE_SECONDS"])
+        clip_name = asset_path.rsplit("/", 1)[-1]
+        literal = BOW_CLIP_DURATION_CONTRACT.get(clip_name)
+        if contract is not None and literal is not None:
+            # These clips' durations are stated design values, so they are the ones that
+            # can prove the trip through FBX kept the timing. A loop is worse off than the
+            # loose if it is truncated: the cycle still plays, just slightly wrong, forever.
+            expected = float(contract[literal])
             frame_slack = 2.0 / float(contract["ANIMATION_FPS"])
             require(
                 abs(length - expected) <= expected * 0.25 + frame_slack,
-                f"{asset_path} is {length:.4f}s, expected about {expected:.4f}s. The clip "
-                "was resampled or truncated on import.",
+                f"{asset_path} is {length:.4f}s, expected about {expected:.4f}s ({literal} in "
+                f"{BOW_BLENDER_SCRIPT.name}). The clip was resampled or truncated on import.",
             )
-        log(f"Clip {asset_path} plays for {length:.4f}s on {package_of(skeleton)}")
+        role = " (play it looping)" if clip_name in BOW_LOOPING_CLIPS else ""
+        log(f"Clip {asset_path} plays for {length:.4f}s on {package_of(skeleton)}{role}")
+
+    imported = {package_of(clip).rsplit("/", 1)[-1] for clip in clips}
+    missing = [name for name in BOW_CLIPS if name not in imported]
+    require(
+        not missing,
+        f"{missing} did not import. Re-run blender/script/python/create_wood_bow.py; it "
+        "exports the mesh and all four clips together.",
+    )
 
 
 # --- Sockets ----------------------------------------------------------------
@@ -484,10 +523,12 @@ def main():
 
     log(f"WOOD_BOW_ASSETS_OK {BOW_MESH_PATH} on {package_of(skeleton)}")
     log(
-        "Remaining by hand: author ABP_WoodBow against this skeleton. Sample "
-        "A_WoodBow_Draw at an explicit time of charge * length -- do not play it -- and "
-        "play A_WoodBow_Release once when the arrow leaves. Anim graph nodes are not "
-        "exposed to Python."
+        "Remaining by hand: author ABP_WoodBow against this skeleton. Loop A_WoodBow_Idle "
+        "while the bow is carried; sample A_WoodBow_Draw at an explicit time of "
+        "charge * length while it is being pulled -- do not play it; loop A_WoodBow_Aim "
+        "while the draw is held; play A_WoodBow_Release once when the arrow leaves. The "
+        "clips already share their seam poses, so these transitions need no blend time. "
+        "Anim graph nodes are not exposed to Python."
     )
 
 
