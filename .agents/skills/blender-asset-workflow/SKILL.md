@@ -1,6 +1,6 @@
 ---
 name: blender-asset-workflow
-description: 为 OceanAdventure 维护通用 Blender 原始模型与 Unreal 导入流水线。用户要求创建或修复道具、武器、场景模型脚本、FBX/OBJ/GLB 导出路径、`blender/models` 规范，或遇到 Blender 文本块找不到工程根目录时使用；新建 `/Raft/Vehicles/<HullName>` 船体资产族改用 raft-hull-asset-workflow，不负责直接编辑 UE `.uasset`、Lyra 专用资产或运行时玩法实现。
+description: 为 OceanAdventure 维护通用 Blender 原始模型与 Unreal 导入流水线。用户要求创建或修复道具、武器、场景模型脚本、FBX/OBJ/GLB 导出路径、`blender/models` 规范，或遇到 Blender 文本块找不到工程根目录时使用；新建 `/Raft/Vehicles/<HullName>` 船体资产族改用 raft-hull-asset-workflow；涉及骨骼绑定、蒙皮权重或动画 clip 烘焙改用 blender-skeletal-asset-workflow（它依赖本技能的目录与工程根规范）；不负责直接编辑 UE `.uasset`、Lyra 专用资产或运行时玩法实现。
 ---
 
 # Blender 资源流水线
@@ -43,6 +43,7 @@ description: 为 OceanAdventure 维护通用 Blender 原始模型与 Unreal 导�
 
 ## 相邻技能边界
 
+- 需要给资产加骨架、蒙皮权重，或烘焙 Action / 导出动画 FBX / 导入 AnimSequence：改用 `blender-skeletal-asset-workflow`；本技能只作为其通用 Blender 导出规则依赖，不在这里记骨骼与动画规则。
 - 需要创建独立 Raft 船体资产族、`DA_Raft_*` / `BP_Raft_*`、每船体独立构建脚本或 `/Raft/Vehicles/<HullName>` 目录：改用 `raft-hull-asset-workflow`；本技能只作为其通用 Blender 导出规则依赖。
 - 需要配置 Lyra AbilitySet、InputConfig 或 GameFeatureData：改用 `lyra-editor-asset-automation`。
 - 需要选择 GameplayAbility 与世界 Actor 的职责：改用 `gameplay-ability-selection`。
