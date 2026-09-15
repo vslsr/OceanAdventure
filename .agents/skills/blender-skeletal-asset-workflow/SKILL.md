@@ -28,7 +28,8 @@ AnimBlueprint 驱动一根已不存在的骨头不会报错，只是不动。
 
 做法：Blender 脚本里把骨骼名写成**纯字面量**元组（不要 `("root",) + DEFORM`，
 `ast.literal_eval` 读不了表达式），UE 脚本用 `ast.literal_eval` 从那个 `.py` 里读回来逐一比对。
-采样率、时长这类跨端常量同样只写一份。〔未验证〕
+采样率、时长这类跨端常量同样只写一份。〔Blender 侧已验证：导出的 FBX 骨骼集合与字面量逐一吻合；
+UE 侧读取尚未在宿主跑过〕
 
 - `root` 是 0 号骨、**不形变**，UE 按它做 motion root；导入后断言 0 号骨确实是它。
 - 形变骨必须各自有同名顶点组，缺一个就是一块不跟着动的几何。
@@ -46,8 +47,9 @@ def to_bone_space(pose_bone, world_direction):
 ```
 
 旋转同理：`Quaternion(to_bone_space(pb, (1,0,0)), angle)`，不要靠猜 roll 让局部 X 恰好等于世界 X。
-〔宿主已验证：见失败档案 `PY-BLENDER-001`，把「沿 +Y 拉弦」写成局部 Z 偏移，位移落在与世界 Y
-垂直的方向上，校验读出 0.0000m〕
+〔宿主已验证：失败与修复都跑过。见失败档案 `PY-BLENDER-001` —— 把「沿 +Y 拉弦」写成局部 Z
+偏移，位移落在与世界 Y 垂直的方向上，校验读出 0.0000m；换算后同一脚本在 Blender 5.1.0 跑通
+并产出 `blender/models/SK_WoodBow.fbx`〕
 
 ### 2.2 叶子非形变骨活不到 FBX 里，挂点用 Socket
 
@@ -55,7 +57,8 @@ def to_bone_space(pose_bone, world_direction):
 `root` 因为有形变子级得以保留；一根纯粹当挂点的叶子骨会被直接丢掉。
 
 所以挂点（箭搭在哪、枪口在哪）**不要做成骨骼**，让 UE 导入脚本在 Skeleton 上建 Socket。
-Socket 还能在绑定方式将来改变时活下来。〔未验证〕
+Socket 还能在绑定方式将来改变时活下来。〔宿主已验证：`blender/models/SK_WoodBow.fbx` 里
+恰好只有契约中那七根骨，不形变的 `root` 因有形变子级而保留，没有 `nock`〕
 
 ### 2.3 蒙皮权重：能刚性就刚性，要插值才混合
 
@@ -87,8 +90,8 @@ UE_FBX_COMMON = dict(
 )
 ```
 
-〔宿主已验证：这组参数产出的 `blender/models/SK_RoundBodyCharacter.fbx` 在仓库里，
-UE 可用；本次新脚本尚未跑到导出这一步〕
+〔宿主已验证：这组参数产出的 `blender/models/SK_RoundBodyCharacter.fbx` 与
+`blender/models/SK_WoodBow.fbx` 都在仓库里，后者含骨架、Deformer 与两个材质槽〕
 
 ### 2.6 Action Slot 可能让 Action 空着
 

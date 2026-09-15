@@ -15,7 +15,7 @@
 | PY-UE-007 | 2026-08-28 | Unreal Python / StaticMesh 材质读回 | `'StaticMesh' object has no attribute 'get_static_materials'` | VERIFIED | 1 |
 | PY-UE-008 | 2026-08-28 | Unreal Python / PIE 资产编辑 | `The Editor is currently in a play mode` / 误报资产缺失或创建失败 | VERIFIED | 3 |
 | PY-UE-009 | 2026-08-28 | Unreal Python / 读回探针 | `'NoneType' object has no attribute 'get_editor_property'` | VERIFIED | 1 |
-| PY-BLENDER-001 | 2026-09-15 | Blender bpy / Pose 骨骼空间 | `String midpoint moved -0.0000m at full draw` | OPEN | 1 |
+| PY-BLENDER-001 | 2026-09-15 | Blender bpy / Pose 骨骼空间 | `String midpoint moved -0.0000m at full draw` | VERIFIED | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
 | PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
@@ -333,9 +333,12 @@
   失败信息里必须带上三维位移全量，否则「没动」和「动错方向」两种故障长得一模一样。
 - 修复：`validate_draw_pose()` 改为按 `matrix_local` 换算世界 +Y 平移与世界 X 旋转；断言改为
   同时报告世界 Y 位移与三维位移模长。
-- 验证证据：待用户在 Blender 中重跑，期望日志
-  `Draw pose verified: string_mid +Y 0.18m, limbs 16.0deg` 与 `UE5 skeletal FBX exported: ...`。
-- 状态：`OPEN`。
+- 验证证据：2026-09-15 用户在 Blender 5.1.0 中重跑成功，产物 `blender/models/SK_WoodBow.fbx`
+  （40732 字节）已提交到 main（`3d51379`，`08b394b` 为再次导出）。该文件能存在即证明
+  `validate_draw_pose()` 已通过——它正是修复前抛错的那一步，且排在导出之前。FBX 内含且仅含
+  契约里的七根骨 `root/grip/limb_upper/limb_lower/string_upper/string_mid/string_lower`，
+  无 `nock`，并带 Deformer 与两个材质，说明骨架、蒙皮与导出参数一并成立。
+- 状态：`VERIFIED`。
 - 发生次数：1。
 
 ## PY-LYRA-001：USTRUCT 包装器拒绝带参数构造
