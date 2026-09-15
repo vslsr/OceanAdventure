@@ -1,8 +1,10 @@
 """Import the procedurally generated wood bow and give it the contract content relies on.
 
-    /OceanAdventure/Weapons/Bow/SK_WoodBow      the skinned bow
-    <its skeleton>                              reused across runs, never re-created
-    socket 'nock' on bone string_mid            where the arrow attaches
+    /OceanAdventure/Weapons/Bow/SK_WoodBow          the skinned bow
+    <its skeleton>                                  reused across runs, never re-created
+    socket 'nock' on bone string_mid                where the arrow attaches
+    /OceanAdventure/Weapons/Bow/A_WoodBow_Draw      braced -> full draw
+    /OceanAdventure/Weapons/Bow/A_WoodBow_Release   the loose, with its wobble
 
 The source is authored by ``blender/script/python/create_wood_bow.py`` and exported to
 ``blender/models/SK_WoodBow.fbx``. Run that first.
@@ -17,10 +19,15 @@ Run in the full Unreal Editor (Output Log, Cmd mode)::
 Safe to re-run. In the full Editor a re-run re-imports the FBX, so a Blender revision lands;
 in a PythonScript commandlet it reuses what exists instead (see import_or_reuse_bow below).
 
+The two clips are driven differently and the AnimBlueprint must treat them that way.
+A_WoodBow_Draw is a pose ramp, not a performance: sample it at an explicit time of
+``charge * length`` rather than playing it. A_WoodBow_Release is the opposite -- play it
+once, on the clock, when the arrow leaves.
+
 What this script deliberately does NOT do: author ABP_WoodBow's AnimGraph. Anim graph nodes
-are not exposed to Python, so the draw itself -- rotate limb_upper/limb_lower, translate
-string_mid from a 0..1 charge -- is a hand-authored AnimBlueprint. This script's job is to
-guarantee the bones and the socket that AnimBlueprint is written against actually exist.
+are not exposed to Python, so wiring those two clips together is hand work. This script's
+job is to guarantee the bones, the socket and the clips that AnimBlueprint is written
+against actually exist, and that the clips still carry the motion Blender baked.
 """
 
 import ast
@@ -33,6 +40,9 @@ FEATURE_ROOT = "/OceanAdventure"
 BOW_ROOT = f"{FEATURE_ROOT}/Weapons/Bow"
 BOW_MESH_NAME = "SK_WoodBow"
 BOW_MESH_PATH = f"{BOW_ROOT}/{BOW_MESH_NAME}"
+
+#: The clips, exported by the same Blender script. Asset name doubles as the FBX stem.
+BOW_CLIPS = ("A_WoodBow_Draw", "A_WoodBow_Release")
 
 PROJECT_ROOT = Path(unreal.Paths.project_dir()).resolve()
 BLENDER_MODELS = PROJECT_ROOT / "blender" / "models"
@@ -104,40 +114,46 @@ def is_commandlet_host():
 # --- The bone contract ------------------------------------------------------
 
 
-def read_bone_contract():
-    """Read EXPECTED_BONES straight out of the Blender script that generates the rig.
+def read_blender_contract():
+    """Read the rig contract straight out of the Blender script that generates it.
 
-    The bone names are a contract spanning two interpreters, two languages and a binary
-    file in between. Written down twice they drift, and the drift is silent: an AnimBlueprint
-    that drives a bone which no longer exists does not error, it just stops animating. So
-    there is one literal, in the script that creates the bones, and this side reads it.
+    Bone names, the baked sample rate and the length of the loose are a contract spanning
+    two interpreters, two languages and a binary file in between. Written down twice they
+    drift, and the drift is silent: an AnimBlueprint driving a bone that no longer exists
+    does not error, it just stops animating, and a clip resampled at the wrong rate merely
+    looks a bit dull. So there is one set of literals, in the script that produces them,
+    and this side reads them.
 
-    Returns ``None`` (with a warning) in a content-only checkout that has no blender/ tree;
-    the import still runs, only the cross-check is unavailable.
+    Returns ``None`` (with a warning) in a content-only checkout with no blender/ tree;
+    the import still runs, only the cross-checks are unavailable.
     """
     if not BOW_BLENDER_SCRIPT.is_file():
         warn(
-            f"No {BOW_BLENDER_SCRIPT.name} in this checkout, so the bone contract cannot be "
-            "cross-checked. The imported skeleton is taken on trust."
+            f"No {BOW_BLENDER_SCRIPT.name} in this checkout, so the rig contract cannot be "
+            "cross-checked. The imported skeleton and clips are taken on trust."
         )
         return None
 
+    wanted = ("EXPECTED_BONES", "ANIMATION_FPS", "BOW_RELEASE_SECONDS")
+    found = {}
     tree = ast.parse(BOW_BLENDER_SCRIPT.read_text(encoding="utf-8"))
     for node in tree.body:
         if not isinstance(node, ast.Assign):
             continue
-        targets = [t.id for t in node.targets if isinstance(t, ast.Name)]
-        if "EXPECTED_BONES" not in targets:
-            continue
-        # literal_eval, never eval: this file is parsed, not executed.
-        bones = tuple(ast.literal_eval(node.value))
-        require(bones, f"EXPECTED_BONES in {BOW_BLENDER_SCRIPT.name} is empty")
-        return bones
+        for target in node.targets:
+            if isinstance(target, ast.Name) and target.id in wanted:
+                # literal_eval, never eval: this file is parsed, not executed.
+                found[target.id] = ast.literal_eval(node.value)
 
-    raise RuntimeError(
-        f"{BOW_BLENDER_SCRIPT.name} no longer declares EXPECTED_BONES as a plain literal. "
-        "Keep it a literal tuple; this script reads it with ast.literal_eval."
+    missing = [name for name in wanted if name not in found]
+    require(
+        not missing,
+        f"{BOW_BLENDER_SCRIPT.name} no longer declares {missing} as plain literals. "
+        "Keep them literal; this script reads them with ast.literal_eval.",
     )
+    require(found["EXPECTED_BONES"], f"EXPECTED_BONES in {BOW_BLENDER_SCRIPT.name} is empty")
+    found["EXPECTED_BONES"] = tuple(found["EXPECTED_BONES"])
+    return found
 
 
 def read_skeleton_bone_names(mesh):
@@ -159,9 +175,10 @@ def read_skeleton_bone_names(mesh):
     return [str(component.get_bone_name(index)) for index in range(count)]
 
 
-def validate_bone_contract(mesh, expected_bones):
-    if expected_bones is None:
+def validate_bone_contract(mesh, contract):
+    if contract is None:
         return
+    expected_bones = contract["EXPECTED_BONES"]
     actual = read_skeleton_bone_names(mesh)
     missing = [bone for bone in expected_bones if bone not in actual]
     extra = [bone for bone in actual if bone not in expected_bones]
@@ -269,6 +286,116 @@ def import_or_reuse_bow():
     return mesh, skeleton
 
 
+def import_or_reuse_clips(skeleton, contract):
+    """Import the baked clips onto the bow's own Skeleton.
+
+    Two things decide whether the motion survives the trip:
+
+    The Skeleton. An AnimSequence imported without one bound is either rejected or lands
+    on a freshly invented skeleton, and either way the AnimBlueprint cannot play it. The
+    mesh's skeleton is passed in, never guessed.
+
+    The sample rate. Unreal resamples imported animation to a default 30Hz. The release
+    crosses rest twice inside 0.12s -- about 17Hz -- so 30Hz lands under two samples per
+    cycle and the wobble aliases into a shrug. The rate Blender baked at is read out of
+    the Blender script and asked for explicitly.
+    """
+    clips = []
+    for clip_name in BOW_CLIPS:
+        asset_path = f"{BOW_ROOT}/{clip_name}"
+        source_fbx = BLENDER_MODELS / f"{clip_name}.fbx"
+        existing = (
+            unreal.EditorAssetLibrary.load_asset(asset_path)
+            if unreal.EditorAssetLibrary.does_asset_exist(asset_path)
+            else None
+        )
+
+        if is_commandlet_host():
+            require(
+                existing is not None,
+                f"{asset_path} needs its first FBX import. Run this script in the full "
+                "Unreal Editor once; UE 5.7 Interchange crashes in PythonScript "
+                "commandlets without Slate.",
+            )
+            log(f"Commandlet host: reused {asset_path} without re-importing")
+            clips.append(existing)
+            continue
+
+        require(
+            source_fbx.is_file(),
+            f"Missing {source_fbx}. Run blender/script/python/create_wood_bow.py in "
+            "Blender first; it exports the mesh and both clips together.",
+        )
+
+        options = unreal.FbxImportUI()
+        options.set_editor_property("import_mesh", False)
+        options.set_editor_property("import_as_skeletal", True)
+        options.set_editor_property("import_animations", True)
+        options.set_editor_property("import_materials", False)
+        options.set_editor_property("import_textures", False)
+        options.set_editor_property("create_physics_asset", False)
+        options.set_editor_property("mesh_type_to_import", unreal.FBXImportType.FBXIT_ANIMATION)
+        options.set_editor_property("skeleton", skeleton)
+        anim_options = options.get_editor_property("anim_sequence_import_data")
+        anim_options.set_editor_property("import_bone_tracks", True)
+        # Keep every baked key. Both of these throw motion away, and the motion they
+        # throw away first is exactly the short, small, fast kind the release is made of.
+        anim_options.set_editor_property("remove_redundant_keys", False)
+        if contract is not None:
+            anim_options.set_editor_property("use_default_sample_rate", False)
+            anim_options.set_editor_property("custom_sample_rate", int(contract["ANIMATION_FPS"]))
+
+        destination_path, destination_name = split_path(asset_path)
+        task = unreal.AssetImportTask()
+        task.set_editor_property("filename", str(source_fbx))
+        task.set_editor_property("destination_path", destination_path)
+        task.set_editor_property("destination_name", destination_name)
+        task.set_editor_property("automated", True)
+        task.set_editor_property("replace_existing", True)
+        task.set_editor_property("save", True)
+        task.set_editor_property("options", options)
+        unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks([task])
+
+        clip = require(
+            unreal.EditorAssetLibrary.load_asset(asset_path),
+            f"Unable to import {asset_path} from {source_fbx}",
+        )
+        log(f"Imported {source_fbx.name} into {asset_path}")
+        clips.append(clip)
+    return clips
+
+
+def validate_clips(clips, skeleton, contract):
+    for clip in clips:
+        asset_path = package_of(clip)
+        require(
+            clip.get_class().get_name() == "AnimSequence",
+            f"{asset_path} is a {clip.get_class().get_name()}, not an AnimSequence",
+        )
+        # An AnimSequence on the wrong skeleton loads fine and simply never plays on the
+        # bow, so compare the package rather than trusting the import to have bound it.
+        clip_skeleton = clip.get_editor_property("skeleton")
+        require(
+            package_of(clip_skeleton) == package_of(skeleton),
+            f"{asset_path} is bound to {package_of(clip_skeleton)}, not the bow's "
+            f"{package_of(skeleton)}; it will never play on SK_WoodBow",
+        )
+        length = float(call_first_available(clip, ("get_play_length",)))
+        require(length > 0.0, f"{asset_path} imported with zero length")
+
+        if contract is not None and asset_path.endswith("A_WoodBow_Release"):
+            # The loose is the one clip whose duration is a stated design value, so it is
+            # the one that can prove the trip through FBX kept the timing.
+            expected = float(contract["BOW_RELEASE_SECONDS"])
+            frame_slack = 2.0 / float(contract["ANIMATION_FPS"])
+            require(
+                abs(length - expected) <= expected * 0.25 + frame_slack,
+                f"{asset_path} is {length:.4f}s, expected about {expected:.4f}s. The clip "
+                "was resampled or truncated on import.",
+            )
+        log(f"Clip {asset_path} plays for {length:.4f}s on {package_of(skeleton)}")
+
+
 # --- Sockets ----------------------------------------------------------------
 
 
@@ -345,18 +472,22 @@ def main():
     registry = unreal.AssetRegistryHelpers.get_asset_registry()
     registry.scan_paths_synchronous([BOW_ROOT], True, True)
 
-    expected_bones = read_bone_contract()
+    contract = read_blender_contract()
     mesh, skeleton = import_or_reuse_bow()
     require(skeleton, f"{BOW_MESH_PATH} has no Skeleton to author sockets on")
-    validate_bone_contract(mesh, expected_bones)
+    validate_bone_contract(mesh, contract)
     ensure_sockets(skeleton)
     save(mesh)
 
+    clips = import_or_reuse_clips(skeleton, contract)
+    validate_clips(clips, skeleton, contract)
+
     log(f"WOOD_BOW_ASSETS_OK {BOW_MESH_PATH} on {package_of(skeleton)}")
     log(
-        "Remaining by hand: author ABP_WoodBow against this skeleton. Drive limb_upper and "
-        "limb_lower with a mirrored X rotation and translate string_mid along +X (Unreal) "
-        "from the 0..1 draw charge; anim graph nodes are not exposed to Python."
+        "Remaining by hand: author ABP_WoodBow against this skeleton. Sample "
+        "A_WoodBow_Draw at an explicit time of charge * length -- do not play it -- and "
+        "play A_WoodBow_Release once when the arrow leaves. Anim graph nodes are not "
+        "exposed to Python."
     )
 
 
