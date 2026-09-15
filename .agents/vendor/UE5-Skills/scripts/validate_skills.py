@@ -87,7 +87,11 @@ def find_legacy_tokens(skill_dirs: list[Path]) -> list[str]:
 
 
 def main() -> int:
-    skill_dirs = sorted([p for p in ROOT.glob(SKILL_GLOB) if p.is_dir()])
+    # 跳过软链：.agents/skills 下的软链是插件自带的 Skill（如 ue5-python），
+    # 归插件 sync 拥有，不属于本技能包，不受本校验的结构约定管。
+    skill_dirs = sorted(
+        [p for p in ROOT.glob(SKILL_GLOB) if p.is_dir() and not p.is_symlink()]
+    )
     if not skill_dirs:
         print("No ue5-* skill directories found.")
         return 2
