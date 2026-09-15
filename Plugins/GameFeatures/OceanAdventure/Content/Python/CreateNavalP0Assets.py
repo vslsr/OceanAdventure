@@ -72,6 +72,11 @@ HELM_ACTION_SPECS = (
 )
 DIRECT_HELM_ACTION_NAME = "IA_Ocean_Helm_DirectMove"
 
+# These physical keys are intentionally shared with another always-active mapping context.
+# Both InputActions must remain non-consuming so Enhanced Input retains both mappings; GAS
+# activation requirements decide which mutually-exclusive gameplay action may actually run.
+SHARED_KEY_TAGS = frozenset({"InputTag.Naval.Fire"})
+
 
 ABILITIES = (
     ("/Script/OceanAdventureRuntime.OceanAdventureGameplayAbility_OperateHelm", "InputTag.Naval.Interact"),
@@ -106,6 +111,18 @@ def require(value, message):
     if not value:
         raise RuntimeError(message)
     return value
+
+
+def require_editor_asset_mode():
+    """Block authoring while PIE owns live input and GameFeature asset references."""
+    subsystem = require(
+        unreal.get_editor_subsystem(unreal.LevelEditorSubsystem),
+        "LevelEditorSubsystem is unavailable; run this script in the full Unreal Editor",
+    )
+    require(
+        not subsystem.is_in_play_in_editor(),
+        "Cannot create Naval P0 assets while Play/PIE is active. Click Stop, then run this script again.",
+    )
 
 
 def require_type(type_name, source):
@@ -154,6 +171,76 @@ def asset_path(asset):
     if asset is None:
         return ""
     return str(asset.get_path_name()).split(".", 1)[0]
+
+
+def configure_input_action_consumption(action, consume_input):
+    """Set UInputAction::bConsumeInput without guessing its UE Python exposure name."""
+    for property_name in ("consume_input", "b_consume_input"):
+        try:
+            action.get_editor_property(property_name)
+        except Exception:
+            continue
+
+        action.set_editor_property(property_name, bool(consume_input))
+        configured_value = bool(action.get_editor_property(property_name))
+        require(
+            configured_value == bool(consume_input),
+            (
+                f"{action.get_path_name()} did not retain {property_name}="
+                f"{bool(consume_input)}"
+            ),
+        )
+        return property_name
+
+    raise RuntimeError(
+        f"Unable to find the consume-input property on {action.get_path_name()}; "
+        "tried consume_input and b_consume_input"
+    )
+
+
+def configure_unique_asset_array_entry(owner, property_name, desired_asset):
+    """Keep exactly one reference to an asset in a reflected UObject array.
+
+    UObject wrapper identity is not stable across UE Python reads, so the target is matched
+    by package path. The first matching position is preserved while any duplicates collapse.
+    """
+    desired_path = require(
+        asset_path(desired_asset),
+        f"Cannot configure an empty asset reference in {owner.get_path_name()}.{property_name}",
+    )
+    rebuilt_entries = []
+    inserted = False
+    for entry in owner.get_editor_property(property_name):
+        if asset_path(entry) == desired_path:
+            if not inserted:
+                rebuilt_entries.append(desired_asset)
+                inserted = True
+            continue
+        rebuilt_entries.append(entry)
+
+    if not inserted:
+        rebuilt_entries.append(desired_asset)
+
+    owner.set_editor_property(property_name, rebuilt_entries)
+    configured_entries = list(owner.get_editor_property(property_name))
+    matching_entries = [
+        entry for entry in configured_entries if asset_path(entry) == desired_path
+    ]
+    require(
+        len(configured_entries) == len(rebuilt_entries),
+        (
+            f"{owner.get_path_name()}.{property_name} changed length unexpectedly: "
+            f"expected {len(rebuilt_entries)}, got {len(configured_entries)}"
+        ),
+    )
+    require(
+        len(matching_entries) == 1,
+        (
+            f"{owner.get_path_name()}.{property_name} must contain exactly one "
+            f"reference to {desired_path}; got {len(matching_entries)}"
+        ),
+    )
+    return configured_entries
 
 
 def save(asset):
@@ -246,6 +333,9 @@ def configure_input_assets():
             unreal.InputActionFactory() if hasattr(unreal, "InputActionFactory") else None,
         )
         action.set_editor_property("value_type", unreal.InputActionValueType.BOOLEAN)
+        if tag_name in SHARED_KEY_TAGS:
+            property_name = configure_input_action_consumption(action, False)
+            log(f"Configured {action_name}.{property_name}=False for shared LeftMouseButton")
         if tag_name == "InputTag.Naval.Fire":
             # Fire remains Triggered for the full hold so GAS receives a real Completed
             # event on physical release; the active ability absorbs repeated press samples.
@@ -533,10 +623,7 @@ def configure_pawn_data(ability_set):
         ),
     )
 
-    ability_sets = list(pawn_data.get_editor_property("ability_sets"))
-    if not any(asset_path(entry) == asset_path(ability_set) for entry in ability_sets):
-        ability_sets.append(ability_set)
-    pawn_data.set_editor_property("ability_sets", ability_sets)
+    configure_unique_asset_array_entry(pawn_data, "ability_sets", ability_set)
     save(pawn_data)
     return pawn_data
 
@@ -631,6 +718,7 @@ def configure_experience(pawn_data):
 
 
 def main():
+    require_editor_asset_mode()
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([FEATURE_ROOT], True, True)
 
     input_mapping, input_config, helm_mapping, direct_mapping = configure_input_assets()

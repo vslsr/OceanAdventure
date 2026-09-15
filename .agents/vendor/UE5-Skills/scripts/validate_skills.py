@@ -6,7 +6,13 @@ import sys
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+# Skill 本体已统一到仓库的 .agents/skills/（见 AGENTS.md「Skill 目录」）。
+# 默认校验那里的 ue5-* Skill；也可显式传一个目录作为根。
+ROOT = (
+    Path(sys.argv[1]).resolve()
+    if len(sys.argv) > 1
+    else Path(__file__).resolve().parents[3] / "skills"
+)
 SKILL_GLOB = "ue5-*"
 REQUIRED_FRONTMATTER_KEYS = ("name", "description")
 LEGACY_TOKENS = ("ue56-", "ue57x-", "UE56", "UE57X")

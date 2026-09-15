@@ -54,8 +54,8 @@ Each upgraded skill now contains:
 
 ### Key Routing Data
 
-- `skills/ue5-architecture/references/ue5-engine-module-index-v2.csv`
-- `skills/ue5-architecture/references/ue5-module-routing-table-final.csv`
+- `.agents/skills/ue5-architecture/references/ue5-engine-module-index-v2.csv`
+- `.agents/skills/ue5-architecture/references/ue5-module-routing-table-final.csv`
 
 ### Quick Usage
 
@@ -104,7 +104,7 @@ robocopy .\skills "$env:USERPROFILE\.codex\skills" /MIR
 1. Regenerate routing index files if architecture references changed.
 2. Run `validate_skills.py`.
 3. Confirm `SKILL.md` frontmatter and references are valid.
-4. Commit only intended `skills/` changes.
+4. Commit only intended `.agents/skills/` changes.
 5. Push and verify skill rendering in your Codex/IDE environment.
 
 ### Risk Notice
