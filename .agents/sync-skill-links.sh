@@ -8,7 +8,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/.agents/skills"
 
 # 需要软链的工具目录（相对仓库根）。Codex 原生读 .agents/skills，不需要链。
-TARGETS=(".claude/skills")
+TARGETS=(".claude/skills" ".trae/skills")
 
 for target in "${TARGETS[@]}"; do
   dir="$ROOT/$target"

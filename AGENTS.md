@@ -39,12 +39,13 @@
 
 ## Skill 目录（统一入口）
 
-- **所有 Skill 的唯一真相是 `.agents/skills/<skill-name>/SKILL.md`**，一个 Skill 一个目录，平铺，不再分
-  `SKILL/`、`UE5-Skills/skills/`、`.trae/skills/` 这些各家自带的子结构。
+- **所有 Skill 的唯一真相是 `.agents/skills/<skill-name>/SKILL.md`**，一个 Skill 一个目录，平铺，不再按
+  `SKILL/`、`UE5-Skills/skills/`、上游包自带的 `.trae/skills/` 各存一份。
 - 各工具按自己的约定读取：
   - Codex / 通用 Agent：原生读 `.agents/skills/`，无需额外配置。
   - Claude Code：`.claude/skills/<skill-name>` 是指向 `../../.agents/skills/<skill-name>` 的软链。
-- **不要往 `.claude/skills/` 里放真实文件**，那里只允许软链；新增或删除 Skill 后跑一次：
+  - Trae：`.trae/skills/<skill-name>` 同样是指向 `../../.agents/skills/<skill-name>` 的软链。
+- **不要往 `.claude/skills/`、`.trae/skills/` 里放真实文件**，那里只允许软链；新增或删除 Skill 后跑一次：
 
   ```bash
   bash .agents/sync-skill-links.sh
