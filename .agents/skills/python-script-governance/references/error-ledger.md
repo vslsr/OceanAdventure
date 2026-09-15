@@ -12,6 +12,7 @@
 | PY-UE-004 | 2026-08-28 | Unreal Editor-Cmd / DDC 启动 | `no writable nodes available` | VERIFIED | 1 |
 | PY-UE-005 | 2026-08-28 | Unreal Python / 资产布局迁移 | `FindAssetPackageReferencers failed` / `AsyncLoading2.cpp !bHasFailed` | VERIFIED | 2 |
 | PY-UE-006 | 2026-08-28 | Unreal Commandlet / Interchange 导入 | `SlateApplication CurrentApplication.IsValid()` | VERIFIED | 1 |
+| PY-BLENDER-001 | 2026-09-15 | Blender bpy / Pose 骨骼空间 | `String midpoint moved -0.0000m at full draw` | OPEN | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
 | PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
@@ -185,6 +186,39 @@
   并复用 `/Raft/Vehicles/LifeRaft/SM_LifeRaft`，未再次进入 `ImportAssetTasks`，稳定命名的
   GameFeature Action 与资产配置未出现重复增长。
 - 状态：`VERIFIED`。
+- 发生次数：1。
+
+## PY-BLENDER-001：Pose 骨骼的 location/rotation 用的是骨骼局部空间，不是世界轴
+
+- 日期：2026-09-15；发生一次。
+- 宿主与入口：Blender（用户在 Scripting 工作区运行磁盘脚本）。
+- 脚本：`blender/script/python/create_wood_bow.py`。
+- 原始错误：
+
+  ```text
+  Python: Traceback (most recent call last):
+    File "\create_wood_bow.py", line 744, in <module>
+    File "\create_wood_bow.py", line 727, in build_wood_bow
+    File "\create_wood_bow.py", line 647, in validate_draw_pose
+  RuntimeError: String midpoint moved -0.0000m at full draw, expected 0.1800m. The string_mid weights are not reaching it.
+  ```
+
+- 首次错误转换：`validate_draw_pose()` 执行
+  `rig.pose.bones["string_mid"].location = (0.0, 0.0, BOW_STRING_PULL)`，随后读回形变网格，
+  弦中点在世界 Y 上的位移为 0。
+- 根因：`PoseBone.location` 与 `PoseBone.rotation_euler` 都定义在**骨骼局部空间**，其中局部 Y
+  沿 head→tail，局部 X/Z 由 roll 决定。脚本按世界轴写了分量（把「沿 +Y 拉弦」写成局部 Z），
+  位移落到了与世界 Y 垂直的方向上，世界 Y 分量因此恰好为 0。断言本身正确，被测的驱动代码错了。
+  **不是蒙皮权重问题**：同一次运行里 `validate_bow()` 的权重归一化断言已全部通过。
+- 预防规则：pose 驱动一律不直接写世界轴分量。先把世界方向换算到该骨骼的局部空间
+  （`bone.matrix_local.to_3x3().inverted() @ world_vector`），再写 `location`；旋转同样用
+  换算后的局部轴构造 `Quaternion(local_axis, angle)`，不要靠猜 roll 让局部 X 恰好等于世界 X。
+  失败信息里必须带上三维位移全量，否则「没动」和「动错方向」两种故障长得一模一样。
+- 修复：`validate_draw_pose()` 改为按 `matrix_local` 换算世界 +Y 平移与世界 X 旋转；断言改为
+  同时报告世界 Y 位移与三维位移模长。
+- 验证证据：待用户在 Blender 中重跑，期望日志
+  `Draw pose verified: string_mid +Y 0.18m, limbs 16.0deg` 与 `UE5 skeletal FBX exported: ...`。
+- 状态：`OPEN`。
 - 发生次数：1。
 
 ## PY-LYRA-001：USTRUCT 包装器拒绝带参数构造

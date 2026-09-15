@@ -32,6 +32,7 @@ import os
 from pathlib import Path
 
 import bpy
+import mathutils
 
 
 COLLECTION_NAME = "WoodBow_Generated"
@@ -70,8 +71,20 @@ BOW_LIMB_BEND_RADIANS = math.radians(16.0)
 #: How far the string's midpoint travels toward the archer at full draw, metres.
 BOW_STRING_PULL = 0.18
 
-DEFORM_BONES = ("grip", "limb_upper", "limb_lower", "string_upper", "string_mid", "string_lower")
-EXPECTED_BONES = ("root",) + DEFORM_BONES
+#: The rig's bone contract, root first. Kept as a plain literal on purpose: the Unreal
+#: import script reads this exact tuple out of this file with ast.literal_eval and refuses
+#: an FBX whose skeleton disagrees. One list, two languages, no silent drift.
+EXPECTED_BONES = (
+    "root",
+    "grip",
+    "limb_upper",
+    "limb_lower",
+    "string_upper",
+    "string_mid",
+    "string_lower",
+)
+#: Everything below the motion root deforms geometry, so each needs a vertex group.
+DEFORM_BONES = EXPECTED_BONES[1:]
 EXPECTED_PARENTS = {
     "root": None,
     "grip": "root",
@@ -596,6 +609,19 @@ def validate_bow(mesh, rig):
         )
 
 
+def to_bone_space(pose_bone, world_direction):
+    """Express a world-space direction in a pose bone's own basis space.
+
+    PoseBone.location and .rotation_quaternion are defined in bone space, where local Y
+    runs head->tail and local X/Z depend on the bone's roll. Writing world components
+    straight into them silently pushes along the wrong axis -- ledger PY-BLENDER-001:
+    pulling the string "along +Y" as a local Z offset moved it exactly perpendicular to
+    the draw, so the validator measured a 0.0000m pull on a rig that was fine.
+    """
+    rest_orientation = pose_bone.bone.matrix_local.to_3x3()
+    return rest_orientation.inverted() @ mathutils.Vector(world_direction)
+
+
 def validate_draw_pose(mesh, rig, brace_height, half_span):
     """Pose the rig at full draw and read the deformed mesh back.
 
@@ -626,11 +652,17 @@ def validate_draw_pose(mesh, rig, brace_height, half_span):
     try:
         for bone_name, sign in (("limb_upper", 1.0), ("limb_lower", -1.0)):
             pose_bone = rig.pose.bones[bone_name]
-            pose_bone.rotation_mode = "XYZ"
-            # +X rotation swings the upper tip toward the archer; the lower limb
-            # mirrors it, which is the same sign flip SkyLand applies.
-            pose_bone.rotation_euler = (sign * BOW_LIMB_BEND_RADIANS, 0.0, 0.0)
-        rig.pose.bones["string_mid"].location = (0.0, 0.0, BOW_STRING_PULL)
+            pose_bone.rotation_mode = "QUATERNION"
+            # Swing the tip toward the archer about world X. The lower limb mirrors
+            # it, the same sign flip SkyLand applies to its two pivot groups.
+            axis = to_bone_space(pose_bone, (1.0, 0.0, 0.0))
+            pose_bone.rotation_quaternion = mathutils.Quaternion(
+                axis, sign * BOW_LIMB_BEND_RADIANS
+            )
+        # Draw the string toward the archer, +Y in world space.
+        rig.pose.bones["string_mid"].location = to_bone_space(
+            rig.pose.bones["string_mid"], (0.0, BOW_STRING_PULL, 0.0)
+        )
         bpy.context.view_layer.update()
 
         depsgraph = bpy.context.evaluated_depsgraph_get()
@@ -639,14 +671,26 @@ def validate_draw_pose(mesh, rig, brace_height, half_span):
             drawn_y = sum(posed.vertices[i].co.y for i in rest_string_mid) / len(rest_string_mid)
             grip_y = sum(posed.vertices[i].co.y for i in rest_grip) / len(rest_grip)
             rest_grip_y = sum(mesh.data.vertices[i].co.y for i in rest_grip) / len(rest_grip)
+            # Total displacement as well as the Y component: without it, "the string
+            # never moved" and "the string moved the wrong way" read identically.
+            travelled = max(
+                (posed.vertices[i].co - mesh.data.vertices[i].co).length
+                for i in rest_string_mid
+            )
         finally:
             mesh.evaluated_get(depsgraph).to_mesh_clear()
 
         pulled = drawn_y - brace_height
         if abs(pulled - BOW_STRING_PULL) > BOW_STRING_PULL * 0.1:
             raise RuntimeError(
-                f"String midpoint moved {pulled:.4f}m at full draw, expected "
-                f"{BOW_STRING_PULL:.4f}m. The string_mid weights are not reaching it."
+                f"String midpoint moved {pulled:.4f}m along +Y at full draw, expected "
+                f"{BOW_STRING_PULL:.4f}m (total displacement {travelled:.4f}m). "
+                + (
+                    "It moved, but not toward the archer: check the bone-space conversion "
+                    "in to_bone_space()."
+                    if travelled > BOW_STRING_PULL * 0.1
+                    else "It did not move at all: the string_mid weights are not reaching it."
+                )
             )
         if abs(grip_y - rest_grip_y) > 1e-3:
             raise RuntimeError(
