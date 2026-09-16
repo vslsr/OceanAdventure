@@ -966,6 +966,96 @@ def validate_draw_pose(mesh, rig, brace_height, half_span):
 # --- Clips ------------------------------------------------------------------
 
 
+def new_action_slot(action, rig):
+    """Create a slot for *rig* on *action*, across the signatures 4.4..5.x have shipped."""
+    attempts = (
+        lambda: action.slots.new(id_type="OBJECT", name=rig.name),
+        lambda: action.slots.new("OBJECT", rig.name),
+        lambda: action.slots.new(),
+    )
+    for attempt in attempts:
+        try:
+            return attempt()
+        except (TypeError, RuntimeError):
+            continue
+    return None
+
+
+def bind_action_slot(rig, action):
+    """Bind the Action's slot to the rig, so keys have somewhere to land.
+
+    Blender 4.4 moved an Action's channels behind a *slot*: the Action holds layers, a
+    layer holds strips, and a strip holds one channel bag per slot. Assigning the Action
+    to an object normally binds a slot by itself, but when it does not, keyframe_insert
+    still reports success and writes nothing -- ledger PY-BLENDER-002. Returns the bound
+    slot, or None on a pre-4.4 build where channels hang straight off the Action.
+    """
+    animation_data = rig.animation_data
+    if getattr(action, "slots", None) is None:
+        return None
+    slot = getattr(animation_data, "action_slot", None)
+    # Only reuse a bound slot that belongs to *this* Action. Four clips are baked in a
+    # row through the same rig, and a slot left bound from the previous one would look
+    # like "already bound" while this Action still has nowhere to put its keys.
+    if slot is not None and any(existing == slot for existing in action.slots):
+        return slot
+    slot = action.slots[0] if len(action.slots) else new_action_slot(action, rig)
+    if slot is not None:
+        animation_data.action_slot = slot
+    return slot
+
+
+def assign_action(rig, action):
+    """Put *action* on the rig and bind its slot. The only way this file assigns one.
+
+    Baking, playback validation and export each need the rig actually driven by the clip.
+    Written out at each site, the slot binding gets forgotten at one of them, and a
+    missed binding does not raise -- the rig simply sits at rest while the validator
+    reports the clip is flat, which sends you looking at the curves instead.
+    """
+    rig.animation_data.action = action
+    return bind_action_slot(rig, action)
+
+
+def get_fcurves(action):
+    """Every F-Curve in *action*, on both the legacy and the slotted Action API.
+
+    Same name and shape as the helper in boiler_animation.py / door_animation.py and the
+    cookbook in claude-blender.md, so it greps as one thing; it differs in raising rather
+    than returning [] on an unknown API, because here an empty result is also what a clip
+    that failed to bake looks like.
+
+    Blender 5.x dropped legacy Actions, and with them ``Action.fcurves`` -- reading it
+    raises AttributeError rather than returning empty (ledger PY-BLENDER-002). Channels
+    now live in ``action.layers[].strips[].channelbags[]``. Both shapes are read here so
+    the rest of the script can keep asking one question: what did this clip key?
+    """
+    legacy = getattr(action, "fcurves", None)
+    if legacy is not None:
+        return list(legacy)
+
+    layers = getattr(action, "layers", None)
+    if layers is None:
+        raise RuntimeError(
+            f"{action.name} exposes neither 'fcurves' nor 'layers'. This Blender build's "
+            "Action API is neither the legacy nor the slotted one; update get_fcurves()."
+        )
+
+    curves = []
+    for layer in layers:
+        for strip in layer.strips:
+            for channelbag in getattr(strip, "channelbags", ()):
+                curves.extend(channelbag.fcurves)
+    return curves
+
+
+def action_api_name(action):
+    """Which Action API this build uses. Only ever appears in failure messages."""
+    return "legacy Action.fcurves" if getattr(action, "fcurves", None) is not None else (
+        "slotted layers/strips/channelbags"
+    )
+
+
 def bake_action(rig, action_name, samples):
     """Key the bow's three driven bones across *samples* into a fresh Action.
 
@@ -978,7 +1068,7 @@ def bake_action(rig, action_name, samples):
 
     action = bpy.data.actions.new(action_name)
     action.use_fake_user = True
-    rig.animation_data.action = action
+    slot = assign_action(rig, action)
 
     for frame, limb_bend, string_pull in samples:
         bpy.context.scene.frame_set(int(round(frame)))
@@ -991,14 +1081,15 @@ def bake_action(rig, action_name, samples):
     # until something binds one, and if that binding does not happen the keyframe_insert
     # calls above report success while the Action stays empty -- which would export as a
     # clip that simply does nothing. Cheaper to notice here than in Unreal.
-    if not action.fcurves:
+    curves = get_fcurves(action)
+    if not curves:
         raise RuntimeError(
-            f"{action_name} has no F-Curves after keying {len(samples)} samples. The "
-            "Action was never bound to the rig (check animation_data.action_slot on this "
-            "Blender version)."
+            f"{action_name} has no F-Curves after keying {len(samples)} samples, read "
+            f"through the {action_api_name(action)} API with slot "
+            f"{getattr(slot, 'name', None)!r}. The Action was never bound to the rig."
         )
 
-    for fcurve in action.fcurves:
+    for fcurve in curves:
         for keyframe in fcurve.keyframe_points:
             keyframe.interpolation = "LINEAR"
     return action
@@ -1016,14 +1107,14 @@ def validate_clips(rig, draw_action, release_action, brace_height):
     for action in (draw_action, release_action):
         keyed = {
             fcurve.data_path.split('"')[1]
-            for fcurve in action.fcurves
+            for fcurve in get_fcurves(action)
             if '"' in fcurve.data_path
         }
         missing = require_channels - keyed
         if missing:
             raise RuntimeError(f"{action.name} has no keys for {sorted(missing)}")
 
-    rig.animation_data.action = draw_action
+    assign_action(rig, draw_action)
     bpy.context.scene.frame_set(0)
     bpy.context.view_layer.update()
     at_rest = string_pull_at(rig, brace_height)
@@ -1036,7 +1127,7 @@ def validate_clips(rig, draw_action, release_action, brace_height):
             f"0 -> {BOW_STRING_PULL:.4f}m"
         )
 
-    rig.animation_data.action = release_action
+    assign_action(rig, release_action)
     played = []
     for frame in range(release_frame_count() + 1):
         bpy.context.scene.frame_set(frame)
@@ -1073,7 +1164,7 @@ def validate_loop_clip(rig, action, seconds, base_pull, amplitude, brace_height)
     the missing clip it was written to replace.
     """
     total = loop_frame_count(seconds)
-    rig.animation_data.action = action
+    assign_action(rig, action)
     played = []
     for frame in range(0, total + 1, loop_key_step()):
         bpy.context.scene.frame_set(frame)
@@ -1120,7 +1211,7 @@ def validate_state_clips(rig, idle_action, aim_action, draw_action, brace_height
     )
 
     # Idle's rest pose is the draw's first frame, and the hold is the draw's last.
-    rig.animation_data.action = draw_action
+    assign_action(rig, draw_action)
     bpy.context.scene.frame_set(0)
     bpy.context.view_layer.update()
     draw_start = string_pull_at(rig, brace_height)
@@ -1146,7 +1237,7 @@ def export_action_fbx(rig, action, file_name, frame_end):
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / file_name
 
-    rig.animation_data.action = action
+    assign_action(rig, action)
     scene = bpy.context.scene
     scene.frame_start = 0
     scene.frame_end = int(frame_end)
