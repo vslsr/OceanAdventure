@@ -744,11 +744,10 @@ cell 1545219339
 
 ### 8.3 编译
 
-```
-& 'D:\Epic\Engine\UE_5.7\Engine\Build\BatchFiles\Build.bat' LyraEditor Win64 Development `
-  '-Project=D:\UEPrj\OceanAdventure\LyraTemplate.uproject' `
-  -WaitMutex -NoHotReloadFromIDE -NoUBA -MaxParallelActions=1
-```
+见 [`README.md`](../../README.md) 的「编译」一节——**不要在这里复制一份带盘符的命令**。
+本文最初就是这么错的：从当时的 README 抄了一条把引擎安装位置和检出位置都写死盘符的命令，
+README 后来按 `AGENTS.md` 的绝对路径禁令改成了 `$Engine` + `$PWD`，这份拷贝却留在原地。
+一条命令抄两份，改的时候只会改到一份——这正是那条禁令要拦的事。
 
 ---
 
