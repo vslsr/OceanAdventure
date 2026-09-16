@@ -141,8 +141,12 @@ def get_fcurves(action):   # 仓库里已有同名 helper，别再造一个
 手感常量（拉多开、回弹多久、过冲多少）只写一份，clip 由它们**生成**，不要手摆关键帧 ——
 否则改手感要同时改常量和一堆键，漏一处没人会发现。
 
-细节（曲线怎么移植成纯函数、采样率怎么定、UE 导入的重采样陷阱）见
-[references/animation-clips.md](references/animation-clips.md)。
+**几个 clip 装几个 FBX**：单一物件、动画不复杂（clip 少、同一组骨骼、同一个脚本一次产出）
+就合并成一个动画 FBX；角色或会被单独重导的复杂资产按 UE5 的习惯一个 clip 一个 FBX。
+合并的代价是资产名由导入器定，所以 UE 侧必须「导入后发现 + 按名认领 + 认不出就停」。
+
+细节（曲线怎么移植成纯函数、采样率怎么定、合并/分开的判据与两条必补校验、UE 导入的
+重采样陷阱）见 [references/animation-clips.md](references/animation-clips.md)。
 
 ## 4. 验证阶梯
 

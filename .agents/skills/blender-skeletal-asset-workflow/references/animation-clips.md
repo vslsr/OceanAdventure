@@ -55,21 +55,47 @@ return snap_back + wobble
 `bake_anim_simplify_factor` 非零会做曲线拟合，它最先丢掉的正是「短、小、快」那类运动
 —— 也就是回弹本身。
 
-## 3. 一个 clip 一个 FBX
+## 3. 一个 FBX 还是几个：按资产复杂度分
 
-网格一个 FBX（`object_types={"ARMATURE","MESH"}`、`bake_anim=False`），
-每段动画各一个（`object_types={"ARMATURE"}`、`bake_anim=True`）。
-多 take 塞一个 FBX 在 UE 侧支持有限，不值得省这一个文件。
+网格永远单独一个 FBX（`object_types={"ARMATURE","MESH"}`、`bake_anim=False`）。
+动画分几个文件，判据是**这些 clip 是不是一起生成、一起改**：
 
-导出动画 FBX 时：
+| | 合并成一个动画 FBX | 一个 clip 一个 FBX |
+|---|---|---|
+| 什么时候 | **单一物件、动画不复杂**：clip 少、都驱动同一组骨骼、由同一个脚本一次产出（弓、门、炮闩、宝箱） | **角色或复杂资产**：clip 会被单独重导、多人分工、需要固定资产名——按 UE5 的常规习惯来 |
+| Blender | `bake_anim_use_all_actions=True`，一次导出，每个 Action 一个 animation stack | `bake_anim_use_all_actions=False`，逐个 Action 各导一个文件 |
+| UE 资产名 | **由导入器按 stack 名派生**，脚本不能假定路径 | 由 `AssetImportTask.destination_name` 决定，稳定可引用 |
+| 代价 | 省文件、改一次全同步；命名权交给引擎 | 名字稳、能单独重导；文件多，漏导一个不容易发现 |
 
-- `bake_anim_use_nla_strips=False`、`bake_anim_use_all_actions=False`，
-  只导当前 `animation_data.action`；
+先例：`create_wood_bow.py` 走合并（四段 clip、三根驱动骨、一个脚本一次产出），
+导出 `blender/models/A_WoodBow_Clips.fbx`；它保留 `BUNDLE_CLIPS_IN_ONE_FBX` 开关，
+关掉就退回每 clip 一个文件。
+
+**选了合并，就必须补这两条校验**，否则合并省下的那点文件数会用一次静默事故还回来：
+
+- **Blender 侧**：导出后把 FBX 当字节读，逐个确认 Action 名（stack 名是 ASCII）都在里面。
+  少一段的包和完整包在「文件存在、大小合理」上完全一样。
+- **UE 侧**：导入后用 Asset Registry **发现**本骨架下的 AnimSequence，按 Action 名认领；
+  数量不足、或一个 clip 匹配到多个资产，都要停——猜一个就是把 AnimBlueprint 接到别的 clip 上。
+
+〔未验证：UE 5.7 从单文件多 stack 究竟产出几个 AnimSequence、按什么规则命名，尚未在宿主跑过。
+`CreateWoodBowAssets.py` 因此不假定资产名，并在数量不足时直接指向
+`BUNDLE_CLIPS_IN_ONE_FBX = False` 的回退路径。〕
+
+导出动画 FBX 时（两种布局都适用）：
+
+- `bake_anim_use_nla_strips=False`；
 - `bake_anim_force_startend_keying=True`，保证首尾帧有键；
-- `scene.frame_start` / `frame_end` 设成该 Action 的范围；
+- `bake_anim_step=1.0`、`bake_anim_simplify_factor=0.0`（第 2 节）；
+- `scene.frame_start` / `frame_end` 覆盖要导的 Action 范围；
 - 其余参数展开 `UE_FBX_COMMON`（`SKILL.md` 2.5）。
 
-导完把 `animation_data.action` 置空、姿势清干净，别把 `.blend` 留在摆着的状态。
+合并导出会把**当前文件里所有能作用于该骨架的 Action** 都写进去，所以重跑前要按名字
+（连 `.001` 后缀一起）删干净自己上一轮的 Action，否则旧的会作为多出来的一段混进包里。
+
+导完别把 `.blend` 留在摆着的状态。挂一段 idle 之类的静止 clip 并把播放头停在它的第 0 帧，
+比把 `animation_data.action` 置空更好——置空后动作编辑器显示「新建」，
+和「一段都没烘出来」在界面上分不出来。
 
 ## 4. UE 导入侧
 

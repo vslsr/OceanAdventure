@@ -4,10 +4,7 @@ Run this script from Blender's Scripting workspace. It only replaces the
 ``WoodBow_Generated`` collection and exports one skeletal FBX:
 
     blender/models/SK_WoodBow.fbx          mesh + skeleton, no animation
-    blender/models/A_WoodBow_Idle.fbx      carried at rest, looping
-    blender/models/A_WoodBow_Draw.fbx      the draw, sampled by charge
-    blender/models/A_WoodBow_Aim.fbx       held at full draw, looping
-    blender/models/A_WoodBow_Release.fbx   the loose, played by time
+    blender/models/A_WoodBow_Clips.fbx     all four clips, one animation stack each
 
 The riser, both limbs, and the string are combined into one skinned mesh. Nothing
 about the draw is baked into geometry: pulling the bow rotates ``limb_upper`` /
@@ -149,6 +146,31 @@ RELEASE_ACTION_NAME = "WoodBow_Release"
 #: Action alive, the next run bakes WoodBow_Idle.001 beside it, and the export can pick
 #: the stale one.
 CLIP_ACTION_NAMES = (IDLE_ACTION_NAME, DRAW_ACTION_NAME, AIM_ACTION_NAME, RELEASE_ACTION_NAME)
+
+#: One FBX holding every clip as its own animation stack. Blender names each stack after
+#: the Action, so the four clips stay distinguishable inside the single file.
+CLIPS_FBX_NAME = "A_WoodBow_Clips.fbx"
+
+#: Clip lengths in seconds, as a plain literal the Unreal import script reads with
+#: ast.literal_eval to check the timing survived the trip. It restates numbers derived
+#: above, so verify_clip_contract() below asserts the two agree rather than trusting that
+#: whoever edits a feel constant remembers to edit this table too.
+#: Release is 0.125s, not the 0.12s BOW_RELEASE_SECONDS asks for: 0.12 * 120fps is 14.4
+#: frames and a clip cannot end mid-frame, so the bake rounds up to 15. These are the
+#: lengths as baked, which is what Unreal measures on the imported asset.
+CLIP_SECONDS = {
+    "WoodBow_Idle": 2.4,
+    "WoodBow_Draw": 0.2,
+    "WoodBow_Aim": 1.6,
+    "WoodBow_Release": 0.125,
+}
+
+#: True: one FBX, one animation stack per clip (what content uses).
+#: False: one FBX per clip, the older layout. Kept because Unreal's importer decides how
+#: many stacks it will take out of a single file, and that is a property of the engine
+#: build rather than of this script -- if UE ever brings back only the first stack, this
+#: is the one switch that gets the pipeline working again.
+BUNDLE_CLIPS_IN_ONE_FBX = True
 
 IDLE_FBX_NAME = "A_WoodBow_Idle.fbx"
 DRAW_FBX_NAME = "A_WoodBow_Draw.fbx"
@@ -576,11 +598,12 @@ def set_ue_scene_units():
 
 def remove_generated_collection():
     """Delete only data previously owned by this script."""
-    for action_name in CLIP_ACTION_NAMES:
-        action = bpy.data.actions.get(action_name)
-        if action is not None:
-            # Fake users keep these alive across saves, so a re-run has to clear them by
-            # name or Blender hands out WoodBow_Draw.001 and the export picks the stale one.
+    for action in list(bpy.data.actions):
+        # Fake users keep these alive across saves, so a re-run has to clear them by name
+        # or Blender hands out WoodBow_Draw.001 and the export picks the stale one. The
+        # suffix is stripped on purpose: one bundled FBX exports *every* Action the rig can
+        # play, so a leftover .001 would ride along as a fifth stack.
+        if action.name.split(".")[0] in CLIP_ACTION_NAMES:
             bpy.data.actions.remove(action)
 
     collection = bpy.data.collections.get(COLLECTION_NAME)
@@ -1062,6 +1085,31 @@ def action_api_name(action):
     )
 
 
+def verify_clip_contract():
+    """Check CLIP_SECONDS still matches the constants the clips are generated from.
+
+    That table exists only because the Unreal script cannot evaluate this file, just read
+    literals out of it. Restated numbers drift, and this drift would be quiet: Unreal would
+    check each imported clip against a length no clip has had for months and pass.
+    """
+    derived = {
+        IDLE_ACTION_NAME: BOW_IDLE_SECONDS,
+        DRAW_ACTION_NAME: DRAW_FRAME_COUNT / ANIMATION_FPS,
+        AIM_ACTION_NAME: BOW_AIM_SECONDS,
+        RELEASE_ACTION_NAME: release_frame_count() / ANIMATION_FPS,
+    }
+    wrong = {
+        name: (CLIP_SECONDS.get(name), seconds)
+        for name, seconds in derived.items()
+        if abs(CLIP_SECONDS.get(name, -1.0) - seconds) > 1e-9
+    }
+    if wrong or set(CLIP_SECONDS) != set(derived):
+        raise RuntimeError(
+            f"CLIP_SECONDS disagrees with the feel constants: {wrong or CLIP_SECONDS}. "
+            "Update the table at the top of this file; the Unreal import script reads it."
+        )
+
+
 def bake_action(rig, action_name, samples):
     """Key the bow's three driven bones across *samples* into a fresh Action.
 
@@ -1271,6 +1319,71 @@ def export_action_fbx(rig, action, file_name, frame_end):
     return output_path
 
 
+def export_clips_fbx(rig, actions):
+    """Every clip in one FBX, each Action exported as its own animation stack.
+
+    One file is the right shape for this asset: a single prop whose clips all drive the
+    same three bones, authored together and revised together. Splitting them across four
+    files only pays off when clips are authored separately or by different people.
+
+    ``bake_anim_use_all_actions`` exports *every* Action the rig can play, not a list this
+    function chooses, which is why the cleanup above deletes leftovers by stripped name --
+    a stray WoodBow_Idle.001 would ride along as a fifth stack and Unreal would import it.
+    """
+    output_dir = find_project_root() / "blender" / "models"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_path = output_dir / CLIPS_FBX_NAME
+
+    assign_action(rig, actions[0])
+    scene = bpy.context.scene
+    scene.frame_start = 0
+    scene.frame_end = max(
+        int(round(max(point.co[0] for curve in get_fcurves(action) for point in curve.keyframe_points)))
+        for action in actions
+    )
+
+    bpy.ops.object.select_all(action="DESELECT")
+    rig.select_set(True)
+    bpy.context.view_layer.objects.active = rig
+    bpy.ops.export_scene.fbx(
+        filepath=str(output_path),
+        object_types={"ARMATURE"},
+        bake_anim=True,
+        bake_anim_use_all_bones=True,
+        bake_anim_use_nla_strips=False,
+        # The one line that makes this a bundle rather than a single-clip file.
+        bake_anim_use_all_actions=True,
+        bake_anim_force_startend_keying=True,
+        bake_anim_step=1.0,
+        # Zero, deliberately. Any simplification here eats the release wobble, which is
+        # a handful of frames of small motion and exactly what a curve fitter discards.
+        bake_anim_simplify_factor=0.0,
+        **UE_FBX_COMMON,
+    )
+
+    if not output_path.is_file() or output_path.stat().st_size < 4096:
+        raise RuntimeError(f"Clip bundle is missing or unexpectedly small: {output_path}")
+    verify_bundle_contains(output_path, [action.name for action in actions])
+    return output_path
+
+
+def verify_bundle_contains(output_path, action_names):
+    """Confirm each clip really made it into the bundle.
+
+    A bundle that silently carries one stack looks exactly like a healthy export from
+    here: the file exists, it is the right sort of size, the exporter raised nothing. FBX
+    stores stack names as plain ASCII, so the cheapest honest check is to look for them.
+    """
+    data = output_path.read_bytes()
+    missing = [name for name in action_names if name.encode("ascii") not in data]
+    if missing:
+        raise RuntimeError(
+            f"{output_path.name} does not contain {missing}. Blender exported "
+            f"{len(action_names) - len(missing)} of {len(action_names)} stacks; check that "
+            "every clip is still an Action with a fake user at export time."
+        )
+
+
 #: Settings both exports must agree on. Split into two literals they drift, and a bone
 #: set or axis that differs between the mesh FBX and an animation FBX is rejected by
 #: Unreal as "skeleton does not match" long after anyone remembers editing one of them.
@@ -1318,6 +1431,7 @@ def export_ue5_fbx(mesh, rig):
 
 
 def build_wood_bow():
+    verify_clip_contract()
     set_ue_scene_units()
     remove_generated_collection()
     collection = create_collection()
@@ -1358,16 +1472,16 @@ def build_wood_bow():
     idle_played, aim_played = validate_state_clips(
         rig, idle_action, aim_action, draw_action, BOW_BRACE_HEIGHT
     )
-    idle_path = export_action_fbx(
-        rig, idle_action, IDLE_FBX_NAME, loop_frame_count(BOW_IDLE_SECONDS)
-    )
-    draw_path = export_action_fbx(rig, draw_action, DRAW_FBX_NAME, DRAW_FRAME_COUNT)
-    aim_path = export_action_fbx(
-        rig, aim_action, AIM_FBX_NAME, loop_frame_count(BOW_AIM_SECONDS)
-    )
-    release_path = export_action_fbx(
-        rig, release_action, RELEASE_FBX_NAME, release_frame_count()
-    )
+    clip_actions = [idle_action, draw_action, aim_action, release_action]
+    if BUNDLE_CLIPS_IN_ONE_FBX:
+        clip_paths = [export_clips_fbx(rig, clip_actions)]
+    else:
+        clip_paths = [
+            export_action_fbx(rig, idle_action, IDLE_FBX_NAME, loop_frame_count(BOW_IDLE_SECONDS)),
+            export_action_fbx(rig, draw_action, DRAW_FBX_NAME, DRAW_FRAME_COUNT),
+            export_action_fbx(rig, aim_action, AIM_FBX_NAME, loop_frame_count(BOW_AIM_SECONDS)),
+            export_action_fbx(rig, release_action, RELEASE_FBX_NAME, release_frame_count()),
+        ]
 
     # Leave the .blend in a state you can actually look at. Clearing the assignment (what
     # this did before) left the Action Editor showing "New" on a rig whose four clips were
@@ -1421,10 +1535,8 @@ def build_wood_bow():
         f"{IDLE_ACTION_NAME} is loaded on {RIG_NAME} and the frame range is set to it; "
         "press Space to watch it loop."
     )
-    print(f"Idle clip exported:    {idle_path}")
-    print(f"Draw clip exported:    {draw_path}")
-    print(f"Aim clip exported:     {aim_path}")
-    print(f"Release clip exported: {release_path}")
+    for clip_path in clip_paths:
+        print(f"Clips exported: {clip_path} ({clip_path.stat().st_size // 1024} KB)")
 
 
 if __name__ == "__main__":
