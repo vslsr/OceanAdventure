@@ -18,11 +18,19 @@ badly, and then hands you a clip to watch.
 Set CLIP below to the one you want loaded, then run. Self-contained on purpose: pasted
 into Blender's Text Editor this file may have no path on disk and no project root to find,
 so it imports nothing from the repo.
+
+Where the report shows up: as a popup, and as a Text datablock named ``WoodBow_Report``
+you can open in the Text Editor. Not only through ``print()`` -- that goes to the *system*
+console, hidden by default on Windows (Window > Toggle System Console), and neither the
+Python Console nor the Info editor ever shows it. A script whose only output is a print is
+a script that, from the UI, did nothing.
 """
 
 import bpy
 
 
+#: Where the report is left behind, openable in Blender's Text Editor.
+REPORT_TEXT_NAME = "WoodBow_Report"
 #: The clip to leave loaded on the rig. One of the names this prints.
 CLIP = "WoodBow_Idle"
 RIG_NAME = "SKEL_WoodBow"
@@ -80,6 +88,26 @@ def measure(rig, action, span):
     return (max(positions) - min(positions)) * 1000.0
 
 
+def report(lines):
+    """Print *lines*, leave them in a Text datablock, and pop them on screen."""
+    for line in lines:
+        print(line)
+
+    text = bpy.data.texts.get(REPORT_TEXT_NAME) or bpy.data.texts.new(REPORT_TEXT_NAME)
+    text.clear()
+    text.write("\n".join(lines) + "\n")
+
+    def draw(self, _context):
+        for line in lines:
+            self.layout.label(text=line)
+
+    try:
+        bpy.context.window_manager.popup_menu(draw, title=REPORT_TEXT_NAME, icon="ARMATURE_DATA")
+    except (AttributeError, RuntimeError):
+        pass  # background mode: the Text datablock is still written
+    return text
+
+
 def main():
     rig = bpy.data.objects.get(RIG_NAME)
     if rig is None or rig.type != "ARMATURE":
@@ -99,15 +127,15 @@ def main():
             "create_wood_bow.py and read the console: it prints one line per clip."
         )
 
-    print(f"{len(clips)} clip(s) in this file, played through {RIG_NAME}:")
+    lines = [f"{len(clips)} clip(s) in this file, played through {RIG_NAME}:"]
     for action in clips:
         span = key_span(action)
         if span is None:
-            print(f"  {action.name:20} EMPTY -- no keys at all")
+            lines.append(f"  {action.name:20} EMPTY -- no keys at all")
             continue
         travel = measure(rig, action, span)
         note = "" if travel > 0.5 else "   <- flat: this clip moves nothing"
-        print(
+        lines.append(
             f"  {action.name:20} frames {span[0]:.0f}..{span[1]:.0f}  "
             f"{len(get_fcurves(action))} curves  string travel {travel:6.1f} mm{note}"
         )
@@ -115,18 +143,19 @@ def main():
     wanted = bpy.data.actions.get(CLIP) or clips[0]
     span = key_span(wanted) or (0, 0)
     rig.animation_data.action = wanted
-    bind_action_slot(rig, wanted)
+    slot = bind_action_slot(rig, wanted)
     scene = bpy.context.scene
     scene.frame_start, scene.frame_end = int(round(span[0])), int(round(span[1]))
     scene.frame_set(scene.frame_start)
-    print(
-        f"Loaded {wanted.name} on {RIG_NAME}, frame range {scene.frame_start}.."
-        f"{scene.frame_end}. Press Space in the viewport to play it."
+    lines.append(
+        f"Loaded {wanted.name} on {RIG_NAME} (slot {getattr(slot, 'name', None)!r}), frame "
+        f"range {scene.frame_start}..{scene.frame_end}. Press Space in the viewport."
     )
-    print(
-        "To switch clips: edit CLIP at the top of this file and re-run, or pick one from "
-        "the browse icon in Dope Sheet > Action Editor."
+    lines.append(
+        "To switch clips: edit CLIP at the top of this file and re-run, or use the browse "
+        "icon in Dope Sheet > Action Editor."
     )
+    report(lines)
 
 
 if __name__ == "__main__":

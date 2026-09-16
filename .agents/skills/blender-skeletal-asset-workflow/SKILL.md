@@ -172,6 +172,13 @@ def get_fcurves(action):   # 仓库里已有同名 helper，别再造一个
 4. **clip 播放读回**：把 clip 播回骨架读姿势。只断言「有关键帧」挡不住被重采样压平的曲线。
 5. **宿主运行**：`blender --background --python <script>`。
 
+**结论要放在用户看得见的地方**：`print()` 只进系统控制台（Windows 默认隐藏，
+窗口 → 切换系统控制台），Blender 的 Python 控制台和信息编辑器都不显示它 ——
+只用 print 的脚本，从 UI 看「成功跑完」和「什么都没做」一模一样。把结论写进
+Text datablock（每次覆盖同名的，别追加）并尝试 `window_manager.popup_menu`，
+background 模式下吞掉弹窗异常即可。〔宿主已验证：失败档案 `PY-BLENDER-003`，
+这条让同一个问题误诊了三轮〕
+
 失败信息要带够区分度。位移校验只报单轴分量时，「完全没动」和「动错方向」长得一模一样 ——
 `PY-BLENDER-001` 正是后者被报成了前者，白白怀疑了一遍蒙皮权重。同时报三维位移模长。
 

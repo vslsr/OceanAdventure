@@ -1480,6 +1480,35 @@ def export_ue5_fbx(mesh, rig):
     return output_path
 
 
+#: The script's report also lands here, as a Text datablock you can open in Blender's
+#: Text Editor. print() goes to the *system* console, which is hidden by default on
+#: Windows (Window > Toggle System Console), so a script that reports only through print
+#: looks like it did nothing at all -- the Python Console and the Info editor never show
+#: it either.
+REPORT_TEXT_NAME = "WoodBow_Report"
+
+
+def report(lines):
+    """Print *lines*, leave them in a Text datablock, and pop the headline on screen."""
+    for line in lines:
+        print(line)
+
+    text = bpy.data.texts.get(REPORT_TEXT_NAME) or bpy.data.texts.new(REPORT_TEXT_NAME)
+    text.clear()
+    text.write("\n".join(lines) + "\n")
+
+    def draw(self, _context):
+        for line in lines:
+            self.layout.label(text=line)
+
+    try:
+        bpy.context.window_manager.popup_menu(draw, title=REPORT_TEXT_NAME, icon="ARMATURE_DATA")
+    except (AttributeError, RuntimeError):
+        # No window manager (background mode) -- the Text datablock is still written.
+        pass
+    return text
+
+
 def build_wood_bow():
     verify_clip_contract()
     set_ue_scene_units()
@@ -1544,57 +1573,48 @@ def build_wood_bow():
     scene.frame_end = loop_frame_count(BOW_IDLE_SECONDS)
     scene.frame_set(0)
 
-    print(f"Wood bow created in collection: {COLLECTION_NAME}")
-    print(f"Skeletal mesh: {MESH_NAME}  ({len(mesh.data.vertices)} verts)")
-    print(f"Bones: {', '.join(EXPECTED_BONES)}")
-    print(f"Limb arc solved: radius={radius:.4f}m half_arc={math.degrees(half_arc):.2f}deg")
-    print(
-        f"Draw pose verified: string_mid +Y {BOW_STRING_PULL}m, limbs "
-        f"{math.degrees(BOW_LIMB_BEND_RADIANS):.1f}deg"
-    )
-    print(
-        f"Clips baked at {ANIMATION_FPS}fps: {IDLE_ACTION_NAME} "
-        f"({BOW_IDLE_SECONDS}s loop), {DRAW_ACTION_NAME} "
-        f"({DRAW_FRAME_COUNT} frames, sample it by charge), {AIM_ACTION_NAME} "
-        f"({BOW_AIM_SECONDS}s loop), {RELEASE_ACTION_NAME} "
-        f"({release_frame_count()} frames, play it by time)"
-    )
-    # Millimetres, because that is the unit the question "why can I not see it?" is asked
-    # in. The draw is 180mm; anything reported here that is a fraction of that is meant to
-    # be a small movement, not a broken one.
-    print(
-        f"Idle verified: string breathes 0 -> {max(idle_played) * 1000:.1f}mm and closes "
-        f"its loop; aim verified: holds {min(aim_played) * 1000:.1f}..."
-        f"{max(aim_played) * 1000:.1f}mm around the {BOW_STRING_PULL * 1000:.0f}mm full draw"
-    )
-    print(
-        "To inventory and measure the clips later, run "
-        "blender/script/python/preview_wood_bow.py."
-    )
-    print(
-        f"Release verified: springs to {min(played):+.4f}m past rest, settles at "
-        f"{played[-1]:+.4f}m"
-    )
-    print("Attach the arrow to an Unreal Skeleton socket named 'nock' on string_mid.")
-    print(f"UE5 skeletal FBX exported: {output_path}")
-    print(f"FBX size: {output_path.stat().st_size // 1024} KB")
-    print("Actions in this .blend -- switch them in Dope Sheet > Action Editor:")
-    for action, end_frame in (
-        (idle_action, loop_frame_count(BOW_IDLE_SECONDS)),
-        (draw_action, DRAW_FRAME_COUNT),
-        (aim_action, loop_frame_count(BOW_AIM_SECONDS)),
-        (release_action, release_frame_count()),
-    ):
-        print(
-            f"  {action.name:16} frames 0..{end_frame:<4} {end_frame / ANIMATION_FPS:.2f}s  "
-            f"{len(get_fcurves(action))} curves"
+    clip_lines = [
+        f"  {action.name:16} frames 0..{end_frame:<4} {end_frame / ANIMATION_FPS:.2f}s  "
+        f"{len(get_fcurves(action))} curves"
+        for action, end_frame in (
+            (idle_action, loop_frame_count(BOW_IDLE_SECONDS)),
+            (draw_action, DRAW_FRAME_COUNT),
+            (aim_action, loop_frame_count(BOW_AIM_SECONDS)),
+            (release_action, release_frame_count()),
         )
-    print(
-        f"{IDLE_ACTION_NAME} is loaded on {RIG_NAME} and the frame range is set to it; "
-        "press Space to watch it loop."
+    ]
+    report(
+        [
+            f"Wood bow created in collection: {COLLECTION_NAME}",
+            f"Skeletal mesh: {MESH_NAME}  ({len(mesh.data.vertices)} verts)",
+            f"Bones: {', '.join(EXPECTED_BONES)}",
+            f"Limb arc solved: radius={radius:.4f}m half_arc={math.degrees(half_arc):.2f}deg",
+            f"Draw pose verified: string_mid +Y {BOW_STRING_PULL}m, limbs "
+            f"{math.degrees(BOW_LIMB_BEND_RADIANS):.1f}deg",
+            f"Clips baked at {ANIMATION_FPS}fps, {len(clip_lines)} of them:",
+            *clip_lines,
+            # Millimetres, because that is the unit the question "why can I not see it?"
+            # is asked in. The draw is 180mm; anything reported here that is a fraction of
+            # that is a small movement by design, not a broken clip.
+            f"Idle verified: string breathes 0 -> {max(idle_played) * 1000:.1f}mm and "
+            f"closes its loop",
+            f"Aim verified: holds {min(aim_played) * 1000:.1f}.."
+            f"{max(aim_played) * 1000:.1f}mm around the {BOW_STRING_PULL * 1000:.0f}mm "
+            "full draw",
+            f"Release verified: springs {min(played) * 1000:+.1f}mm past rest, settles at "
+            f"{played[-1] * 1000:+.1f}mm",
+            f"{IDLE_ACTION_NAME} is loaded on {RIG_NAME}, frame range set to it -- press "
+            "Space in the viewport to play it.",
+            "Switch clips in Dope Sheet > Action Editor (browse icon), or run "
+            "preview_wood_bow.py to list and measure them.",
+            "Attach the arrow to an Unreal Skeleton socket named 'nock' on string_mid.",
+            f"Mesh FBX:  {output_path} ({output_path.stat().st_size // 1024} KB)",
+            *[
+                f"Clip FBX:  {clip_path} ({clip_path.stat().st_size // 1024} KB)"
+                for clip_path in clip_paths
+            ],
+        ]
     )
-    for clip_path in clip_paths:
-        print(f"Clips exported: {clip_path} ({clip_path.stat().st_size // 1024} KB)")
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@
 | PY-UE-009 | 2026-08-28 | Unreal Python / 读回探针 | `'NoneType' object has no attribute 'get_editor_property'` | VERIFIED | 1 |
 | PY-BLENDER-001 | 2026-09-15 | Blender bpy / Pose 骨骼空间 | `String midpoint moved -0.0000m at full draw` | VERIFIED | 1 |
 | PY-BLENDER-002 | 2026-09-16 | Blender bpy / Action 通道 API | `'Action' object has no attribute 'fcurves'` | OPEN | 1 |
+| PY-BLENDER-003 | 2026-09-16 | Blender bpy / 脚本输出可见性 | 宿主报告「run script 后什么都没有」 | OPEN | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
 | PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
@@ -383,6 +384,34 @@
   两个脚本 `ast.parse` 通过。Blender 宿主尚未重跑。
 - 状态：`OPEN`（宿主重跑并产出四个 `blender/models/A_WoodBow_*.fbx` 后才可转
   `VERIFIED`——这次不再拿中途产物结案）。
+- 发生次数：1。
+
+## PY-BLENDER-003：脚本只用 print 报告，等于在宿主里没有输出
+
+- 日期：2026-09-16；发生一次（导致三轮误诊）。
+- 宿主与入口：Blender 5.1.0，Text Editor 的 Run Script（信息面板记录 `bpy.ops.text.run_script()`）。
+- 脚本：`blender/script/python/create_wood_bow.py`、`preview_wood_bow.py`。
+- 原始现象：用户连续报告「什么都没有」「run script 后什么都没有」；信息面板只有算子记录，
+  没有任何脚本输出，也没有 traceback。
+- 根因：`print()` 只写到**系统控制台**，Windows 上默认隐藏（窗口 → 切换系统控制台）。
+  Blender 的 Python 控制台和信息编辑器都不显示它。脚本把全部校验结论、clip 清单、
+  导出路径都放在 print 里，于是从 UI 看，一次成功的运行和一次什么都没做的运行完全一样。
+- 误诊代价：我据此三次让用户「看控制台输出」，每次都得到「什么都没有」，把注意力引到
+  「clip 是不是没烘出来」上；期间真正的两个 bug（slot 读错、幅度太小到看不见）
+  是靠读代码发现的，不是靠这条现象。
+- 预防规则：
+  1. 面向宿主 UI 的脚本，结论必须落在**用户不用找就能看到的地方**：写进 Text datablock
+     （Text Editor 里可打开）并尝试 `window_manager.popup_menu`，print 只作为补充；
+  2. 报告每次运行**覆盖**同名 datablock，不要追加，否则第二次运行的结论被上一次淹没；
+  3. 没有 window manager（background 模式）时 popup 必须吞掉异常，datablock 照写；
+  4. 指导用户排查前，先确认他看得到脚本的输出通道；「看控制台」不是通用建议，
+     Windows 上要先让他开系统控制台。
+- 修复：两个脚本新增 `report(lines)`，同时写 `WoodBow_Report` datablock、弹窗与 print；
+  收尾结论全部改走它。
+- 验证证据：普通 CPython 用假 bpy 验证——datablock 每次运行被替换而非追加、
+  popup 被调用、`window_manager` 为 None 时不抛错且 datablock 仍写入；
+  preview 脚本的假文件测试里断言报告含 clip 清单与「flat」点名。Blender 宿主待重跑。
+- 状态：`OPEN`。
 - 发生次数：1。
 
 ## PY-LYRA-001：USTRUCT 包装器拒绝带参数构造
