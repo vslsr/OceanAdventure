@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "Terrain/OceanTerrainTypes.h"
 #include "World/OceanWaterSurface.h"
 
 #include "OceanChunkActor.generated.h"
@@ -22,7 +21,16 @@ struct OCEANCORERUNTIME_API FOceanChunkState
 	FIntPoint ChunkCoord = FIntPoint::ZeroValue;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ocean|Chunk")
-	float ChunkSize = OceanTerrain::ChunkSize;
+	/**
+	 * Chunk edge length in centimetres.
+	 *
+	 * Must equal OceanTerrain::ChunkGrid * OceanTerrain::CellSize. The literal is spelled out
+	 * rather than pulled from Terrain/OceanTerrainTypes.h because a World header has no
+	 * business depending on the terrain layer -- terrain is built on top of chunks, not under
+	 * them. A static_assert in the matching .cpp keeps the two from drifting, so the value is
+	 * still compiler-enforced without the include.
+	 */
+	float ChunkSize = 6400.0f;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ocean|Chunk")
 	int32 WorldSeed = 12345;

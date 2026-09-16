@@ -74,7 +74,18 @@ description: UE5.6/UE5.7 debugging and validation workflow for logs, asset check
 - Do not mix instrumentation changes with functional fixes in one step.
 - Preserve failing evidence before introducing mitigation changes.
 
+# Build vs Runtime
+先分清失败发生在**编译期**还是**运行期**——证据来源不同，误诊代价很高。
+UBT/UHT 的两个签名（`UCLASS` 报 C4430、确实存在的 `.cpp` 报 C1083）看起来像代码写错，
+实际几乎总是 `Intermediate/` 陈旧；细节与处理见
+[`references/build-failure-triage.md`](references/build-failure-triage.md)。
+那份文档同时给出反向的设计教训：往 public 头加 `#include` 会移动反射宏的行号，
+只为保持两个常量相等时，用字面量 + `.cpp` 里的 `static_assert` 代价更低。
+
 # Failure Handling
+- Symptom: build fails with C4430 on a `UCLASS(...)` line, or C1083 on a `.cpp` that exists.
+  - Locate: stale `Intermediate/` — UHT did not regenerate, or UBT's cached source list is old.
+  - Fix: delete project and plugin `Intermediate/`, rebuild; see references/build-failure-triage.md.
 - Symptom: cannot reproduce issue consistently.
   - Locate: missing preconditions, race windows, or nondeterministic setup.
   - Fix: tighten repro setup and add targeted instrumentation checkpoints.

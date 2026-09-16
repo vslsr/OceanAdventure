@@ -8,9 +8,16 @@
 #include "GameFramework/GameStateBase.h"
 #include "Net/UnrealNetwork.h"
 #include "OceanCoreRuntimeModule.h"
+#include "Terrain/OceanTerrainTypes.h"
 #include "World/OceanChunkActor.h"
 #include "World/OceanChunkInvokerComponent.h"
 #include "World/OceanGenerationSettings.h"
+
+// The chunk grid and the cell grid have to line up exactly. Written as a literal in the
+// header so the World layer does not depend on Terrain; pinned here so it cannot drift.
+static_assert(
+	OceanTerrain::ChunkGrid * OceanTerrain::CellSize == 6400.0f,
+	"ChunkSize defaults in World/*.h must stay equal to ChunkGrid * CellSize.");
 
 UOceanWorldManagerComponent::UOceanWorldManagerComponent()
 {

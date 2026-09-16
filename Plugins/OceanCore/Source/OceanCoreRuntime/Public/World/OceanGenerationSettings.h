@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
-#include "Terrain/OceanTerrainTypes.h"
 #include "World/OceanWaterSurface.h"
 
 #include "OceanGenerationSettings.generated.h"
@@ -65,7 +64,16 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|World",
 		meta = (ClampMin = "100.0", UIMin = "1000.0", Units = "cm"))
-	float ChunkSize = OceanTerrain::ChunkSize;
+	/**
+	 * Chunk edge length in centimetres.
+	 *
+	 * Must equal OceanTerrain::ChunkGrid * OceanTerrain::CellSize. The literal is spelled out
+	 * rather than pulled from Terrain/OceanTerrainTypes.h because a World header has no
+	 * business depending on the terrain layer -- terrain is built on top of chunks, not under
+	 * them. A static_assert in the matching .cpp keeps the two from drifting, so the value is
+	 * still compiler-enforced without the include.
+	 */
+	float ChunkSize = 6400.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Terrain",
 		meta = (ClampMin = "2", ClampMax = "256", UIMin = "8", UIMax = "128"))
