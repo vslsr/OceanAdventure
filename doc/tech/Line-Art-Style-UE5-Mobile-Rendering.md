@@ -27,6 +27,7 @@ Lyra 的默认配置是为主机和 PC 的延迟渲染调的，与线稿 + 移�
 | `Environment/LineArtPointLightComponent` | 篝火类光源的纯数据组件（不是 `UPointLightComponent`） |
 | `Environment/LineArtCoreSettings` | 墨色常量与默认环境，Project Settings > Game > Line Art Core |
 | `Content/Python/CreateLineArtCoreAssets.py` | 生成 MPC 与三支母材质，可重复运行 |
+| `Preview/LineArtPreviewActor` | 拖进关卡即可看全套：填充 + 反转外壳 + 一盏点光源 |
 
 三条移植时**必须换算、且漏了不会报错**的量，集中在 `LineArtEnvironmentState` 与 `.ush` 的注释里：
 上方向 +Y → +Z、长度 米 → 厘米、着色器从读 uniform 改为收参数。
@@ -226,7 +227,13 @@ UE 默认的 ACES 色调映射 + 自动曝光会同时毁掉纸面的浅色和�
 ## 5. 落地顺序（每步都能看到画面）
 
 1. **一个球 + 一个建造模块**：跑通 Unlit 母材质 + 反转外壳 + MPC 换墨。
-   先把「硬边法线撑裂外壳」和「屏幕空间线宽」这两个坑填了，后面才有意义。
+   拖一个 `LineArtPreviewActor` 进空关卡就能看——它自带填充与外壳两个组件和一盏点光源，
+   默认网格是引擎的球（平滑法线）。先把「硬边法线撑裂外壳」和「屏幕空间线宽」这两个坑填了，
+   后面才有意义：把预览网格换成立方体，外壳会在每条折边处裂开，那不是 bug，是还没烘平均法线。
+
+   编辑器视口里环境子系统**不 tick**（`UWorldSubsystem` 默认只支持 Game 与 PIE 世界），
+   所以 MPC 停在默认值、什么都不动。这恰好让视口好用：双击 `MPC_LineArtEnvironment`
+   直接拖 `InkColor` / `Daylight`，整个关卡实时响应。点 Play 才会看到昼夜与火光自己驱动这些值。
 2. **一条建满的船**：建造件走 HISM × 2，量 draw call 与帧时间；
    同时确认 `优化建议.md` §1.2 的增量更新已经就位。
 3. **环境**：昼夜染色、云影、雾、点光源数组，与参考实现逐帧比色。

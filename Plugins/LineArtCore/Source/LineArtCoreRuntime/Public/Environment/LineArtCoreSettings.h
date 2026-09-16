@@ -9,6 +9,7 @@
 
 #include "LineArtCoreSettings.generated.h"
 
+class UMaterialInterface;
 class UMaterialParameterCollection;
 
 /**
@@ -32,6 +33,18 @@ public:
 	/** The collection every line-art material samples. Empty disables the subsystem. */
 	UPROPERTY(config, EditAnywhere, Category = "Assets")
 	TSoftObjectPtr<UMaterialParameterCollection> EnvironmentCollection;
+
+	/**
+	 * The two master materials, resolved from here rather than by asset path at each use
+	 * site. Everything that draws in this style -- the preview actor, and the HISM batches
+	 * that come next -- has to agree on them, and a second hard-coded path is how a project
+	 * ends up with two slightly different line-art looks.
+	 */
+	UPROPERTY(config, EditAnywhere, Category = "Assets")
+	TSoftObjectPtr<UMaterialInterface> FillMaterial;
+
+	UPROPERTY(config, EditAnywhere, Category = "Assets")
+	TSoftObjectPtr<UMaterialInterface> OutlineMaterial;
 
 	/** Daytime ink. */
 	UPROPERTY(config, EditAnywhere, Category = "Ink")
