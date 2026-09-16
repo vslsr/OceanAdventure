@@ -143,13 +143,19 @@ def main():
     wanted = bpy.data.actions.get(CLIP) or clips[0]
     span = key_span(wanted) or (0, 0)
     rig.animation_data.action = wanted
-    slot = bind_action_slot(rig, wanted)
+    bind_action_slot(rig, wanted)
     scene = bpy.context.scene
     scene.frame_start, scene.frame_end = int(round(span[0])), int(round(span[1]))
     scene.frame_set(scene.frame_start)
+    # Report the slot the rig ended up bound to, not what bind_action_slot returned.
+    # Assigning an Action is usually enough -- Blender binds a matching slot itself -- and
+    # then the helper has nothing left to do and returns None. Printing that None reads as
+    # "no slot, this is broken" next to four clips that measurably move.
+    bound = getattr(rig.animation_data, "action_slot", None)
     lines.append(
-        f"Loaded {wanted.name} on {RIG_NAME} (slot {getattr(slot, 'name', None)!r}), frame "
-        f"range {scene.frame_start}..{scene.frame_end}. Press Space in the viewport."
+        f"Loaded {wanted.name} on {RIG_NAME} (slot "
+        f"{getattr(bound, 'name', None) or 'bound by Blender'}), frame range "
+        f"{scene.frame_start}..{scene.frame_end}. Press Space in the viewport."
     )
     lines.append(
         "To switch clips: edit CLIP at the top of this file and re-run, or use the browse "
