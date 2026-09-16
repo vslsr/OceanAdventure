@@ -63,7 +63,12 @@ MESH_NAME = "SK_WoodBow"
 RIG_NAME = "SKEL_WoodBow"
 ARMATURE_DATA_NAME = "SKEL_WoodBow_Armature"
 FBX_NAME = f"{MESH_NAME}.fbx"
-STANDARD_PROJECT_ROOT = Path(r"C:\EpicWkspc\OceanAdventure")
+#: Last-resort project root, derived from this file's own location
+#: (``<project>/blender/script/python/``). None when running as a Blender text
+#: block, where ``__file__`` does not exist -- the env var is the answer there.
+STANDARD_PROJECT_ROOT = (
+    Path(__file__).resolve().parents[3] if "__file__" in globals() else None
+)
 
 # --- Design constants -------------------------------------------------------
 # The two numbers a designer actually reasons about. Everything else about the
@@ -300,7 +305,7 @@ def resolve_project_root(starts, override=None, fallback=STANDARD_PROJECT_ROOT):
     raise RuntimeError(
         "Could not locate OceanAdventure (expected a .uproject plus "
         "Plugins/GameFeatures/OceanAdventure). Set OCEAN_ADVENTURE_PROJECT_ROOT "
-        r"to C:\EpicWkspc\OceanAdventure before running this script."
+        "to this repository's checkout before running this script."
     )
 
 

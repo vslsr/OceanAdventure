@@ -5,9 +5,12 @@ is accidentally replaced by one material.  This repair therefore does not depend
 indices: it validates the complete slot-name set first, loads every required material before
 mutating the mesh, then assigns and reads back each slot.  Safe to run repeatedly.
 
-Run in Unreal Editor Output Log Cmd mode:
+Run in Unreal Editor, Output Log Python input mode (the plugin's Content/Python is
+already on sys.path, so no path is needed):
 
-    py "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py"
+    import importlib, RepairNavalCannonMaterials
+    importlib.reload(RepairNavalCannonMaterials)
+    RepairNavalCannonMaterials.main()
 """
 
 import unreal

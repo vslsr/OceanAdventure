@@ -20,9 +20,12 @@ A drifting name does not fail loudly on its own -- the material still compiles a
 renders a stale value -- so the runtime subsystem checks every write and logs the first
 miss per name under LogLineArtCore.
 
-Run in Unreal Editor Output Log Cmd mode (NOT in PIE):
+Run in the full Unreal Editor (NOT in PIE). Output Log, Python input mode -- UE puts
+every enabled plugin's Content/Python on sys.path, so no path is needed or wanted:
 
-    py "C:/EpicWkspc/OceanAdventure/Plugins/LineArtCore/Content/Python/CreateLineArtCoreAssets.py"
+    import importlib, CreateLineArtCoreAssets
+    importlib.reload(CreateLineArtCoreAssets)
+    CreateLineArtCoreAssets.main()
 """
 
 import unreal

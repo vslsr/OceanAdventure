@@ -30,7 +30,12 @@ VISIBLE_COLLECTION = "SM_LifeRaft_Generated"
 COLLISION_COLLECTION = "SM_LifeRaft_Collision_Generated"
 STATIC_MESH_NAME = "SM_LifeRaft"
 COLLISION_NAME = "UCX_SM_LifeRaft_00"
-STANDARD_PROJECT_ROOT = Path("C:/EpicWkspc/OceanAdventure")
+#: Last-resort project root, derived from this file's own location
+#: (``<project>/blender/script/python/``). None as a Blender text block, where
+#: ``__file__`` does not exist -- OCEAN_ADVENTURE_PROJECT_ROOT is the answer there.
+STANDARD_PROJECT_ROOT = (
+    Path(__file__).resolve().parents[3] if "__file__" in globals() else None
+)
 
 
 def project_root() -> Path:
@@ -84,13 +89,14 @@ def project_root() -> Path:
     # In that case __file__, cwd, and bpy.data.filepath contain no project anchor at all.
     # This repository's standard checkout is therefore an explicit, validated fallback;
     # the environment-variable override above still wins for relocated workspaces.
-    standard_root = STANDARD_PROJECT_ROOT.resolve()
-    if valid(standard_root):
-        return standard_root
+    if STANDARD_PROJECT_ROOT is not None:
+        standard_root = STANDARD_PROJECT_ROOT.resolve()
+        if valid(standard_root):
+            return standard_root
 
     raise RuntimeError(
         "Could not locate OceanAdventure project root. Set "
-        "OCEAN_ADVENTURE_PROJECT_ROOT to C:/EpicWkspc/OceanAdventure."
+        "OCEAN_ADVENTURE_PROJECT_ROOT to this repository's checkout."
     )
 
 
