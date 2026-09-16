@@ -7,7 +7,8 @@
 > 适用引擎：UE 5.7 + Lyra
 > 源工程：`SkyLand`，主要在 `shared/world/`、`server/scene/`、`src/world/`
 > 目标模块：`Plugins/OceanCore/Source/OceanCoreRuntime/`
-> 相关文档：`doc/tech/OceanAdventure_代码审查与无限地形方案.md`、`doc/tech/OceanCore_插件迁移方案.md`
+> 相关文档：`doc/tech/OceanAdventure_代码审查与无限地形方案.md`、`doc/tech/OceanCore_插件迁移方案.md`、
+> **`doc/tech/Line-Art-Style-UE5-Mobile-Rendering.md`（线稿风格，本方案的渲染前提）**
 
 ---
 
@@ -22,9 +23,10 @@
   - [4.3 形状推导](#43-形状推导)
   - [4.4 采样 API](#44-采样-api)
   - [4.5 稀疏编辑覆盖层](#45-稀疏编辑覆盖层)
-  - [4.6 网格与碰撞](#46-网格与碰撞)
-  - [4.7 接回 OceanCore 的 chunk 流送](#47-接回-oceancore-的-chunk-流送)
-  - [4.8 与现有连续高度场的关系](#48-与现有连续高度场的关系)
+  - [4.6 折边：线稿风格的接口](#46-折边线稿风格的接口)
+  - [4.7 网格与碰撞](#47-网格与碰撞)
+  - [4.8 接回 OceanCore 的 chunk 流送](#48-接回-oceancore-的-chunk-流送)
+  - [4.9 与现有连续高度场的关系](#49-与现有连续高度场的关系)
 - [五、开工前必须定的三个决策](#五开工前必须定的三个决策)
 - [六、坑清单](#六坑清单)
 - [七、分阶段实施步骤](#七分阶段实施步骤)
@@ -100,6 +102,7 @@ Plugins/OceanCore/Source/OceanCoreRuntime/
 │   ├── OceanTerrainWater.h           ← terrainWater.mjs + terrainSupport.mjs
 │   ├── OceanTerrainPatchStore.h      ← terrainPatches.mjs
 │   ├── OceanTerrainEditor.h          ← terrainEditing.mjs
+│   ├── OceanTerrainOutline.h         ← 新增：折边查询，线稿方案 §2.4
 │   ├── OceanTerrainMeshBuilder.h     ← terrainCollisionMesh.mjs
 │   └── OceanTerrainChunkComponent.h  ← 新增：网格 + 碰撞的宿主组件
 └── Private/Terrain/
@@ -108,7 +111,7 @@ Plugins/OceanCore/Source/OceanCoreRuntime/
     ├── ...
     └── Tests/
         ├── OceanTerrainParityTest.cpp
-        └── Fixtures/terrain-parity.json   ← 从 SkyLand 导出的逐格基准
+        └── Fixtures/terrain-parity.txt    ← 从 SkyLand 导出的逐格基准
 ```
 
 分层依赖（单向）：
@@ -285,7 +288,7 @@ uint32 Hash32(uint32 Seed, int32 A, int32 B, int32 C)
 改掉之后表现是「挖个坑就自动灌水」，而且没有任何断言会响。
 
 `sampleTerrain` 里那套角坡法线的推导（`followsX`、`derivativeSign`、`lowCorner`）是全文件最容易
-翻错的一段。建议**先翻译、再用 4.6 的网格法线做交叉验证**：同一格上，解析法线与三角形面法线
+翻错的一段。建议**先翻译、再用 4.7 的网格法线做交叉验证**：同一格上，解析法线与三角形面法线
 在同一半边内应当一致。
 
 ### 4.5 稀疏编辑覆盖层
@@ -326,7 +329,51 @@ private:
 它做的是参数校验 + 语义组合，最后都落到 `SetCellCode`。这一层可以先只搬 `raise` / `lower` /
 `setRamp` / `reset`，够建造系统用；`flood` 涉及连通水域判定，可以放到后面。
 
-### 4.6 网格与碰撞
+### 4.6 折边：线稿风格的接口
+
+这一节是 `Line-Art-Style-UE5-Mobile-Rendering.md` §2.4 在地形上的落点，**本方案的渲染前提由那份文档定**：
+平涂填充 + 同一份几何的反转外壳两次绘制，而不是给网格挂一个材质。
+
+反转外壳只画得出**剪影**。平格接斜坡的那道折边、角坡自己那条对角折线，它一条都画不出来——
+而这些恰恰是台阶地形之所以看起来是台阶地形的东西。少了它们，整片地面会塌成一块带轮廓的色斑。
+
+通常的补救是 Depth + Normal 的 Sobel 后处理，在移动端 Forward 下要自己写一张 normal RT、
+再多一遍全屏带宽。**地形不需要**：形状枚举封闭在 13 项，任意两格之间有没有折边、是折边还是崖面，
+从两个格子码就能算出来，完全不跑拓扑边提取。这是整套风格里最便宜的一条线，
+也是「形状枚举值得逐位照搬」这件事在渲染侧的回报。
+
+```cpp
+// OceanTerrainOutline.h
+enum class EEdgeInk : uint8
+{
+    None  = 0,   // 两格共面：不画线，也没有崖面几何
+    Fold  = 1,   // 同高不同坡 —— 反转外壳画不出来的那条
+    Cliff = 2,   // 角点高度不同：一个垂直面，图上最重的一条线
+};
+
+EEdgeInk EdgeInkBetween(int32 CodeA, int32 CodeB, ECellDirection DirectionFromA);
+bool     CellDiagonalIsCrease(int32 Code);   // 八种角坡为真，平格与四种直坡为假
+void     CellTopTriangles(int32 Code, FCellTriangle& OutFirst, FCellTriangle& OutSecond);
+FVector  CellTriangleNormal(int32 Code, int32 TriangleIndex);
+```
+
+三条实测确认过的语义，写下来免得后来者按直觉改：
+
+- **平格接平格 = `None`。** 这条必须守住：一旦它出线，整片平地会变成方格纸。
+- **斜坡的坡脚接平地 = `Fold`，不是 `None`。** 两边同高，但一边水平一边倾斜——
+  这正是让斜坡看起来是斜坡、而不是一块颜色略深的草地的那条线。
+- **同向斜坡并排、以及顺坡叠成阶梯 = `None`。** 一道长坡只画它最外侧的两条折边，
+  中间不画。否则每个山坡都会被画成格子。
+
+`CellTopTriangles` 同时是 4.7 网格构建的输入——**填充网格、碰撞体、折边线条三者共用同一套拓扑**，
+这是 SkyLand 那边刻意维持的不变量，UE 侧不要分叉。
+
+⚠️ **绕序**：`CellTopTriangles` 返回的是参考实现的角点顺序，在 SkyLand 的右手 Y-up 系里是正面。
+第五节决策三的轴映射交换了两个轴、因而翻转了手性，所以直接把这个顺序写进索引缓冲会得到朝内的三角形。
+**在写入缓冲的那一处翻转绕序，并且只在那一处翻。** `CellTriangleNormal` 不受这个选择影响——
+它总是返回朝上的那个方向。
+
+### 4.7 网格与碰撞
 
 这是 `OceanCore` 现在完全空白、收益最直接的一块。
 
@@ -383,7 +430,7 @@ UE 侧同理：**渲染网格与碰撞体必须消费同一份 `FOceanTerrainMes
 格点高度都是 `HeightStep` 的整数倍，**量化成整数 key 比浮点哈希更稳**，也顺手消掉了
 「同一个角点因浮点误差生成两个顶点」的隐患。
 
-### 4.7 接回 OceanCore 的 chunk 流送
+### 4.8 接回 OceanCore 的 chunk 流送
 
 `UOceanWorldManagerComponent` 那套已经在跑，本方案**不改它的调度逻辑**，只挂载：
 
@@ -402,7 +449,7 @@ UE 侧同理：**渲染网格与碰撞体必须消费同一份 `FOceanTerrainMes
 **UE 侧同样要保持 builder 的输入是纯数据**，这样它能直接进 `AsyncTask` / `UE::Tasks`，
 不需要在工作线程上碰 `UObject`。
 
-### 4.8 与现有连续高度场的关系
+### 4.9 与现有连续高度场的关系
 
 `UOceanGenerationSettings` 现在同时负责三件事：地形高度、岛屿遮罩、水面波形。
 迁移之后**地形高度那一支被台阶地形取代，水面波形那一支原样保留**（Gerstner 波 + 浮力
@@ -421,10 +468,12 @@ UE 侧同理：**渲染网格与碰撞体必须消费同一份 `FOceanTerrainMes
 
 ## 五、开工前必须定的三个决策
 
-### 决策一：是否保留连续高度场
+### 决策一：是否保留连续高度场 —— 已拍板
 
-台阶地形与光滑海底混在同一个世界里，是可行的（岛上台阶、近海海床平滑），但**接缝处的法线与碰撞
-要单独处理**。三个选项：
+`Line-Art-Style-UE5-Mobile-Rendering.md` §0「本轮同时定下、但尚未动工的两条」已经定了：
+**地形换成 SkyLand 的 2 米方块（13 形状枚举 + 地形编辑），`OceanCore` 的噪声高度场退役或只留远景。**
+
+剩下的只是接缝怎么处理。台阶地形与光滑海底混在一个世界里可行，但**接缝处的法线与碰撞要单独处理**：
 
 | 选项 | 说明 | 代价 |
 |---|---|---|
@@ -433,6 +482,8 @@ UE 侧同理：**渲染网格与碰撞体必须消费同一份 `FOceanTerrainMes
 | C. 岛内台阶 + 岛外连续 fBm | 保留现有海底起伏 | 两套地形要在接缝处对齐高度，最麻烦 |
 
 **推荐 B**：接缝全在水面以下，视觉上不存在，碰撞上只需要一圈裙边。
+同一节还定了第二条——**服务端权威改用 Lyra/UE 原生复制**，不再保留「两端同一份 Rapier WASM」，
+这条直接影响 P4，届时按它走。
 
 ### 决策二：chunk 尺寸
 
@@ -451,18 +502,23 @@ SkyLand 是 32m / 16×16 格；`OceanCore` 现在是 200m。两边不能都要�
 ### 决策三：坐标轴映射
 
 SkyLand 是 Three.js 右手 Y-up，约定 `+Z = NORTH`、`+X = EAST`；UE 是左手 Z-up。
-建议的映射：
+**P1 采用的映射**：
 
 ```
-SkyLand (x, y, z)  →  UE (X, Y, Z) = (z, x, y)
-    x = EAST       →  Y
-    z = NORTH      →  X
+SkyLand (x, y, z)  →  UE (X, Y, Z) = (x, z, y)
+    x = EAST       →  X
+    z = NORTH      →  Y
     y = UP         →  Z
 ```
 
+初版方案里写的是 `(z, x, y)`（把 NORTH 对到 UE 的 `+X`，贴近「+X 是前方」的引擎惯例）。
+落地时换成了上面这个：两者都是镜像、都同样要翻绕序，但 `(x, z, y)` **不需要交换格坐标的下标**，
+`CellX` 就是 SkyLand 的 `cellX`，parity 基准可以直接逐格读。少一处下标交换，就少一类
+「地形整体转了 90 度、但每一格看着都对」的 bug。代价只是枚举名里的 NORTH 指向 UE 的 `+Y` 而非 `+X`——
+这些是世界的罗盘名，本来就是任意的，和参考实现对齐比迎合一个没别的东西依赖的惯例更值钱。
+
 ⚠️ 这是一次**镜像**（右手系到左手系），**三角形绕序必须翻转**，否则整块地形法线朝下、
-背面剔除把地面剔没。同时 `RampNorth` / `CornerHighNorthEast` 这类枚举名在新坐标系下的含义
-要重新钉死并写进头文件注释——名字里的 NORTH 指的是 UE 的 `+X`。
+背面剔除把地面剔没。翻转只在「索引写进缓冲」那一处做，见 4.6 末尾。
 
 ---
 
@@ -471,7 +527,7 @@ SkyLand (x, y, z)  →  UE (X, Y, Z) = (z, x, y)
 | # | 坑 | 现象 | 对策 |
 |---|---|---|---|
 | 1 | **单位换算** | 地形尺寸差 100 倍 | SkyLand 全程用米，UE 用厘米。格 2m → 200uu，层高 1m → 100uu。`terrainConfig.mjs` 里那句「地形格尺寸必须整除 chunk 尺寸」的断言要一起翻译成 `static_assert` |
-| 2 | **绕序翻转** | 地形整块不可见 / 从下面才看得到 | 见决策三。建完第一块网格先关掉背面剔除确认拓扑对，再打开 |
+| 2 | **绕序翻转** | 地形整块不可见 / 从下面才看得到 | 见决策三与 4.6 末尾。建完第一块网格先关掉背面剔除确认拓扑对，再打开 |
 | 3 | **17×17 窗口** | chunk 之间一圈裂缝 | 采样窗口是 `ChunkGrid + 1` 的闭区间，不是 `ChunkGrid` |
 | 4 | **符号扩展** | 高度层 -1 变成 255 | `CellHeightLevel` 必须走 `int8` 的符号扩展 |
 | 5 | **浮点污染确定性** | 客户端与服务端地形不一致，玩家穿模 / 悬空 | 哈希与噪声全程整数，禁止 `FMath::PerlinNoise` / `FRandomStream` |
@@ -493,15 +549,25 @@ SkyLand (x, y, z)  →  UE (X, Y, Z) = (z, x, y)
   它决定 patch 同步的实现形态。
 - 定下第五节的三个决策，写进本文档的修订记录。
 
-### P1 — 真相层（2~3 天）
+### P1 — 真相层 ✅ 已完成
 
-- `OceanTerrainHash.cpp` ← `hash.mjs`
-- `OceanTerrainTypes.h` ← `terrainConfig.mjs`
-- `OceanTerrainContent.cpp` ← `terrainContent.mjs`（`CellCodeAt` / `CornerHeight` / `SampleTerrain`）
-- `OceanTerrainWater.cpp` ← `terrainWater.mjs` + `terrainSupport.mjs`
-- **同时**从 SkyLand 导出 parity 基准，建立第八节的自动化测试。
+| 文件 | 来源 |
+|---|---|
+| `Public/Terrain/OceanTerrainTypes.h` | `terrainConfig.mjs` |
+| `Private/Terrain/OceanTerrainHash.{h,cpp}` | `hash.mjs` |
+| `Public/Terrain/OceanTerrainBiome.h` + `Private/…cpp` | `terrainBiome.mjs` |
+| `Public/Terrain/OceanTerrainContent.h` + `Private/…cpp` | `terrainContent.mjs` |
+| `Public/Terrain/OceanTerrainWater.h` + `Private/…cpp` | `terrainWater.mjs` + `terrainSupport.mjs` + `terrainMovement.mjs` |
+| `Public/Terrain/OceanTerrainOutline.h` + `Private/…cpp` | 新增，线稿方案 §2.4，见 4.6 |
+| `Private/Terrain/Tests/OceanTerrainParityTest.cpp` | 三条自动化测试 |
+| `Private/Terrain/Tests/Fixtures/terrain-parity.txt` | SkyLand `scripts/export-terrain-parity.mjs` 生成 |
 
-产出验收：给定同一个 seed，C++ 与 Node 对 `[-64, 64]²` 范围内每一格的 code **完全相同**。
+验收结果：两颗种子、`[-64, 64]²` 共 **33282 格地形码与 33282 格群系逐格一致**，
+7 条哈希探针、10 条噪声探针全对。
+
+**这一层不依赖引擎**（`int32` / `FVector` 这类 POD 除外），所以除了 UE 的自动化测试，
+它也能在引擎外单独编译执行——P1 的比对就是这么跑出来的。这不是巧合，是 §3 那条
+「底下两层不碰 `UObject`」换来的：真相层出问题时，不必起编辑器就能定位。
 
 ### P2 — 网格与碰撞（3~4 天）
 
@@ -544,16 +610,31 @@ SkyLand (x, y, z)  →  UE (X, Y, Z) = (z, x, y)
 这是整个迁移里最值得先做的一件事。SkyLand 的 `server/tests/terrainParity.test.mjs` 已经在做
 「JS 与 WASM 逐格比对整个 code」，把它改几行就能吐出一份 JSON：
 
-```jsonc
-// Private/Terrain/Tests/Fixtures/terrain-parity.json
-{
-  "worldSeed": 12345,
-  "cellRange": [-64, 64],
-  "cells": [ /* 逐格 code，行主序 */ ]
-}
+SkyLand 侧的 `scripts/export-terrain-parity.mjs` 生成
+`Private/Terrain/Tests/Fixtures/terrain-parity.txt`，**只由脚本生成，不要手改**：
+
+```
+cellMin -64
+cellMax 64
+
+# hash32(seed, a, b, c) -> uint32
+hash 1545219339 1 2 3 42156bc6
+# valueNoise(seed, x, y, shift) -> [0, 255]
+noise 1545219339 -33 17 5 144
+
+biome 1545219339
+<129 行 × 129 个四位十六进制数>
+cell 1545219339
+<同上，逐格完整 code>
 ```
 
-UE 侧写一条 `FAutomationTestBase`，读这份夹具、逐格比 `OceanTerrain::CellCodeAt`。
+格 code 恒在 `[0, 0xffff]`（高度层占高 8 位且先 `& 0xff`），所以按四位十六进制写，
+文件既紧凑又能直接 diff。
+
+**三层分开导是刻意的**：哈希翻错时先在探针那一层就红，而不是让一整张地形图无从下手；
+只有群系那一格红，说明高度阈值没问题，问题在 Voronoi 或气候表。
+`OceanCore.Terrain.Parity` 在哈希或噪声探针失败时直接返回——一个错的混合器会让它底下
+每个值都错，报几千条下游不一致只会把唯一要紧的那一行埋掉。
 
 **为什么必须有这个**：翻译错一个位移、一个阈值、一个盐值，现象都是
 「地形看着差不多但就是对不上」。没有基准，这类错误要等到跨端不一致才暴露，
@@ -600,3 +681,4 @@ UE 侧写一条 `FAutomationTestBase`，读这份夹具、逐格比 `OceanTerrai
 | 日期 | 内容 |
 |---|---|
 | 2026-09-15 | 初版。第五节的三个决策尚未拍板，实施前需补齐。 |
+| 2026-09-16 | 合入 main 后跟进：决策一由 `Line-Art-Style-UE5-Mobile-Rendering.md` §0 拍板（台阶地形取代噪声高度场，服务端权威改走 UE 原生复制）；决策三的轴映射由 `(z,x,y)` 改为 `(x,z,y)`；新增 4.6 折边一节，承接线稿方案 §2.4。**P1 已完成**，parity 全绿。决策二（chunk 尺寸）仍未拍板，但它只影响 chunk 寻址，不影响真相层。 |

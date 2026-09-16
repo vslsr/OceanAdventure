@@ -21,7 +21,10 @@ public class OceanCoreRuntime : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"ModularGameplay"
+				"ModularGameplay",
+				// Projects: the terrain parity test resolves its fixture through IPluginManager
+				// rather than a path built from the project directory.
+				"Projects"
 			}
 		);
 	}
