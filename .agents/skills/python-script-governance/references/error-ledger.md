@@ -7,7 +7,7 @@
 | ID | 首次发生 | 领域 | 错误签名 | 状态 | 次数 |
 | --- | --- | --- | --- | --- | ---: |
 | PY-UE-001 | 2026-08-27 | Unreal Python / SceneComponent | `set_relative_rotation() required argument 'sweep'` | VERIFIED | 2 |
-| PY-UE-002 | 2026-08-27 | Unreal Editor / 执行入口 | `尝试执行已废弃的命令：exec(open(...))` | VERIFIED | 1 |
+| PY-UE-002 | 2026-08-27 | Unreal Editor / 执行入口 | Cmd 模式吃掉 Python 输入（`exec(open(...))`／裸 `import`） | OPEN（第二次） | 2 |
 | PY-UE-003 | 2026-08-27 | Unreal Python / GameFeatureData | `Failed to find property 'input_mappings'` | STATIC_ONLY | 1 |
 | PY-UE-004 | 2026-08-28 | Unreal Editor-Cmd / DDC 启动 | `no writable nodes available` | VERIFIED | 1 |
 | PY-UE-005 | 2026-08-28 | Unreal Python / 资产布局迁移 | `FindAssetPackageReferencers failed` / `AsyncLoading2.cpp !bHasFailed` | VERIFIED | 2 |
@@ -55,10 +55,39 @@
 
 - 首次错误转换：命令没有进入 Python 解释器，`exec` 被 UE 控制台当作引擎 Console Command。
 - 根因：混淆 Output Log 的 `Cmd` 与 Python 输入模式。
-- 预防规则：`Cmd` 模式执行文件只使用 `py "C:/.../script.py"`；或用编辑器的 Execute Python Script 文件入口。
-- 修复：改用 `py "C:/EpicWkspc/OceanAdventure/Plugins/GameFeatures/TopDownFeature/Content/Python/create_top_down_assets.py"`。
+- 预防规则：`Cmd` 模式执行文件只使用 `py "<script>"`；或用编辑器的 Execute Python Script 文件入口。
+- 修复：改用 `py "<script>"`（当时写的是绝对路径；路径本身已按仓库的绝对路径禁令整改，见下方第二次发生）。
 - 验证：下一次运行进入脚本并输出 Python traceback，证明入口已正确切换到 Python。
 - 状态：`VERIFIED`。
+- 发生次数：2。
+
+### 第二次发生：2026-09-16，入口改成 `import` 之后
+
+- 宿主与入口：UE 5.7 Unreal Editor Output Log，**`Cmd` 模式**。
+- 脚本：`Plugins/LineArtCore/Content/Python/CreateLineArtCoreAssets.py`。
+- 现象：**没有任何报错**。Output Log 只回显三行输入，脚本零输出：
+
+  ```text
+  Cmd: import importlib, CreateLineArtCoreAssets
+  Cmd: importlib.reload(CreateLineArtCoreAssets)
+  Cmd: CreateLineArtCoreAssets.main()
+  ```
+
+- 首次错误转换：三行都被当作引擎 Console Command 丢弃，从未进入 Python 解释器。
+- 复发原因：**上一条预防规则只覆盖了 `py "<file>"` 这一种入口。** 为落实绝对路径禁令，四个脚本的
+  入口改成了「模块 `import` + `reload` + `main()`」——这种写法必须在 **Python 输入模式**执行，
+  而规则里一个字都没提模式本身，只规定了 Cmd 模式下该怎么写文件路径。规则跟着旧入口走，入口一换就失效。
+- **比第一次更难发现**：`exec(open(...))` 至少会触发「尝试执行已废弃的命令」，而裸 `import` 在 Cmd 模式下
+  被静默丢弃。看上去像「脚本跑了但什么都没做」，不像「脚本没跑」。
+- 预防规则（替代上一条，按模式而不是按入口写）：
+  1. **先确认模式，再谈写法**。Output Log 输入框左侧的下拉决定一切：`Cmd` 只吃引擎控制台命令，
+     Python 输入模式才吃 Python。
+  2. Python 入口一律在 **Python 输入模式**执行，包括 `import` / `reload` / `main()` 三行式。
+  3. 只有在 `Cmd` 模式里才用 `py "<script>"`，且这是唯一允许在 Cmd 模式出现的 Python 入口。
+  4. **每个资产脚本必须在结尾打印稳定的成功标记**（如 `LINEART_CORE_ASSETS_OK`），
+     并在文档里写明「没有这一行就等于没成功」。静默不执行只能靠标记缺失来判定，没有别的信号。
+- 修复：四个脚本的 docstring 补上「Python 输入模式，不是 Cmd 模式」的显式说明与模式切换位置。
+- 状态：`OPEN`。待用户在 Python 输入模式重跑并出现 `LINEART_CORE_ASSETS_OK` 后转 `VERIFIED`。
 
 ## PY-UE-003：GameFeatureAction 基类包装器读取派生属性失败
 

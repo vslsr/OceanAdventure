@@ -20,6 +20,11 @@ A drifting name does not fail loudly on its own -- the material still compiles a
 renders a stale value -- so the runtime subsystem checks every write and logs the first
 miss per name under LogLineArtCore.
 
+Run in the Output Log's **Python input mode**, NOT Cmd mode -- the mode dropdown sits to
+the LEFT of the input box. Cmd mode only accepts engine console commands; it discards a
+bare ``import`` silently, so the script appears to run and do nothing. The only Python
+entry allowed in Cmd mode is ``py "<script>"``.
+
 Run in the full Unreal Editor (NOT in PIE). Output Log, Python input mode -- UE puts
 every enabled plugin's Content/Python on sys.path, so no path is needed or wanted:
 

@@ -5,6 +5,11 @@ is accidentally replaced by one material.  This repair therefore does not depend
 indices: it validates the complete slot-name set first, loads every required material before
 mutating the mesh, then assigns and reads back each slot.  Safe to run repeatedly.
 
+Run in the Output Log's **Python input mode**, NOT Cmd mode -- the mode dropdown sits to
+the LEFT of the input box. Cmd mode only accepts engine console commands; it discards a
+bare ``import`` silently, so the script appears to run and do nothing. The only Python
+entry allowed in Cmd mode is ``py "<script>"``.
+
 Run in Unreal Editor, Output Log Python input mode (the plugin's Content/Python is
 already on sys.path, so no path is needed):
 
