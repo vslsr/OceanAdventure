@@ -43,6 +43,72 @@ python Tools/check_absolute_paths.py --list # 看当前放行了哪些、为什�
 确属新例外的，在脚本的 `ALLOW` 里加一条并写明理由，别改判定规则。
 
 
+## 源码变更必须整套落地（硬性）
+
+**一次 C++ 改动的全部文件同进同出**——`.cpp` 和它的头、被改的 `Build.cs`、新增的模块依赖，
+要么一起进 main，要么都别进。**禁止用 GitHub 网页版的「Create / Edit file」往 main 单独放源文件。**
+
+这条已经付过代价：`76b5c25` 用网页版把一个 `OceanTerrainMeshBuilder.cpp` 单独放上 main，
+它依赖的 22 个地形源文件还在功能分支上。后果不是「少一个文件」那么直白：
+
+- main 直接编译不过；
+- 报错是 `C1083: 无法打开包括文件 "Terrain/OceanTerrainMeshBuilder.h"`，
+  **看上去像本地没拉全**。于是排查方向跑去 `git pull`、查子模块、查工作区是否干净——
+  全都白费，因为远端 main 上本来就没有那个文件；
+- 拉取者无从判断，只能一层层验证 HEAD、origin/main、实时远端三者是否一致。
+
+为什么网页版特别容易犯：它一次只能提交一个文件，而且直接落在 main 上，绕过了
+「把分支整体合过去」这个天然的完整性保证。想快速把某个文件放上去时，代价由下一个拉代码的人付。
+
+正确做法：在功能分支上完成，整分支合并到 main。
+
+**没有自动检查，这条只能靠人守。** 与绝对路径禁令不同——那条能靠扫描判定，
+而「某个 `#include` 指向的是引擎头还是缺失的项目头」，在仓库内是分辨不出来的
+（引擎头本来就不在仓库里）。与其加一个会误报、然后被所有人忽略的门禁，不如把
+症状写清楚：见 `.agents/skills/ue5-debug-validation/references/build-failure-triage.md`
+的第 3 个签名，那里给了 30 秒分辨「不完整落地」与「陈旧 Intermediate」的命令。
+
+## 按 UE 5.7 的实际情况写，不要凭 UE4 经验（硬性）
+
+本工程是 **UE 5.7 + Lyra**。UE4 的做法在不少地方已经不成立，而**失效的那部分通常照样
+「看起来很合理」**——它不会报错，只会让照做的人找不到、或者调用到一个不存在的签名。
+所以凡是写进文档、脚本或注释的具体位置与签名，都要以 5.7 的实际情况为准，不能凭印象。
+
+### 1. 编辑器 UI 路径不要写进文档
+
+菜单位置在大版本间会挪。把「菜单 → 子菜单 → 某项」写死在文档里，等于给读者一条
+会过期的指令，而且过期时的表现是「按你说的找不到」，不是「报错」。
+
+**改写成不依赖 UI 布局的入口**：
+
+| 目的 | 不要写 | 写这个 |
+| --- | --- | --- |
+| 跑自动化测试 | `窗口 → 开发者工具 → Session Frontend` | 输出日志 `Cmd` 模式执行 `Automation List` / `Automation RunTests <名字>`；或 `UnrealEditor-Cmd.exe ... -ExecCmds="Automation RunTests <过滤>"` |
+| 跑编辑器 Python | 菜单入口 | Output Log 的 **Python 输入模式**执行模块 `import`（见 Python 门禁与 `PY-UE-002`） |
+| 指资产 | 磁盘路径 | `/PluginName/...` 虚拟包路径 |
+
+确实必须描述 UI 时（比如「内容浏览器要先开 Show Plugin Content 才看得见插件内容」），
+描述**那个开关做什么**，而不是它在第几层菜单里。
+
+**已发生**：文档里写了 `Window → Developer Tools → Session Frontend → Automation`——
+那是 UE4 的位置，UE5 已把它挪走，用户在 5.7 的窗口菜单里逐项找不到。
+更糟的是这条错误指引先出现在对话里、又被复制进
+`doc/line-style-helper/OceanWorldManager.md`，一处错传成了两处。
+现已改为控制台与命令行两种入口。
+
+### 2. API 签名不凭记忆，按当前仓库或反射确认
+
+优先级：**本仓库已成功调用的写法 > 引擎源码/反射 > 官方文档 > 记忆**。
+记忆里的便利重载在 5.7 可能不存在，失败档案里已有两条实例
+（`PY-UE-001` 猜单参数重载、`PY-UE-007` 猜 `get_static_materials`）。
+
+### 3. 反射宏与 `.generated.h` 按 5.x 的行为理解
+
+`UCLASS()` 展开成**按行号命名**的宏，由 `.generated.h` 定义——所以改动 include 块会
+移动行号，陈旧的 `Intermediate/` 就会报出看起来像语法错误的编译失败。
+三种会误导人的编译签名及处理见
+`.agents/skills/ue5-debug-validation/references/build-failure-triage.md`。
+
 ## Python 脚本强制门禁
 
 - 创建、修改、审计、排查或准备执行仓库内任何 Python 脚本时，**必须先使用**

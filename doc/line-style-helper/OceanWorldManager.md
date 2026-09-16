@@ -10,7 +10,23 @@
 
 **第 1 步 · 先跑自动化测试(最便宜,不用开地图)**
 
-`Automation List`,过滤 `OceanCore.Terrain`,应该有 5 条:
+打开**输出日志**，切到 **Cmd** 模式执行：
+
+```
+Automation List
+```
+
+确认下面 5 条 `OceanCore.Terrain` 测试都在，再执行：
+
+```
+Automation RunTests OceanCore.Terrain
+```
+
+不打开现有编辑器时，按 [UE 命令行自动化测试技能](../../.agents/skills/ue5-commandline-automation/SKILL.md) 的 PowerShell 入口运行，
+将 `$testFilter` 设为 `OceanCore.Terrain`。该入口从 `UE_ROOT` 获取引擎位置，并导出本次独立报告；
+需确认实际执行数量、目标测试状态及退出码，不能仅凭退出码判断通过。
+
+五条测试是:
 
 | 测试 | 它保的东西 |
 |---|---|
