@@ -16,6 +16,7 @@
 | PY-UE-008 | 2026-08-28 | Unreal Python / PIE 资产编辑 | `The Editor is currently in a play mode` / 误报资产缺失或创建失败 | VERIFIED | 3 |
 | PY-UE-009 | 2026-08-28 | Unreal Python / 读回探针 | `'NoneType' object has no attribute 'get_editor_property'` | VERIFIED | 1 |
 | PY-BLENDER-001 | 2026-09-15 | Blender bpy / Pose 骨骼空间 | `String midpoint moved -0.0000m at full draw` | VERIFIED | 1 |
+| PY-BLENDER-002 | 2026-09-16 | Blender bpy / Action 通道 API | `'Action' object has no attribute 'fcurves'` | OPEN | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
 | PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
@@ -339,6 +340,49 @@
   契约里的七根骨 `root/grip/limb_upper/limb_lower/string_upper/string_mid/string_lower`，
   无 `nock`，并带 Deformer 与两个材质，说明骨架、蒙皮与导出参数一并成立。
 - 状态：`VERIFIED`。
+- 发生次数：1。
+
+## PY-BLENDER-002：Blender 5.x 的 Action 没有 `fcurves`，通道挂在 slot 的 channelbag 上
+
+- 日期：2026-09-16；发生一次。
+- 宿主与入口：Blender 5.1.0（用户在 Scripting 工作区运行，Text Block 显示为
+  `\create_wood_bow.py.002`）。
+- 脚本：`blender/script/python/create_wood_bow.py`。
+- 原始错误：
+
+  ```text
+  Python: Traceback (most recent call last):
+    File "\create_wood_bow.py.002", line 1312, in <module>
+    File "\create_wood_bow.py.002", line 1256, in build_wood_bow
+    File "\create_wood_bow.py.002", line 994, in bake_action
+  AttributeError: 'Action' object has no attribute 'fcurves'
+  ```
+
+- 首次错误转换：`bake_action()` 在插完关键帧后执行 `if not action.fcurves:` —— 那行本来是用来
+  挡「Action 没绑 slot、keyframe_insert 静默写空」的断言，结果它自己先用了一个不存在的属性。
+- 根因：4.4 引入 slotted Action 后，`Action.fcurves` 只是 legacy Action 的兼容外壳；5.x 取消
+  legacy Action，通道改挂在 `action.layers[].strips[].channelbag(slot).fcurves` 上，属性被移除。
+  脚本按 4.x 的形状读通道，且**三处**都这么读：非空断言、设 LINEAR 插值、`validate_clips()` 里
+  按 `data_path` 取骨骼名。
+- 为什么之前没发现：这三处都排在网格 FBX 导出**之后**。`PY-BLENDER-001` 结案时凭
+  `blender/models/SK_WoodBow.fbx` 存在判定通过，那个产物只证明到导出网格为止；
+  `blender/models/` 里从来没有出现过 `A_WoodBow_*.fbx`，也就是说 clip 一次都没烘成功过。
+  **产物证据只能证明它排在哪一步之前，不能证明整条脚本跑完。**
+- 预防规则：
+  1. 读 Action 通道一律走兼容访问器（仓库里 `boiler_animation.py` / `door_animation.py` /
+     `claude-blender.md` 早就有 `get_fcurves()`，写新脚本前先 grep 一遍），不直接写
+     `action.fcurves`：有该属性走 legacy，
+     没有就遍历 `layers[].strips[].channelbags[]`（或按当前 slot 取 `channelbag(slot)`）。
+  2. 赋 Action 的同时把 slot 绑上（`animation_data.action_slot`），再插关键帧；
+     赋值散落在回放、导出等多处时抽成一个 `assign_action()`，不要各写各的。
+  3. 结案证据必须落在**脚本最后一步之后**的产物或成功标记上；用中途产物结案等于没验证。
+- 修复：新增 `assign_action()` / `bind_action_slot()` / `get_fcurves()` 三个兼容入口
+  （`get_fcurves` 沿用 `boiler_animation.py` 等脚本里已有的同名 helper），三处读通道全部改走它；非空断言的报错信息带上走的是哪条 API 与 slot 名。
+- 验证证据：普通 CPython 用假 bpy 对象分别模拟 legacy Action（有 `fcurves`）与 slotted
+  Action（只有 `layers/strips/channelbags`），两条路径都取到同一组通道，缺通道时按预期抛错；
+  两个脚本 `ast.parse` 通过。Blender 宿主尚未重跑。
+- 状态：`OPEN`（宿主重跑并产出四个 `blender/models/A_WoodBow_*.fbx` 后才可转
+  `VERIFIED`——这次不再拿中途产物结案）。
 - 发生次数：1。
 
 ## PY-LYRA-001：USTRUCT 包装器拒绝带参数构造

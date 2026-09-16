@@ -401,8 +401,22 @@ if obj.animation_data is None:
 # Access action
 action = obj.animation_data.action
 
-# FCurves
-for fcurve in action.fcurves:
+# FCurves -- NOT action.fcurves. Blender 4.4 moved channels behind a slot
+# (action -> layer -> strip -> one channelbag per slot), and 5.x dropped legacy
+# Actions entirely, so `action.fcurves` raises AttributeError rather than reading
+# empty. Ledger PY-BLENDER-002; the repo's own helper is in
+# blender/script/python/claude-blender.md and boiler_animation.py.
+def get_fcurves(action):
+    """Channels of *action* on both the legacy (<=4.3) and slotted (4.4+) API."""
+    legacy = getattr(action, "fcurves", None)
+    if legacy is not None:
+        return list(legacy)
+    return [fc for layer in getattr(action, "layers", ())
+            for strip in layer.strips
+            for bag in getattr(strip, "channelbags", ())
+            for fc in bag.fcurves]
+
+for fcurve in get_fcurves(action):
     fcurve.data_path    # e.g., "location", "rotation_euler"
     fcurve.array_index  # Component index (0=X, 1=Y, 2=Z)
     for kp in fcurve.keyframe_points:
