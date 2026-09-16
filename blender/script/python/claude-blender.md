@@ -146,9 +146,13 @@ set_interpolation(close_action, 'BEZIER')   # 动作用 BEZIER 缓入缓出
 
 ### FCurves 访问（4.4+ Layered Action 兼容）
 
+> Blender 5.x 取消了 legacy Action，`Action.fcurves` **不是空集合而是根本不存在**，
+> 直接点它会抛 `AttributeError: 'Action' object has no attribute 'fcurves'`
+> （实测 5.1.0，见失败档案 `PY-BLENDER-002`）。一律走下面这个 helper。
+
 ```python
 def get_fcurves(action):
-    """兼容 3.x/4.0-4.3（legacy）和 4.4+（layered action）"""
+    """兼容 3.x/4.0-4.3（legacy）和 4.4+/5.x（layered action）"""
     if hasattr(action, 'fcurves'):       # 3.x / 4.0-4.3
         return list(action.fcurves)
     fcurves = []                         # 4.4+ layered action
@@ -160,6 +164,29 @@ def get_fcurves(action):
                         fcurves.extend(bag.fcurves)
     return fcurves
 ```
+
+### Action 与 slot 一起绑（4.4+）
+
+4.4+ 的通道挂在 slot 的 channelbag 上。赋了 Action 却没绑上 slot 时，
+`keyframe_insert` 照样返回成功而 Action 是空的 —— 导出一段什么都不做的 clip。
+把「赋 Action」和「绑 slot」写成一个入口，回放和导出都走它：
+
+```python
+def assign_action(obj, action):
+    obj.animation_data.action = action
+    if getattr(action, "slots", None) is None:
+        return None                                   # 4.3 及以前，没有 slot 这回事
+    slot = getattr(obj.animation_data, "action_slot", None)
+    if slot is not None and any(s == slot for s in action.slots):
+        return slot                                   # 只认属于这个 Action 的 slot
+    slot = action.slots[0] if len(action.slots) else action.slots.new(
+        id_type="OBJECT", name=obj.name)
+    obj.animation_data.action_slot = slot
+    return slot
+```
+
+连烘多个 Action 时尤其要这条：`action_slot` 可能还绑着上一段 clip 的 slot，
+看着像「已经绑好了」，而这一段其实无处落键。
 
 ### 设置关键帧插值
 

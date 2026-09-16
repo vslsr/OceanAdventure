@@ -93,11 +93,32 @@ UE_FBX_COMMON = dict(
 〔宿主已验证：这组参数产出的 `blender/models/SK_RoundBodyCharacter.fbx` 与
 `blender/models/SK_WoodBow.fbx` 都在仓库里，后者含骨架、Deformer 与两个材质槽〕
 
-### 2.6 Action Slot 可能让 Action 空着
+### 2.6 Action 的通道在 slot 的 channelbag 里，`Action.fcurves` 在 5.x 已经没有了
 
-Blender 4.4+ 的 Action 通过 slot 路由通道。新建的空 Action 没绑上 slot 时，
-`keyframe_insert` 照样返回成功而 Action 是空的 —— 导出的就是一段什么都不做的 clip。
-烘完立刻断言 `action.fcurves` 非空。〔未验证，机理来自 4.4 slot 机制〕
+Blender 4.4 起 Action 通过 slot 路由通道：Action → layer → strip → **每个 slot 一个
+channelbag** → fcurves。4.x 还给 legacy Action 留了 `Action.fcurves` 兼容外壳，
+**5.x 取消 legacy Action，这个属性直接不存在**，读它是 `AttributeError` 而不是空集合。
+〔宿主已验证：Blender 5.1.0 抛 `'Action' object has no attribute 'fcurves'`，
+见失败档案 `PY-BLENDER-002`〕
+
+所以读通道走兼容访问器，别直接点 `fcurves`：
+
+```python
+def get_fcurves(action):   # 仓库里已有同名 helper，别再造一个
+    legacy = getattr(action, "fcurves", None)
+    if legacy is not None:
+        return list(legacy)                      # 4.x legacy Action
+    return [fc for layer in action.layers        # 4.4+/5.x slotted Action
+            for strip in layer.strips
+            for bag in getattr(strip, "channelbags", ())
+            for fc in bag.fcurves]
+```
+
+新建的空 Action 没绑上 slot 时，`keyframe_insert` 照样返回成功而 Action 是空的 ——
+导出的就是一段什么都不做的 clip。所以赋 Action 与绑 slot 写成同一个入口
+（`animation_data.action = action` 后取/建 `animation_data.action_slot`），
+回放校验和导出也走它；烘完立刻断言上面那个访问器的返回非空，报错信息带上走的是哪条 API。
+〔`get_fcurves` 两条分支与 slot 绑定已用假对象在普通 CPython 验证；Blender 宿主重跑待验证〕
 
 ### 2.7 不要用 pose 模式算子
 
