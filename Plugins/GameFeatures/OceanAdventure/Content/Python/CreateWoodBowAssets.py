@@ -132,6 +132,25 @@ def call_first_available(target, method_names, *args):
     )
 
 
+def require_editor_asset_mode():
+    """Stop before the first asset query if PIE is running.
+
+    In PIE, EditorAssetLibrary refuses asset work and its queries return falsey, so a
+    script without this gate reads "the bow does not exist yet" and walks into the
+    creation branch -- ledger PY-UE-008, where exactly that misreport cost a debugging
+    round on three scripts. The fix is a fail-fast that names the remedy.
+    """
+    subsystem = require(
+        unreal.get_editor_subsystem(unreal.LevelEditorSubsystem),
+        "LevelEditorSubsystem is unavailable; run this script in the full Unreal Editor",
+    )
+    require(
+        not subsystem.is_in_play_in_editor(),
+        "Cannot import the wood bow while Play/PIE is active. Click Stop, then run this "
+        "script again.",
+    )
+
+
 def is_commandlet_host():
     return "-run=pythonscript" in str(unreal.SystemLibrary.get_command_line()).lower()
 
@@ -539,6 +558,7 @@ def ensure_sockets(skeleton):
 
 
 def main():
+    require_editor_asset_mode()
     require(
         unreal.EditorAssetLibrary.does_directory_exist(FEATURE_ROOT),
         f"{FEATURE_ROOT} is not mounted. Enable the OceanAdventure GameFeature and restart "
