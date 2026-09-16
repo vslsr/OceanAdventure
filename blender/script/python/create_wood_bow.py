@@ -144,6 +144,12 @@ IDLE_ACTION_NAME = "WoodBow_Idle"
 DRAW_ACTION_NAME = "WoodBow_Draw"
 AIM_ACTION_NAME = "WoodBow_Aim"
 RELEASE_ACTION_NAME = "WoodBow_Release"
+#: Every Action this script owns. The re-run cleanup deletes exactly these by name, so a
+#: clip added above must be added here too -- miss one and its fake user keeps the old
+#: Action alive, the next run bakes WoodBow_Idle.001 beside it, and the export can pick
+#: the stale one.
+CLIP_ACTION_NAMES = (IDLE_ACTION_NAME, DRAW_ACTION_NAME, AIM_ACTION_NAME, RELEASE_ACTION_NAME)
+
 IDLE_FBX_NAME = "A_WoodBow_Idle.fbx"
 DRAW_FBX_NAME = "A_WoodBow_Draw.fbx"
 AIM_FBX_NAME = "A_WoodBow_Aim.fbx"
@@ -570,7 +576,7 @@ def set_ue_scene_units():
 
 def remove_generated_collection():
     """Delete only data previously owned by this script."""
-    for action_name in (DRAW_ACTION_NAME, RELEASE_ACTION_NAME):
+    for action_name in CLIP_ACTION_NAMES:
         action = bpy.data.actions.get(action_name)
         if action is not None:
             # Fake users keep these alive across saves, so a re-run has to clear them by
@@ -1363,9 +1369,16 @@ def build_wood_bow():
         rig, release_action, RELEASE_FBX_NAME, release_frame_count()
     )
 
-    rig.animation_data.action = None
-    bpy.context.scene.frame_set(0)
-    clear_bow_pose(rig)
+    # Leave the .blend in a state you can actually look at. Clearing the assignment (what
+    # this did before) left the Action Editor showing "New" on a rig whose four clips were
+    # sitting right there in the file -- indistinguishable, from the UI, from a run that
+    # baked nothing. Idle's frame 0 *is* the braced rest pose, so parking there also keeps
+    # the old promise of not saving a half-drawn bow.
+    assign_action(rig, idle_action)
+    scene = bpy.context.scene
+    scene.frame_start = 0
+    scene.frame_end = loop_frame_count(BOW_IDLE_SECONDS)
+    scene.frame_set(0)
 
     print(f"Wood bow created in collection: {COLLECTION_NAME}")
     print(f"Skeletal mesh: {MESH_NAME}  ({len(mesh.data.vertices)} verts)")
@@ -1393,6 +1406,21 @@ def build_wood_bow():
     print("Attach the arrow to an Unreal Skeleton socket named 'nock' on string_mid.")
     print(f"UE5 skeletal FBX exported: {output_path}")
     print(f"FBX size: {output_path.stat().st_size // 1024} KB")
+    print("Actions in this .blend -- switch them in Dope Sheet > Action Editor:")
+    for action, end_frame in (
+        (idle_action, loop_frame_count(BOW_IDLE_SECONDS)),
+        (draw_action, DRAW_FRAME_COUNT),
+        (aim_action, loop_frame_count(BOW_AIM_SECONDS)),
+        (release_action, release_frame_count()),
+    ):
+        print(
+            f"  {action.name:16} frames 0..{end_frame:<4} {end_frame / ANIMATION_FPS:.2f}s  "
+            f"{len(get_fcurves(action))} curves"
+        )
+    print(
+        f"{IDLE_ACTION_NAME} is loaded on {RIG_NAME} and the frame range is set to it; "
+        "press Space to watch it loop."
+    )
     print(f"Idle clip exported:    {idle_path}")
     print(f"Draw clip exported:    {draw_path}")
     print(f"Aim clip exported:     {aim_path}")
