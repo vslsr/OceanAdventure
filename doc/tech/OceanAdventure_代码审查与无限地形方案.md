@@ -93,7 +93,11 @@ H(p) = IslandMask(p) * fBm(p) + OceanFloor(p)
 
 ### 🔴 严重：会导致系统完全不工作
 
-#### 1. `IsActive()` 默认为 false，所有 invoker 会被跳过
+#### 1. `IsActive()` 默认为 false，所有 invoker 会被跳过 —— ✅ 2026-08-24 已修复
+
+> **状态（2026-09-16 复核）**：`UOceanChunkInvokerComponent` 的构造函数里已有 `bAutoActivate = true`
+> （提交 `d593388`），`BuildRequiredChunkSet()` 的 `IsActive()` 判断按下面的建议保留。本条已结案，
+> 保留正文是因为「为什么不能直接删 `IsActive()`」那条理由仍然成立。
 
 **位置**：`OceanWorldManager.cpp` → `BuildRequiredChunkSet()`
 
@@ -123,13 +127,30 @@ UOceanChunkInvokerComponent::UOceanChunkInvokerComponent()
 
 ---
 
-#### 2. Lyra 用 Replication Graph，`IsNetRelevantFor` 会被完全忽略
+#### 2. Lyra 用 Replication Graph，`IsNetRelevantFor` 会被完全忽略 —— ❌ 2026-09-16 复核：本项目不成立
 
-**架构级问题。**
+> **状态（2026-09-16 复核）**：**本条对本项目不适用，`IsNetRelevantFor()` 不是死代码。**
+>
+> 原文假设的是 Lyra 的默认配置，但本项目把 Replication Graph 关掉了：
+>
+> - `Config/DefaultGame.ini` 的 `[/Script/LyraGame.LyraReplicationGraphSettings]` 写着
+>   `bDisableReplicationGraph=True`（`LyraReplicationGraphSettings.h` 里的默认值也是 `true`）；
+> - `LyraReplicationGraph.cpp:145` 读到这个开关就 `return nullptr`，不创建 replication driver。
+>
+> Iris 同样没开：`Config/DefaultEngine.ini` 里那段 `;Iris - begin … ;Iris - end` 只是 Lyra 自带的
+> **参数配置**，全仓库（`Config/`、`Source/`、`Plugins/`）搜不到任何
+> `UseIrisReplication` / `bUseIris` / `net.Iris` 的启用开关。
+>
+> 所以本项目走的是**标准 UE 复制**，`AActor::IsNetRelevantFor()` 会被正常调用。
+> 下面两个方案暂时都不需要做——但**这是一个配置开关决定的结论，不是代码性质决定的**：
+> 谁把 `bDisableReplicationGraph` 改回 `False`、或者哪天开了 Iris，本条立刻重新成立。
+> 真要开的那天，按下面两个方向走。
+
+**（以下为原文，按「若启用 Replication Graph」阅读。）**
 
 Lyra 自带 `ULyraReplicationGraph`，启用后 **`AActor::IsNetRelevantFor()` 根本不会被调用** —— 相关性由 Replication Graph 的节点（空间化网格节点、AlwaysRelevant 节点等）决定。
 
-`OceanChunkActor` 里那套精心设计的 chunk 距离相关性逻辑，在 Lyra 环境下**是死代码**。
+`OceanChunkActor` 里那套精心设计的 chunk 距离相关性逻辑，在启用 Replication Graph 的环境下**是死代码**。
 
 **两个方向：**
 

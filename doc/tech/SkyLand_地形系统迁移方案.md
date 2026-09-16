@@ -531,8 +531,8 @@ SkyLand (x, y, z)  →  UE (X, Y, Z) = (x, z, y)
 | 3 | **17×17 窗口** | chunk 之间一圈裂缝 | 采样窗口是 `ChunkGrid + 1` 的闭区间，不是 `ChunkGrid` |
 | 4 | **符号扩展** | 高度层 -1 变成 255 | `CellHeightLevel` 必须走 `int8` 的符号扩展 |
 | 5 | **浮点污染确定性** | 客户端与服务端地形不一致，玩家穿模 / 悬空 | 哈希与噪声全程整数，禁止 `FMath::PerlinNoise` / `FRandomStream` |
-| 6 | **Replication Graph** | 地形 patch 同步时有时无 | Lyra 用 `ULyraReplicationGraph`，`AActor::IsNetRelevantFor()` **根本不会被调用**；开了 Iris 同样失效。`AOceanChunkActor` 里现有那套距离相关性逻辑**是死代码**。详见 `OceanAdventure_代码审查与无限地形方案.md` 第二部分第 2 条 |
-| 7 | **`bAutoActivate` 未设** | 一个 chunk 都不生成 | 已知既存 bug，`UOceanChunkInvokerComponent` 构造函数缺 `bAutoActivate = true`。**接地形之前先修掉**，否则会把地形代码当成嫌疑人查半天 |
+| 6 | **Replication Graph / Iris** | 地形 patch 同步时有时无 | **本项目当前两者都没开**（`bDisableReplicationGraph=True`，无 Iris 开关），`IsNetRelevantFor()` 正常生效。但这是**配置开关**决定的：谁把它改回 `False` 或开了 Iris，`IsNetRelevantFor()` 立刻变成死代码，chunk 相关性要改走 RepGraph 节点或 Iris filter。改动这两个开关时回头看这一行 |
+| 7 | ~~**`bAutoActivate` 未设**~~ | 一个 chunk 都不生成 | ✅ 提交 `d593388` 已修。留在清单里是因为症状值得记住：invoker 没激活时 `BuildRequiredChunkSet()` 返回空集，表现是「地形代码写完了但一块都不出现」，很容易去查地形 |
 | 8 | **水的语义** | 挖个坑就自动灌水 | `Water` 表示「属于已连通水域」，不是「低于海平面」。见 4.4 |
 | 9 | **恒等覆盖不删** | patch store 无限增长 | 改回默认值必须删条目，见 4.5 |
 | 10 | **`>= ` 写成了 `==`** 的反面 | 崖面消失、到处是缓坡 | 形状推导比较的是**恰好高一层**，见 4.3 |
@@ -542,12 +542,22 @@ SkyLand (x, y, z)  →  UE (X, Y, Z) = (x, z, y)
 
 ## 七、分阶段实施步骤
 
-### P0 — 前置修复（0.5 天）
+### P0 — 前置修复 ✅ 已完成（结论是两条都不用改代码）
 
-- 修 `UOceanChunkInvokerComponent` 的 `bAutoActivate`（坑 #7）。
-- 确认项目实际使用的复制系统：Replication Graph 还是 Iris（坑 #6）。**这条不确认不要往下走**，
-  它决定 patch 同步的实现形态。
-- 定下第五节的三个决策，写进本文档的修订记录。
+- **`bAutoActivate`**：早在提交 `d593388`（2026-08-24）就修了，
+  `UOceanChunkInvokerComponent` 的构造函数里已有 `bAutoActivate = true`。
+  代码审查文档写于 2026-08-18，早于那次修复。
+- **复制系统**：本项目走**标准 UE 复制**——Replication Graph 与 Iris **都没启用**。
+  - `Config/DefaultGame.ini` 里 `bDisableReplicationGraph=True`，
+    `LyraReplicationGraph.cpp:145` 读到就 `return nullptr`，不创建 replication driver；
+  - `Config/DefaultEngine.ini` 里那段 Iris 配置只是 Lyra 自带的参数表，
+    全仓库搜不到 `UseIrisReplication` / `bUseIris` / `net.Iris` 的启用开关。
+
+  所以 `AOceanChunkActor::IsNetRelevantFor()` **会被正常调用，不是死代码**，
+  P4 的 patch 同步可以直接用标准相关性，不必写 Replication Graph 节点。
+  这条推翻了代码审查文档的严重问题 #2，那边已加状态注记。
+- 第五节的决策：一已由线稿方案 §0 拍板，三在 P1 落地时定了，
+  **二（chunk 尺寸）仍未拍板**——它只影响 chunk 寻址，不影响真相层，P2 用暂定的 32×32。
 
 ### P1 — 真相层 ✅ 已完成
 
@@ -681,4 +691,5 @@ cell 1545219339
 | 日期 | 内容 |
 |---|---|
 | 2026-09-15 | 初版。第五节的三个决策尚未拍板，实施前需补齐。 |
+| 2026-09-16 | P0 复核完成：`bAutoActivate` 早已修复；本项目未启用 Replication Graph 与 Iris，`IsNetRelevantFor()` 有效，推翻代码审查文档的严重问题 #2。 |
 | 2026-09-16 | 合入 main 后跟进：决策一由 `Line-Art-Style-UE5-Mobile-Rendering.md` §0 拍板（台阶地形取代噪声高度场，服务端权威改走 UE 原生复制）；决策三的轴映射由 `(z,x,y)` 改为 `(x,z,y)`；新增 4.6 折边一节，承接线稿方案 §2.4。**P1 已完成**，parity 全绿。决策二（chunk 尺寸）仍未拍板，但它只影响 chunk 寻址，不影响真相层。 |
