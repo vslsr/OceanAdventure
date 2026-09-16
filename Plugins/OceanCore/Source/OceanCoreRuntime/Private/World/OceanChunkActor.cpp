@@ -41,7 +41,7 @@ AOceanChunkActor::AOceanChunkActor()
 	SetReplicateMovement(false);
 	SetNetUpdateFrequency(2.0f);
 	SetMinNetUpdateFrequency(1.0f);
-	SetNetCullDistanceSquared(CalculateChunkCullDistanceSquared(20000.0f));
+	SetNetCullDistanceSquared(CalculateChunkCullDistanceSquared(OceanTerrain::ChunkSize));
 }
 
 void AOceanChunkActor::PreInitializeComponents()

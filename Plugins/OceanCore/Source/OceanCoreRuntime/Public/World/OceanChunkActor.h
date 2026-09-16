@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Terrain/OceanTerrainTypes.h"
 #include "World/OceanWaterSurface.h"
 
 #include "OceanChunkActor.generated.h"
@@ -21,7 +22,7 @@ struct OCEANCORERUNTIME_API FOceanChunkState
 	FIntPoint ChunkCoord = FIntPoint::ZeroValue;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ocean|Chunk")
-	float ChunkSize = 20000.0f;
+	float ChunkSize = OceanTerrain::ChunkSize;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Ocean|Chunk")
 	int32 WorldSeed = 12345;

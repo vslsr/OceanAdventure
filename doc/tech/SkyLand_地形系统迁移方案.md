@@ -485,19 +485,35 @@ UE 侧同理：**渲染网格与碰撞体必须消费同一份 `FOceanTerrainMes
 同一节还定了第二条——**服务端权威改用 Lyra/UE 原生复制**，不再保留「两端同一份 Rapier WASM」，
 这条直接影响 P4，届时按它走。
 
-### 决策二：chunk 尺寸
-
-SkyLand 是 32m / 16×16 格；`OceanCore` 现在是 200m。两边不能都要：
+### 决策二：chunk 尺寸 —— 已拍板：32×32 格 / 64m（6400uu）
 
 | 方案 | chunk 边长 | 每 chunk 格数 | 问题 |
 |---|---|---|---|
-| 保持 16×16 | 32m | 256 | actor 数量相对现状翻约 39 倍 |
+| 保持 16×16 | 32m | 256 | actor 数量相对原 200m 翻约 39 倍 |
 | 保持 200m | 200m | 10000 | 单块网格构建开销与卸载粒度都要重估 |
-| **折中：32×32** | **64m** | **1024** | actor 数量约为现状的 10 倍，单块仍可异步构建 |
+| **✅ 采用：32×32** | **64m** | **1024** | actor 数量约为原来的 10 倍，单块仍可异步构建 |
 
-**建议 32×32 格 / 64m**，但这个数**必须结合实际视距预算实测后再定**，
-并且一旦定下就要同时更新 `ChunkGrid` 常量与 `UOceanWorldManagerComponent` 的 `ChunkSize`——
-这两个数一旦不一致，chunk 坐标与格坐标就对不上，现象是地形整体错位。
+落地方式是**让 `ChunkSize` 从 `ChunkGrid` 派生，而不是各写一个数**：
+
+```cpp
+// OceanTerrainTypes.h
+inline constexpr int32 ChunkGrid = 32;
+inline constexpr float ChunkSize = ChunkGrid * CellSize;   // 6400
+```
+
+`UOceanWorldManagerComponent` / `AOceanChunkActor` / `UOceanGenerationSettings` 三处的
+`ChunkSize` 默认值都改成 `OceanTerrain::ChunkSize`，chunk 的 net cull 距离也跟着走。
+这样「两个数必须相等」从注释变成了结构约束。`UOceanTerrainChunkComponent` 仍然在初始化时
+比对一次并报 Error——蓝图或数据资产里手填的值绕得过编译期。
+
+**视距的代价要认下来。** 200m→64m 之后，`ActiveRadius = 3` 覆盖的范围从 1400m 掉到 448m。
+没有跟着调大，理由是参考实现的实际视距本来就更短：SkyLand 的 `CHUNK_LOAD_RADIUS = 2`
+配 32m chunk，最近的未加载内容在 64m 外，**再远的部分由雾盖掉**。448m 已经是它的 7 倍，
+而 49 个 chunk × 约 2100 三角形 ≈ 10 万面，在线稿方案 §3.4 的「移动端 < 50 万面/帧」里很宽裕。
+
+但**海战需要的视距不是 448m**。那不该靠调大 `ActiveRadius`（`MaxActiveRadius = 8` 时
+17×17 = 289 个 chunk、约 60 万面，直接顶穿预算），而应该走线稿方案 §0 给的那条路：
+**噪声高度场「只留远景」**——近处台阶地形，远处一张低精度代理。这条列在 P4 之后的后续项里。
 
 ### 决策三：坐标轴映射
 
@@ -623,13 +639,43 @@ SkyLand (x, y, z)  →  UE (X, Y, Z) = (x, z, y)
 角色能走上斜坡、被崖面挡住」。这些要有引擎才能跑。
 `UOceanTerrainChunkComponent` 里的 `FDynamicMesh3` 接线是按文档写的，没有编译验证过。
 
-### P3 — 稀疏编辑层（2~3 天）
+### P3 — 稀疏编辑层 ✅ 代码完成，**待引擎内验证**
 
-- `FOceanTerrainPatchStore` ← `terrainPatches.mjs`
-- `FOceanTerrainEditor`（先做 `Raise` / `Lower` / `SetRamp` / `Reset`）← `terrainEditing.mjs`
-- patch 变更 → 受影响 chunk 的网格重建（含跨界的相邻 chunk）
+| 文件 | 内容 |
+|---|---|
+| `Public/Terrain/OceanTerrainPatchStore.h` + `Private/…cpp` | 稀疏覆盖层 + 变更通知 |
+| `Public/Terrain/OceanTerrainEditor.h` + `Private/…cpp` | 编辑门面（含两条水体规则） |
+| `Public/Terrain/OceanTerrainSubsystem.h` + `Private/…cpp` | `UWorldSubsystem`：持有 store，把编辑派发到该重建的 chunk |
 
-产出验收：单机下能抬高/降低一格并看到网格与碰撞同步更新，改回默认值后 store 回到空。
+**分层**：chunk 组件只知道「种子 + 一串覆盖格 → 网格」，不知道谁在编辑；
+subsystem 是唯一同时知道两边的东西。所以 `UOceanWorldManagerComponent` 里
+一行地形代码都没有，纯海面的地图照旧。
+
+#### 受影响 chunk 的判定：与参考实现有意不同
+
+SkyLand 的 `affectedChunksForCell` 在 `localX === 0`、`localX === GRID-1`、
+`localZ === 0`、`localZ === GRID-1` 四种情况下都通知邻块。**这一版只通知前两种**
+（`localX == 0` → 西邻，`localY == 0` → 南邻），因为本仓库的 builder 采样窗口是
+`[0, ChunkGrid]`、且东/北崖面归低位格所有——邻块的窗口根本读不到 `localX == GRID-1` 那一列。
+
+西南角那块对角邻块也不通知：它的窗口**确实**包含这一格（在 `(G,G)` 角上），
+但 builder 从不读那个角——最后一列的东崖和最后一行的北崖都差一格够不到它。
+
+这不是照着推的，是**量出来的**：测试对每种边界位置做一次编辑，
+逐块重建 3×3 个 chunk 的网格并比对，把「真正变了的集合」与「通知的集合」对齐。
+结果：角上 3 块、西边 2 块、南边 2 块、内部 1 块、远端角 1 块。
+
+产出验收（引擎外已过）：
+
+- 写回默认值 → store 回到空，且读数与程序化值一致（这条是「基线是待还的账」那类规矩里最容易被优化掉的）；
+- 抬高雪地仍是雪地（群系不参与编辑）；
+- `Flood` 一路降到真正有水深的那层；
+- 紧邻真实水域下挖会进水，孤立深坑保持干燥；
+- 水格抬到完全露出水面会变回普通地面（否则移动系统继续对高台施加浮力）；
+- 通知集合 == 真正重建后网格发生变化的集合。
+
+**尚未验证**：UE 编译、五条自动化测试、以及编辑器里「抬高一格能看到网格与碰撞同步更新」。
+`UOceanTerrainSubsystem` 与组件的接线没有编译验证过。
 
 ### P4 — 网络同步（2~3 天）
 
@@ -726,6 +772,8 @@ cell 1545219339
 | 日期 | 内容 |
 |---|---|
 | 2026-09-15 | 初版。第五节的三个决策尚未拍板，实施前需补齐。 |
+| 2026-09-16 | 决策二拍板 32×32 格 / 64m，`ChunkSize` 改为从 `ChunkGrid` 派生，三处默认值与 net cull 距离跟着走。视距从 1400m 降到 448m，海战远景改走「噪声高度场只留远景」，列入后续。 |
+| 2026-09-16 | P3 代码完成：稀疏覆盖层 + 编辑门面 + 派发 subsystem。受影响 chunk 的判定比参考实现更窄，并用「通知集合 == 实际网格变化集合」的测试量证。 |
 | 2026-09-16 | P2 代码完成：网格 builder + chunk 组件。绕序改为按几何定向；确认地形不走反转外壳，墨线全部来自折边数据。builder 的纯数据部分已在引擎外跑通（接缝包含性、顶面投影面积精确平铺）；组件的 `FDynamicMesh3` 接线未经编译验证。 |
 | 2026-09-16 | P0 复核完成：`bAutoActivate` 早已修复；本项目未启用 Replication Graph 与 Iris，`IsNetRelevantFor()` 有效，推翻代码审查文档的严重问题 #2。 |
 | 2026-09-16 | 合入 main 后跟进：决策一由 `Line-Art-Style-UE5-Mobile-Rendering.md` §0 拍板（台阶地形取代噪声高度场，服务端权威改走 UE 原生复制）；决策三的轴映射由 `(z,x,y)` 改为 `(x,z,y)`；新增 4.6 折边一节，承接线稿方案 §2.4。**P1 已完成**，parity 全绿。决策二（chunk 尺寸）仍未拍板，但它只影响 chunk 寻址，不影响真相层。 |

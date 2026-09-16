@@ -8,6 +8,7 @@
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "Engine/World.h"
 #include "OceanCoreRuntimeModule.h"
+#include "Terrain/OceanTerrainSubsystem.h"
 #include "World/OceanChunkActor.h"
 
 using namespace UE::Geometry;
@@ -50,6 +51,11 @@ void UOceanTerrainChunkComponent::EndPlay(const EEndPlayReason::Type EndPlayReas
 	if (AOceanChunkActor* Chunk = Cast<AOceanChunkActor>(GetOwner()))
 	{
 		Chunk->OnChunkInitialized.RemoveDynamic(this, &UOceanTerrainChunkComponent::HandleChunkInitialized);
+	}
+
+	if (UOceanTerrainSubsystem* Terrain = UOceanTerrainSubsystem::Get(this))
+	{
+		Terrain->UnregisterChunk(this);
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -114,7 +120,34 @@ void UOceanTerrainChunkComponent::HandleChunkInitialized(AOceanChunkActor* Chunk
 			ExpectedChunkSize);
 	}
 
-	RebuildTerrain(Chunk->GetWorldSeed(), Chunk->GetChunkCoord(), TArray<int32>());
+	CachedWorldSeed = Chunk->GetWorldSeed();
+	CachedChunkCoord = Chunk->GetChunkCoord();
+	bHasChunkIdentity = true;
+
+	if (UOceanTerrainSubsystem* Terrain = UOceanTerrainSubsystem::Get(this))
+	{
+		Terrain->EnsureStore(static_cast<uint32>(CachedWorldSeed));
+		Terrain->RegisterChunk(this, CachedChunkCoord);
+	}
+
+	RequestRebuild();
+}
+
+void UOceanTerrainChunkComponent::RequestRebuild()
+{
+	if (!bHasChunkIdentity)
+	{
+		// Nothing to rebuild yet: the owning chunk has not initialised, so this component does
+		// not know which part of the world it is.
+		return;
+	}
+
+	TArray<int32> Overrides;
+	if (UOceanTerrainSubsystem* Terrain = UOceanTerrainSubsystem::Get(this))
+	{
+		Terrain->CollectWindowOverrides(CachedChunkCoord, Overrides);
+	}
+	RebuildTerrain(CachedWorldSeed, CachedChunkCoord, Overrides);
 }
 
 void UOceanTerrainChunkComponent::RebuildTerrain(

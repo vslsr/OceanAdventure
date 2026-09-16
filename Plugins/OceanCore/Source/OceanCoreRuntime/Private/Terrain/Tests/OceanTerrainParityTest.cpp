@@ -9,7 +9,9 @@
 #include "Misc/Paths.h"
 #include "Terrain/OceanTerrainBiome.h"
 #include "Terrain/OceanTerrainContent.h"
+#include "Terrain/OceanTerrainEditor.h"
 #include "Terrain/OceanTerrainMeshBuilder.h"
+#include "Terrain/OceanTerrainPatchStore.h"
 #include "Terrain/OceanTerrainOutline.h"
 #include "Terrain/OceanTerrainWater.h"
 
@@ -737,6 +739,187 @@ bool FOceanTerrainMeshTest::RunTest(const FString& Parameters)
 				AxisNames[Axis], Unmatched, Far.Num()),
 			Unmatched,
 			0);
+	}
+
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FOceanTerrainPatchTest,
+	"OceanCore.Terrain.Patches",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FOceanTerrainPatchTest::RunTest(const FString& Parameters)
+{
+	using namespace OceanTerrain;
+
+	constexpr uint32 Seed = 0x5c1a2d0b;
+	FTerrainPatchStore Store(Seed);
+	FTerrainEditor Editor(Store, 0.0);
+
+	// Writing a cell back to its procedural value must delete the entry rather than store an
+	// identity override, or the overlay grows every time a player undoes their own work and
+	// every save and join payload grows with it.
+	const int32 Baseline = Store.CellCodeAt(3, 3);
+	TestEqual(TEXT("store starts empty"), Store.Num(), 0);
+	TestTrue(TEXT("raise reports a change"), Editor.Raise(3, 3, 1));
+	TestEqual(TEXT("raise stored one override"), Store.Num(), 1);
+	TestEqual(
+		TEXT("raise took effect"),
+		CellHeightLevel(Store.CellCodeAt(3, 3)),
+		CellHeightLevel(Baseline) + 1);
+	TestTrue(TEXT("lower reports a change"), Editor.Lower(3, 3, 1));
+	TestEqual(TEXT("back to default drops the override"), Store.Num(), 0);
+	TestEqual(TEXT("and reads as the procedural value again"), Store.CellCodeAt(3, 3), Baseline);
+
+	// Biome never takes part in an edit: raise a patch of snow and it is still snow.
+	{
+		const int32 Snow = EncodeCell(
+			0, EOceanTerrainSurface::Ground, EOceanTerrainShape::Flat, EOceanTerrainBiome::Snow);
+		Store.SetCellCode(2, 2, Snow);
+		Editor.Raise(2, 2, 2);
+		TestEqual(
+			TEXT("raised snow is still snow"),
+			static_cast<int32>(CellBiome(Store.CellCodeAt(2, 2))),
+			static_cast<int32>(EOceanTerrainBiome::Snow));
+		Store.ResetCell(2, 2);
+	}
+
+	// Flood has to reach real depth. Only flipping the water flag on ground above the waterline
+	// leaves a darkened dry bed with no water surface at all.
+	TestTrue(TEXT("flood reports a change"), Editor.Flood(0, 0));
+	TestEqual(
+		TEXT("flooded cell is water"),
+		static_cast<int32>(CellSurface(Store.CellCodeAt(0, 0))),
+		static_cast<int32>(EOceanTerrainSurface::Water));
+	TestTrue(TEXT("flooded cell actually holds water"), CellHasWater(Store.CellCodeAt(0, 0), 0.0));
+
+	// Lowering ground below sea level beside real water lets the water in...
+	TestTrue(TEXT("lower beside water reports a change"), Editor.Lower(1, 0, 1));
+	TestEqual(
+		TEXT("lowering beside water floods the cell"),
+		static_cast<int32>(CellSurface(Store.CellCodeAt(1, 0))),
+		static_cast<int32>(EOceanTerrainSurface::Water));
+
+	// ...but an isolated pit stays dry, which is what stops "dig a hole" filling itself.
+	TestTrue(TEXT("isolated lower reports a change"), Editor.Lower(4, 4, 1));
+	TestEqual(
+		TEXT("an isolated pit stays dry"),
+		static_cast<int32>(CellSurface(Store.CellCodeAt(4, 4))),
+		static_cast<int32>(EOceanTerrainSurface::Ground));
+
+	// Raising a water cell clear of the waterline turns it back into ground. Leave the flag set
+	// and the movement code keeps applying buoyancy on top of a plateau, pinning the player at
+	// water height and calling them grounded there.
+	TestTrue(TEXT("raising the flooded cell reports a change"), Editor.Raise(0, 0, 1));
+	TestEqual(
+		TEXT("water raised clear of the line becomes ground again"),
+		static_cast<int32>(CellSurface(Store.CellCodeAt(0, 0))),
+		static_cast<int32>(EOceanTerrainSurface::Ground));
+
+	Store.Reset();
+	TestEqual(TEXT("reset clears the overlay"), Store.Num(), 0);
+
+	//
+	// The set of chunks an edit is announced to has to equal the set whose geometry really
+	// changes. Announce too few and a strip of terrain along a chunk seam goes stale; announce
+	// too many and chunks rebuild for nothing. Neither shows up in a screenshot, so this
+	// compares the announcement against meshes actually rebuilt either side of the edit.
+	//
+	const FTerrainPalette Palette;
+	const auto SignatureOf = [&Store, &Palette](FIntPoint ChunkCoord)
+	{
+		TArray<int32> Overrides;
+		TArray<int32> Codes;
+		FTerrainMeshData Mesh;
+		Store.CollectWindowOverrides(ChunkCoord, Overrides);
+		BuildChunkCodes(Seed, ChunkCoord, Overrides, Codes);
+		BuildChunkMesh(ChunkCoord, Codes, Palette, 0.0, Mesh);
+
+		uint32 Signature = 0;
+		for (const FVector3f& Position : Mesh.Positions)
+		{
+			Signature = HashCombine(Signature, GetTypeHash(Position));
+		}
+		return HashCombine(Signature, static_cast<uint32>(Mesh.Indices.Num()));
+	};
+
+	struct FPatchCase
+	{
+		int32 CellX;
+		int32 CellY;
+		const TCHAR* Name;
+		int32 ExpectedChunks;
+	};
+	const FPatchCase Cases[] = {
+		{ 0, 0, TEXT("chunk corner (local 0,0)"), 3 },
+		{ 0, 5, TEXT("west edge (local 0,5)"), 2 },
+		{ 5, 0, TEXT("south edge (local 5,0)"), 2 },
+		{ 5, 5, TEXT("interior (local 5,5)"), 1 },
+		{ ChunkGrid - 1, ChunkGrid - 1, TEXT("far corner (local G-1,G-1)"), 1 },
+	};
+
+	for (const FPatchCase& Case : Cases)
+	{
+		TMap<FIntPoint, uint32> Before;
+		for (int32 ChunkY = -1; ChunkY <= 1; ++ChunkY)
+		{
+			for (int32 ChunkX = -1; ChunkX <= 1; ++ChunkX)
+			{
+				const FIntPoint ChunkCoord(ChunkX, ChunkY);
+				Before.Add(ChunkCoord, SignatureOf(ChunkCoord));
+			}
+		}
+
+		TArray<FIntPoint, TInlineAllocator<3>> Announced;
+		AffectedChunksForCell(Case.CellX, Case.CellY, Announced);
+
+		Editor.Raise(Case.CellX, Case.CellY, 1);
+
+		TSet<FIntPoint> ReallyChanged;
+		for (const TPair<FIntPoint, uint32>& Entry : Before)
+		{
+			if (SignatureOf(Entry.Key) != Entry.Value)
+			{
+				ReallyChanged.Add(Entry.Key);
+			}
+		}
+
+		TestEqual(
+			FString::Printf(TEXT("%s: announced chunk count"), Case.Name),
+			Announced.Num(),
+			Case.ExpectedChunks);
+		TestEqual(
+			FString::Printf(
+				TEXT("%s: announced %d chunks, %d really changed"),
+				Case.Name, Announced.Num(), ReallyChanged.Num()),
+			ReallyChanged.Num(),
+			Announced.Num());
+
+		bool bAllAnnouncedChanged = true;
+		for (const FIntPoint& ChunkCoord : Announced)
+		{
+			bAllAnnouncedChanged &= ReallyChanged.Contains(ChunkCoord);
+		}
+		TestTrue(
+			FString::Printf(TEXT("%s: every announced chunk really changed"), Case.Name),
+			bAllAnnouncedChanged);
+
+		Store.Reset();
+	}
+
+	// The notification has to carry the same set the query reports.
+	{
+		int32 NotifiedChunks = 0;
+		const FDelegateHandle Handle = Store.OnPatchChanged().AddLambda(
+			[&NotifiedChunks](const FTerrainPatchChange& Change)
+			{
+				NotifiedChunks += Change.AffectedChunks.Num();
+			});
+		Editor.Raise(0, 0, 1);
+		TestEqual(TEXT("an edit on a chunk corner notifies three chunks"), NotifiedChunks, 3);
+		Store.OnPatchChanged().Remove(Handle);
+		Store.Reset();
 	}
 
 	return !HasAnyErrors();

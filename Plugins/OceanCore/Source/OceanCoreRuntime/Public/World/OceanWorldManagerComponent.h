@@ -4,6 +4,7 @@
 
 #include "Components/ActorComponent.h"
 #include "CoreMinimal.h"
+#include "Terrain/OceanTerrainTypes.h"
 #include "TimerManager.h"
 #include "World/OceanWaterSurface.h"
 
@@ -91,9 +92,18 @@ protected:
 		meta = (EditCondition = "GenerationSettings == nullptr"))
 	int32 WorldSeed = 12345;
 
+	/**
+	 * Chunk edge length in centimetres.
+	 *
+	 * Defaulted from the terrain grid rather than written out, because the two have to agree:
+	 * ChunkSize must equal ChunkGrid * CellSize. When they drift apart the chunk grid and the
+	 * cell grid slide against each other, and the world renders offset while every individual
+	 * cell still looks correct -- which is close to undebuggable from the picture alone.
+	 * UOceanTerrainChunkComponent logs an error when it sees a mismatch.
+	 */
 	UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category = "Ocean|Chunk",
 		meta = (ClampMin = "100.0", EditCondition = "GenerationSettings == nullptr"))
-	float ChunkSize = 20000.0f;
+	float ChunkSize = OceanTerrain::ChunkSize;
 
 	UPROPERTY(EditAnywhere, Replicated, BlueprintReadOnly, Category = "Ocean|Chunk")
 	float ChunkBaseZ = 0.0f;

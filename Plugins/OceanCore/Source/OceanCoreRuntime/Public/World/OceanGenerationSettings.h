@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "Terrain/OceanTerrainTypes.h"
 #include "World/OceanWaterSurface.h"
 
 #include "OceanGenerationSettings.generated.h"
@@ -64,7 +65,7 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|World",
 		meta = (ClampMin = "100.0", UIMin = "1000.0", Units = "cm"))
-	float ChunkSize = 20000.0f;
+	float ChunkSize = OceanTerrain::ChunkSize;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ocean|Terrain",
 		meta = (ClampMin = "2", ClampMax = "256", UIMin = "8", UIMax = "128"))

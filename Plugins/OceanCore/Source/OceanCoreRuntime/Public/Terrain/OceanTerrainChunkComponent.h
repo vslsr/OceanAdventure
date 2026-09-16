@@ -58,6 +58,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Ocean|Terrain")
 	void RebuildTerrain(int32 InWorldSeed, FIntPoint InChunkCoord, const TArray<int32>& InOverrides);
 
+	/**
+	 * Rebuilds from the world's current terrain edits.
+	 *
+	 * Called by UOceanTerrainSubsystem when an edit lands on a cell this chunk reads, which
+	 * includes cells just over its western and southern borders.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Ocean|Terrain")
+	void RequestRebuild();
+
 	/** Ink segments for this chunk, in component space. Empty until the first build lands. */
 	const OceanTerrain::FTerrainInkData& GetInkData() const { return InkData; }
 
@@ -107,6 +116,11 @@ private:
 
 	/** Bumped per request so a stale result can recognise itself and bow out. */
 	int32 BuildSerial = 0;
+
+	/** Which chunk this component draws. Set once the owning chunk actor initialises. */
+	int32 CachedWorldSeed = 0;
+	FIntPoint CachedChunkCoord = FIntPoint::ZeroValue;
+	bool bHasChunkIdentity = false;
 
 	bool bTerrainBuilt = false;
 };
