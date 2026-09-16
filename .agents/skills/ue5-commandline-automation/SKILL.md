@@ -19,7 +19,7 @@ description: 为 OceanAdventure/UE 5.7 使用 UnrealEditor-Cmd 在不连接已�
 
 1. 先成功构建当前源码的 `LyraEditor Win64 Development`。测试入口不负责构建；缺失模块、
    编译失败或旧 DLL 均会使结果失真。编译问题转 [ue5-debug-validation](../ue5-debug-validation/SKILL.md)。
-2. 引擎目录从环境变量 `UE_ROOT` 获取，无默认值；项目路径从仓库根推导。
+2. 先按 [本机目录发现](../ue5-local-directory-discovery/SKILL.md) 定位当前项目及匹配引擎：优先显式 `UE_ROOT`，未配置时查询 Launcher 与注册表；无硬编码默认值。
    不把某台机器的盘符或检出路径保存进文件。
 3. 从测试注册宏查明名称、所在模块和上下文标记，确认模块实际加载。
    GameFeature 测试不能假定插件已激活；按测试所需 Experience/地图加载。
@@ -30,12 +30,12 @@ description: 为 OceanAdventure/UE 5.7 使用 UnrealEditor-Cmd 在不连接已�
 
 ## PowerShell 入口
 
-下面是交互式命令，先切到仓库根目录，并在本机环境设置 `UE_ROOT` 为引擎安装根目录。
+下面是交互式命令。先完成本机目录发现，在同一进程中取得 `$project` 并设置临时 `$env:UE_ROOT`。
 若以后提取为脚本，仓库根必须从脚本自身位置推导，不能继续依赖启动目录。
 
 ```powershell
-if (-not $env:UE_ROOT) { throw '请先设置 UE_ROOT 为本机 UE 安装根目录' }
-$project = (Resolve-Path -LiteralPath './LyraTemplate.uproject').Path
+if (-not $env:UE_ROOT) { throw '请先按本机目录发现技能搜索并确认引擎' }
+if (-not $project -or -not (Test-Path -LiteralPath $project -PathType Leaf)) { throw '请先发现并确认项目文件' }
 $ue = Join-Path $env:UE_ROOT 'Engine/Binaries/Win64/UnrealEditor-Cmd.exe'
 if (-not (Test-Path -LiteralPath $ue -PathType Leaf)) { throw 'UE_ROOT 下找不到 UnrealEditor-Cmd.exe' }
 $commonArgs = @('-Unattended', '-NullRHI', '-NoSound', '-NoSplash', '-stdout', '-FullStdOutLogOutput')
