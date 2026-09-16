@@ -2,10 +2,11 @@
 
 编译失败和运行期故障不是一类问题：这里的证据在 UBT 输出里，不在 Output Log 里，
 而且**最常见的几种报错都会把人引向错误的方向**——它们看起来像代码写错了或者本地没拉全，
-实际上前两种是 `Intermediate/` 陈旧、第三种是有人把一次改动拆开提交了。
-三种的处理互不相同，所以先对签名、再动手。
+实际上前两种是 `Intermediate/` 陈旧、第三种是有人把一次改动拆开提交了、
+第四种是 unity build 把一个 `using namespace` 漏给了同批次的其他文件。
+四种的处理互不相同，所以先对签名、再动手。
 
-## 三个会误导人的签名
+## 四个会误导人的签名
 
 ### 1. `UCLASS(...)` 报 C4430 / 下一行报 C2143
 
@@ -67,11 +68,48 @@ git log --oneline --all -- "*/SomeFile.h"   # 哪个提交带来它，在哪条�
 GitHub 网页版的「Create file」，它一次只能提交一个文件且直接落在 main。
 规则见 `AGENTS.md` 的「源码变更必须整套落地」。
 
+### 4. C4459「声明隐藏了全局声明」，而且报在你没碰过的文件上
+
+```
+OceanChunkActor.cpp(24,48): Error C4459: "ChunkSize"的声明隐藏了全局声明
+    float CalculateChunkCullDistanceSquared(float ChunkSize)
+note: 参见"OceanTerrain::ChunkSize"的声明
+```
+
+你这次只新增了一个文件，报错却出现在另外三个**完全没动过**的 `.cpp` 里。
+
+**原因是 unity build。** UBT 把同一模块的多个 `.cpp` 拼进一个
+`Module.<模块名>.cpp` 一起编。于是**文件作用域的 `using namespace X;` 会泄漏到整个
+拼接单元**——后面那些文件里，凡是叫 `ChunkSize`、`CellSize`、`NoiseScale` 的局部变量
+或参数，都突然「隐藏」了 `X::` 里的同名常量。UE 把 C4459 当错误，编译直接失败。
+
+写在匿名 namespace 里**也照样泄漏**：
+
+```cpp
+namespace
+{
+    using namespace OceanTerrain;   // ← 仍然漏到整个 blob
+}
+```
+
+**处理**：把 `using namespace` 从文件作用域拿掉。
+
+- 名字少就全限定：`OceanTerrain::FTerrainEditor`；
+- 名字多、集中在一个函数里，就把 `using namespace` **收进那个函数体**——
+  函数内的 using 不会越过函数边界。
+
+**判据**：报错的文件你这次没改过，而 `note:` 指向的是你**刚加的头或刚加的文件**引入的名字。
+这时不要去改被报错的那个文件（它没错），去找本次新增文件里的 `using`。
+
+> 顺带：这也是为什么公共头里不要写 `using namespace`。上面第 3 条那个设计教训
+> （public 头加 include 是高成本改动）和这条是同一类——**在共享的编译单元里引入名字，
+> 代价由别的文件付**。
+
 ## 处理
 
-**第 1、2 种同因**（陈旧 `Intermediate/`），同一个动作解决；**第 3 种不是**，
-它缺的是文件本身，删缓存只会浪费一次全量重编。先按第 3 种的两条 `git` 命令排除掉，
-再做下面这步——**删掉 `Intermediate/`，包括插件自己的那份**：
+**第 1、2 种同因**（陈旧 `Intermediate/`），同一个动作解决；**第 3、4 种都不是**——
+第 3 种缺的是文件本身，第 4 种是代码问题，对它们删缓存只会浪费一次全量重编。
+先按第 3 种的两条 `git` 命令、第 4 种的判据排除掉，再做下面这步——**删掉 `Intermediate/`，包括插件自己的那份**：
 
 ```powershell
 Remove-Item -Recurse -Force .\Intermediate, .\Plugins\<PluginName>\Intermediate -ErrorAction SilentlyContinue
@@ -105,6 +143,12 @@ static_assert(
 保证一样强（编译期），但依赖只存在于 `.cpp`，头文件的行号和依赖图都不动。
 
 ## 已发生记录
+
+- 2026-09-16：新增 `OceanTerrainConsole.cpp`，在匿名 namespace 里写了
+  `using namespace OceanTerrain;`。编译报 4 处 C4459，全部落在
+  `OceanChunkActor.cpp` / `OceanChunkInvokerComponent.cpp` / `OceanGenerationSettings.cpp`
+  ——这次一行都没改过的三个文件。同一模块里 `OceanTerrainChunkComponent.cpp` 还有一处
+  文件作用域的 `using namespace UE::Geometry;`，当时还没炸，但是同一颗地雷，一并收进了函数体。
 
 - 2026-09-16：`76b5c25` 用 GitHub 网页版把 `OceanTerrainMeshBuilder.cpp` 单独提交到 main，
   它依赖的 22 个地形源文件还在功能分支上。main 编译报

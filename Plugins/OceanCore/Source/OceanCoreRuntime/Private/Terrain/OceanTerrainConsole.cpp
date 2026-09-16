@@ -28,7 +28,10 @@
  */
 namespace
 {
-	using namespace OceanTerrain;
+	// No `using namespace OceanTerrain;` here. This is a unity build: a file-scope using
+	// directive leaks into every other .cpp compiled into the same blob, and names like
+	// ChunkSize / CellSize / NoiseScale then collide with their local variables. The errors
+	// land in files this one never touched, which is a miserable trail to follow.
 
 	/** Prints one line to both the log and the calling console. */
 	void Report(const FString& Line)
@@ -43,7 +46,7 @@ namespace
 	 * no chunk carries a UOceanTerrainChunkComponent yet -- which is a setup step people
 	 * forget, not a failure of the command.
 	 */
-	FTerrainEditor* ResolveEditor(UWorld* World)
+	OceanTerrain::FTerrainEditor* ResolveEditor(UWorld* World)
 	{
 		UOceanTerrainSubsystem* Terrain = UOceanTerrainSubsystem::Get(World);
 		if (!Terrain)
@@ -52,7 +55,7 @@ namespace
 			return nullptr;
 		}
 
-		FTerrainEditor* Editor = Terrain->GetEditor();
+		OceanTerrain::FTerrainEditor* Editor = Terrain->GetEditor();
 		if (!Editor)
 		{
 			Report(TEXT(
@@ -80,8 +83,8 @@ namespace
 		}
 
 		const FVector Location = Target->GetActorLocation();
-		OutCellX = WorldToCell(Location.X);
-		OutCellY = WorldToCell(Location.Y);
+		OutCellX = OceanTerrain::WorldToCell(Location.X);
+		OutCellY = OceanTerrain::WorldToCell(Location.Y);
 		return true;
 	}
 
@@ -104,9 +107,9 @@ namespace
 		return FMath::Max(1, Steps);
 	}
 
-	void ReportCell(FTerrainEditor& Editor, int32 CellX, int32 CellY, const TCHAR* Prefix)
+	void ReportCell(OceanTerrain::FTerrainEditor& Editor, int32 CellX, int32 CellY, const TCHAR* Prefix)
 	{
-		const FTerrainCellView View = Editor.ReadCell(CellX, CellY);
+		const OceanTerrain::FTerrainCellView View = Editor.ReadCell(CellX, CellY);
 		Report(FString::Printf(
 			TEXT("%s cell (%d, %d): level=%d shape=%s surface=%s biome=%s bedZ=%.0f depth=%.0f %s"),
 			Prefix,
@@ -126,10 +129,10 @@ namespace
 		UWorld* World,
 		const TArray<FString>& Args,
 		bool bHere,
-		TFunctionRef<bool(FTerrainEditor&, int32, int32, int32)> Apply,
+		TFunctionRef<bool(OceanTerrain::FTerrainEditor&, int32, int32, int32)> Apply,
 		const TCHAR* Verb)
 	{
-		FTerrainEditor* Editor = ResolveEditor(World);
+		OceanTerrain::FTerrainEditor* Editor = ResolveEditor(World);
 		if (!Editor)
 		{
 			return;
@@ -172,7 +175,7 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainHere(
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
-			FTerrainEditor* Editor = ResolveEditor(World);
+			OceanTerrain::FTerrainEditor* Editor = ResolveEditor(World);
 			int32 CellX = 0;
 			int32 CellY = 0;
 			if (!Editor || !ResolveHereCell(World, CellX, CellY))
@@ -188,7 +191,7 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainInfo(
 	FConsoleCommandWithWorldAndArgsDelegate::CreateLambda(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
-			FTerrainEditor* Editor = ResolveEditor(World);
+			OceanTerrain::FTerrainEditor* Editor = ResolveEditor(World);
 			int32 CellX = 0;
 			int32 CellY = 0;
 			if (!Editor || !ParseCell(Args, 0, CellX, CellY))
@@ -205,7 +208,7 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainRaise(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
 			RunCellEdit(World, Args, false,
-				[](FTerrainEditor& Editor, int32 X, int32 Y, int32 Steps)
+				[](OceanTerrain::FTerrainEditor& Editor, int32 X, int32 Y, int32 Steps)
 				{ return Editor.Raise(X, Y, Steps); },
 				TEXT("raise"));
 		}));
@@ -217,7 +220,7 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainLower(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
 			RunCellEdit(World, Args, false,
-				[](FTerrainEditor& Editor, int32 X, int32 Y, int32 Steps)
+				[](OceanTerrain::FTerrainEditor& Editor, int32 X, int32 Y, int32 Steps)
 				{ return Editor.Lower(X, Y, Steps); },
 				TEXT("lower"));
 		}));
@@ -229,7 +232,7 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainRaiseHere(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
 			RunCellEdit(World, Args, true,
-				[](FTerrainEditor& Editor, int32 X, int32 Y, int32 Steps)
+				[](OceanTerrain::FTerrainEditor& Editor, int32 X, int32 Y, int32 Steps)
 				{ return Editor.Raise(X, Y, Steps); },
 				TEXT("raise"));
 		}));
@@ -241,7 +244,7 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainLowerHere(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
 			RunCellEdit(World, Args, true,
-				[](FTerrainEditor& Editor, int32 X, int32 Y, int32 Steps)
+				[](OceanTerrain::FTerrainEditor& Editor, int32 X, int32 Y, int32 Steps)
 				{ return Editor.Lower(X, Y, Steps); },
 				TEXT("lower"));
 		}));
@@ -253,7 +256,7 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainFlatten(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
 			RunCellEdit(World, Args, false,
-				[](FTerrainEditor& Editor, int32 X, int32 Y, int32) { return Editor.Flatten(X, Y); },
+				[](OceanTerrain::FTerrainEditor& Editor, int32 X, int32 Y, int32) { return Editor.Flatten(X, Y); },
 				TEXT("flatten"));
 		}));
 
@@ -264,7 +267,7 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainFlood(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
 			RunCellEdit(World, Args, false,
-				[](FTerrainEditor& Editor, int32 X, int32 Y, int32) { return Editor.Flood(X, Y); },
+				[](OceanTerrain::FTerrainEditor& Editor, int32 X, int32 Y, int32) { return Editor.Flood(X, Y); },
 				TEXT("flood"));
 		}));
 
@@ -275,7 +278,7 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainReset(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
 			RunCellEdit(World, Args, false,
-				[](FTerrainEditor& Editor, int32 X, int32 Y, int32) { return Editor.ResetCell(X, Y); },
+				[](OceanTerrain::FTerrainEditor& Editor, int32 X, int32 Y, int32) { return Editor.ResetCell(X, Y); },
 				TEXT("reset"));
 		}));
 
@@ -286,8 +289,8 @@ static FAutoConsoleCommandWithWorldAndArgs GOceanTerrainResetAll(
 		[](const TArray<FString>& Args, UWorld* World)
 		{
 			UOceanTerrainSubsystem* Terrain = UOceanTerrainSubsystem::Get(World);
-			FTerrainEditor* Editor = ResolveEditor(World);
-			FTerrainPatchStore* Store = Terrain ? Terrain->GetStore() : nullptr;
+			OceanTerrain::FTerrainEditor* Editor = ResolveEditor(World);
+			OceanTerrain::FTerrainPatchStore* Store = Terrain ? Terrain->GetStore() : nullptr;
 			if (!Editor || !Store)
 			{
 				return;

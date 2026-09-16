@@ -11,8 +11,6 @@
 #include "Terrain/OceanTerrainSubsystem.h"
 #include "World/OceanChunkActor.h"
 
-using namespace UE::Geometry;
-
 namespace
 {
 	/** Lifts the debug ink off the surface it traces so it is not lost to depth fighting. */
@@ -198,6 +196,10 @@ void UOceanTerrainChunkComponent::ApplyBuild(
 	OceanTerrain::FTerrainInkData&& Ink)
 {
 	check(IsInGameThread());
+
+	// Scoped to this function on purpose: a file-scope using directive leaks across the whole
+	// unity blob and collides with unrelated files' locals.
+	using namespace UE::Geometry;
 
 	FDynamicMesh3 NewMesh;
 	NewMesh.EnableAttributes();

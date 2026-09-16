@@ -76,9 +76,10 @@ description: UE5.6/UE5.7 debugging and validation workflow for logs, asset check
 
 # Build vs Runtime
 先分清失败发生在**编译期**还是**运行期**——证据来源不同，误诊代价很高。
-UBT/UHT 有三个会误导人的签名：`UCLASS` 报 C4430、确实存在的 `.cpp` 报 C1083
+UBT/UHT 有四个会误导人的签名：`UCLASS` 报 C4430、确实存在的 `.cpp` 报 C1083
 （这两种是 `Intermediate/` 陈旧），以及**头文件**报 C1083 而它根本不在仓库里
-（这种是有人把一次改动拆开提交了，删缓存没用）。三者处理不同，细节见
+（这种是有人把一次改动拆开提交了，删缓存没用），以及 C4459 报在你没碰过的文件上
+（unity build 把一个 `using namespace` 漏给了同批次的其他文件）。四者处理不同，细节见
 [`references/build-failure-triage.md`](references/build-failure-triage.md)。
 那份文档同时给出反向的设计教训：往 public 头加 `#include` 会移动反射宏的行号，
 只为保持两个常量相等时，用字面量 + `.cpp` 里的 `static_assert` 代价更低。
@@ -91,6 +92,10 @@ UBT/UHT 有三个会误导人的签名：`UCLASS` 报 C4430、确实存在的 `.
   - Locate: an incomplete landing — part of one change was committed without the rest, so the
     branch genuinely lacks the file. Re-pulling cannot help; the remote does not have it either.
   - Fix: merge the full branch that carries the change; see AGENTS.md「源码变更必须整套落地」.
+- Symptom: C4459 "declaration hides global declaration" in files this change never touched.
+  - Locate: a file-scope `using namespace` in a newly added .cpp, leaking across the unity blob
+    (an anonymous namespace does not contain it).
+  - Fix: fully qualify, or move the using directive inside the function that needs it.
 - Symptom: cannot reproduce issue consistently.
   - Locate: missing preconditions, race windows, or nondeterministic setup.
   - Fix: tighten repro setup and add targeted instrumentation checkpoints.
