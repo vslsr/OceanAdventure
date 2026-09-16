@@ -118,20 +118,33 @@ LIMB_RECOVER_RATIO = 1.0 / 3.0
 BOW_IDLE_SECONDS = 2.4
 #: Breathing cycles inside one idle loop.
 IDLE_BREATH_CYCLES = 1
-#: How far the braced string drifts with the archer's breathing, metres. Small on
-#: purpose: this is a strung bow being carried, not a plucked one.
-IDLE_STRING_SWAY = 0.004
-#: How far the limbs flex with that breath, radians (0.35 degrees).
-IDLE_LIMB_SWAY = math.radians(0.35)
+#: How far the braced string drifts with the archer's breathing, metres. Sized to be seen:
+#: 4mm on a 1.05m bow was physically defensible and completely invisible, which makes it
+#: the same thing as no idle clip at all. This is about a ninth of the full draw.
+IDLE_STRING_SWAY = 0.02
 #: How long one aim tremble cycle set takes, seconds.
 BOW_AIM_SECONDS = 1.6
 #: Tremble cycles inside one aim loop. Faster than breathing, because this is the
 #: strain of holding a drawn bow rather than the breath underneath it.
 AIM_TREMBLE_CYCLES = 3
 #: How far the held string trembles either side of full draw, metres.
-AIM_STRING_TREMBLE = 0.006
-#: How far the limbs answer that tremble, radians (0.5 degrees).
-AIM_LIMB_TREMBLE = math.radians(0.5)
+AIM_STRING_TREMBLE = 0.012
+def limb_bend_for_pull(string_pull):
+    """The limb bend that goes with *string_pull*, in radians.
+
+    The wood and the cord are one mechanism: the limbs bend BOW_LIMB_BEND_RADIANS when the
+    string is pulled BOW_STRING_PULL, so every smaller pull gets its share of that bend.
+    Written as a second hand-tuned constant per clip, the two drift apart and the bow reads
+    as a string sliding across stiff wood.
+    """
+    return BOW_LIMB_BEND_RADIANS * (string_pull / BOW_STRING_PULL)
+
+
+#: How far the limbs flex with the idle breath, radians. Derived, not tuned.
+IDLE_LIMB_SWAY = limb_bend_for_pull(IDLE_STRING_SWAY)
+#: How far the limbs answer the aim tremble, radians. Derived, not tuned.
+AIM_LIMB_TREMBLE = limb_bend_for_pull(AIM_STRING_TREMBLE)
+
 #: Keys per second for the two loops. Their curves are slow sines, so keying them at
 #: the release's rate would multiply keys without adding motion. Must divide
 #: ANIMATION_FPS: the loops are keyed on the same frame ruler everything else uses.
@@ -995,42 +1008,34 @@ def validate_draw_pose(mesh, rig, brace_height, half_span):
 # --- Clips ------------------------------------------------------------------
 
 
-def new_action_slot(action, rig):
-    """Create a slot for *rig* on *action*, across the signatures 4.4..5.x have shipped."""
-    attempts = (
-        lambda: action.slots.new(id_type="OBJECT", name=rig.name),
-        lambda: action.slots.new("OBJECT", rig.name),
-        lambda: action.slots.new(),
-    )
-    for attempt in attempts:
-        try:
-            return attempt()
-        except (TypeError, RuntimeError):
-            continue
-    return None
-
-
 def bind_action_slot(rig, action):
-    """Bind the Action's slot to the rig, so keys have somewhere to land.
+    """Bind the Action's own slot to the rig, so the rig reads the channels that exist.
 
     Blender 4.4 moved an Action's channels behind a *slot*: the Action holds layers, a
-    layer holds strips, and a strip holds one channel bag per slot. Assigning the Action
-    to an object normally binds a slot by itself, but when it does not, keyframe_insert
-    still reports success and writes nothing -- ledger PY-BLENDER-002. Returns the bound
+    layer holds strips, and a strip holds one channel bag per slot. The rig only plays the
+    bag belonging to the slot it is bound to, which is why binding the wrong one is worse
+    than binding none: the Action Editor shows the clip, with no channels under it, and
+    nothing moves.
+
+    Slots are never invented here. A fresh Action gets its slot from the first
+    keyframe_insert, which creates one matching this rig; guessing at slots.new()'s
+    signature only risks binding a slot that the keys will not use. Returns the bound
     slot, or None on a pre-4.4 build where channels hang straight off the Action.
     """
     animation_data = rig.animation_data
-    if getattr(action, "slots", None) is None:
+    if getattr(action, "slots", None) is None or not len(action.slots):
         return None
     slot = getattr(animation_data, "action_slot", None)
-    # Only reuse a bound slot that belongs to *this* Action. Four clips are baked in a
-    # row through the same rig, and a slot left bound from the previous one would look
-    # like "already bound" while this Action still has nowhere to put its keys.
+    # Only keep a bound slot that belongs to *this* Action. Four clips are baked in a row
+    # through the same rig, and a slot left bound from the previous one would look like
+    # "already bound" while this Action's channels sit somewhere the rig never reads.
     if slot is not None and any(existing == slot for existing in action.slots):
         return slot
-    slot = action.slots[0] if len(action.slots) else new_action_slot(action, rig)
-    if slot is not None:
-        animation_data.action_slot = slot
+    # Prefer the slot this rig already used: its name carries the ID name, so re-assigning
+    # a clip for playback lands back on the bag its keys went into.
+    named = [existing for existing in action.slots if rig.name in getattr(existing, "name", "")]
+    slot = (named or list(action.slots))[0]
+    animation_data.action_slot = slot
     return slot
 
 
@@ -1074,6 +1079,36 @@ def get_fcurves(action):
     for layer in layers:
         for strip in layer.strips:
             for channelbag in getattr(strip, "channelbags", ()):
+                curves.extend(channelbag.fcurves)
+    return curves
+
+
+def slot_fcurves(action, slot):
+    """The F-Curves the rig plays: those in the channel bag bound to *slot*.
+
+    get_fcurves() answers "does this Action hold any channels at all", which is a weaker
+    question than it looks: keys can sit in another slot's bag, where they export and
+    validate fine and the rig still never moves.
+    """
+    if slot is None or getattr(action, "layers", None) is None:
+        return get_fcurves(action)
+
+    curves = []
+    for layer in action.layers:
+        for strip in layer.strips:
+            channelbag = None
+            getter = getattr(strip, "channelbag", None)
+            if callable(getter):
+                try:
+                    channelbag = getter(slot)
+                except (TypeError, RuntimeError):
+                    channelbag = None
+            if channelbag is None:
+                for candidate in getattr(strip, "channelbags", ()):
+                    if getattr(candidate, "slot", None) == slot:
+                        channelbag = candidate
+                        break
+            if channelbag is not None:
                 curves.extend(channelbag.fcurves)
     return curves
 
@@ -1122,7 +1157,9 @@ def bake_action(rig, action_name, samples):
 
     action = bpy.data.actions.new(action_name)
     action.use_fake_user = True
-    slot = assign_action(rig, action)
+    # No slot yet, and none is invented: the first keyframe_insert below creates the slot
+    # this rig will read, which is the only slot the keys are guaranteed to land in.
+    assign_action(rig, action)
 
     for frame, limb_bend, string_pull in samples:
         bpy.context.scene.frame_set(int(round(frame)))
@@ -1135,12 +1172,25 @@ def bake_action(rig, action_name, samples):
     # until something binds one, and if that binding does not happen the keyframe_insert
     # calls above report success while the Action stays empty -- which would export as a
     # clip that simply does nothing. Cheaper to notice here than in Unreal.
-    curves = get_fcurves(action)
+    slot = getattr(rig.animation_data, "action_slot", None)
+    curves = slot_fcurves(action, slot)
     if not curves:
+        total = len(get_fcurves(action))
         raise RuntimeError(
-            f"{action_name} has no F-Curves after keying {len(samples)} samples, read "
-            f"through the {action_api_name(action)} API with slot "
-            f"{getattr(slot, 'name', None)!r}. The Action was never bound to the rig."
+            f"{action_name}: the rig is bound to slot {getattr(slot, 'name', None)!r}, whose "
+            f"channels are empty, while the Action holds {total} curve(s) in other slots "
+            f"(read through the {action_api_name(action)} API). The Action Editor would show "
+            "this clip with no channels under it and nothing would move."
+        )
+
+    # The keys also have to span the frames that were asked for. A clip whose keys all
+    # piled onto frame 0 has channels, exports, imports, and plays as a still pose.
+    keyed = sorted({point.co[0] for curve in curves for point in curve.keyframe_points})
+    wanted_first, wanted_last = samples[0][0], samples[-1][0]
+    if abs(keyed[0] - wanted_first) > 1e-4 or abs(keyed[-1] - wanted_last) > 1e-4:
+        raise RuntimeError(
+            f"{action_name} keys span frames {keyed[0]:.1f}..{keyed[-1]:.1f}, expected "
+            f"{wanted_first:.1f}..{wanted_last:.1f} across {len(samples)} samples."
         )
 
     for fcurve in curves:
@@ -1509,9 +1559,17 @@ def build_wood_bow():
         f"({BOW_AIM_SECONDS}s loop), {RELEASE_ACTION_NAME} "
         f"({release_frame_count()} frames, play it by time)"
     )
+    # Millimetres, because that is the unit the question "why can I not see it?" is asked
+    # in. The draw is 180mm; anything reported here that is a fraction of that is meant to
+    # be a small movement, not a broken one.
     print(
-        f"Idle verified: breathes 0 -> {max(idle_played):+.5f}m and closes its loop; "
-        f"aim verified: holds {min(aim_played):+.5f}m..{max(aim_played):+.5f}m around full draw"
+        f"Idle verified: string breathes 0 -> {max(idle_played) * 1000:.1f}mm and closes "
+        f"its loop; aim verified: holds {min(aim_played) * 1000:.1f}..."
+        f"{max(aim_played) * 1000:.1f}mm around the {BOW_STRING_PULL * 1000:.0f}mm full draw"
+    )
+    print(
+        "To inventory and measure the clips later, run "
+        "blender/script/python/preview_wood_bow.py."
     )
     print(
         f"Release verified: springs to {min(played):+.4f}m past rest, settles at "
