@@ -10,7 +10,7 @@
 
 **第 1 步 · 先跑自动化测试(最便宜,不用开地图)**
 
-`Window → Developer Tools → Session Frontend → Automation`,过滤 `OceanCore.Terrain`,应该有 5 条:
+`Automation List`,过滤 `OceanCore.Terrain`,应该有 5 条:
 
 | 测试 | 它保的东西 |
 |---|---|
