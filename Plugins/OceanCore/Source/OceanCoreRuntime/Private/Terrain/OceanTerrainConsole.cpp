@@ -158,13 +158,23 @@ namespace
 			Steps = ParseSteps(Args, 2);
 		}
 
+		// Snapshot first: printing only the result makes the reader reconstruct what moved.
+		// "level=0" after a raise could mean -1 -> 0 or a raise that did nothing, and telling
+		// those apart is exactly what a debug command should not make you infer.
+		const OceanTerrain::FTerrainCellView Before = Editor->ReadCell(CellX, CellY);
 		const bool bChanged = Apply(*Editor, CellX, CellY, Steps);
+		const OceanTerrain::FTerrainCellView After = Editor->ReadCell(CellX, CellY);
+
 		Report(FString::Printf(
-			TEXT("Ocean.Terrain: %s cell (%d, %d) -> %s"),
+			TEXT("Ocean.Terrain: %s cell (%d, %d) -> %s; level %d -> %d, surface %s -> %s"),
 			Verb,
 			CellX,
 			CellY,
-			bChanged ? TEXT("changed") : TEXT("no change")));
+			bChanged ? TEXT("changed") : TEXT("no change"),
+			Before.HeightLevel,
+			After.HeightLevel,
+			*UEnum::GetValueAsString(Before.Surface),
+			*UEnum::GetValueAsString(After.Surface)));
 		ReportCell(*Editor, CellX, CellY, TEXT("Ocean.Terrain: now"));
 	}
 }
