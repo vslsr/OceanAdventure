@@ -51,6 +51,16 @@ namespace OceanTerrain
 		float FloorShade = 0.84f;
 		float CliffShade = 0.70f;
 
+		/**
+		 * Water surface tint.
+		 *
+		 * Water here is per-cell, not a sheet laid over the world: a cell carries water only
+		 * when its code says so, so a lake sits in its basin and dry ground below sea level
+		 * stays dry. That is the whole reason the reference implementation reads as terrain
+		 * rather than as scenery floating under a plane.
+		 */
+		FLinearColor Water = FLinearColor(0.16f, 0.52f, 0.60f, 0.72f);
+
 		/** Surface colour of a cell standing above water. */
 		FLinearColor TopColor(EOceanTerrainBiome Biome) const;
 		/** Surface colour of a submerged bed. */
@@ -65,12 +75,22 @@ namespace OceanTerrain
 	 * Local rather than world so a chunk far from the origin does not lose precision in its
 	 * float positions; the actor's own transform puts it back in the world.
 	 */
+	/** Material slots the builder writes. Ground and water need different shading. */
+	enum class ETerrainMaterialSlot : int32
+	{
+		Ground = 0,
+		Water = 1,
+	};
+
 	struct OCEANCORERUNTIME_API FTerrainMeshData
 	{
 		TArray<FVector3f> Positions;
 		TArray<FVector3f> Normals;
 		TArray<FColor> Colors;
 		TArray<uint32> Indices;
+
+		/** One entry per triangle, indexing ETerrainMaterialSlot. */
+		TArray<int32> TriangleMaterials;
 
 		int32 TriangleCount() const { return Indices.Num() / 3; }
 
@@ -116,7 +136,13 @@ namespace OceanTerrain
 		TArray<int32>& OutCodes);
 
 	/**
-	 * Two triangles per cell, plus the east- and north-owned cliff faces.
+	 * Two triangles per cell, plus the east- and north-owned cliff faces, plus a water quad at
+	 * sea level for every cell whose code says it carries water.
+	 *
+	 * The water is part of this mesh rather than a separate plane over the world. A flat sheet
+	 * cannot express "this basin holds water and that hollow does not", and it hides every
+	 * terrace that sits at or below its own height -- which, since ordinary ground starts at
+	 * level zero and sea level is zero, is most of the world.
 	 *
 	 * WINDING. Triangles are emitted so that cross(B - A, C - A) points along the face's
 	 * outward normal, and the matching normal is written per vertex. This is where the

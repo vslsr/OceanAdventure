@@ -112,7 +112,8 @@ namespace OceanTerrain
 			const FVector3f& B,
 			const FVector3f& C,
 			const FVector3f& OutwardHint,
-			const FColor& Color)
+			const FColor& Color,
+			ETerrainMaterialSlot Slot = ETerrainMaterialSlot::Ground)
 		{
 			FVector3f Normal = FVector3f::CrossProduct(B - A, C - A).GetSafeNormal();
 			if (Normal.IsNearlyZero())
@@ -143,6 +144,7 @@ namespace OceanTerrain
 			Mesh.Indices.Add(IndexA);
 			Mesh.Indices.Add(IndexB);
 			Mesh.Indices.Add(IndexC);
+			Mesh.TriangleMaterials.Add(static_cast<int32>(Slot));
 		}
 
 		/** Chunk-local position of one corner of one cell. */
@@ -181,6 +183,7 @@ namespace OceanTerrain
 		Normals.Reset();
 		Colors.Reset();
 		Indices.Reset();
+		TriangleMaterials.Reset();
 	}
 
 	void BuildChunkCodes(
@@ -277,6 +280,28 @@ namespace OceanTerrain
 					const FVector3f Hint(EastRise > 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f);
 					AppendTriangle(OutMesh, Welder, SouthEast, NorthEast, EastNorthWest, Hint, CliffTint);
 					AppendTriangle(OutMesh, Welder, SouthEast, EastNorthWest, EastSouthWest, Hint, CliffTint);
+				}
+
+				// Water sits at sea level over the cell's own footprint, and only where the code
+				// says this cell carries water. CellHasWater also requires a corner below the
+				// line, so a bed that has risen clear of the water stops drawing a surface
+				// without anyone having to remember to clear the flag.
+				if (bSubmerged)
+				{
+					const float WaterZ = static_cast<float>(SeaLevel);
+					const float X0 = static_cast<float>(LocalX * CellSize);
+					const float Y0 = static_cast<float>(LocalY * CellSize);
+					const float X1 = X0 + CellSize;
+					const float Y1 = Y0 + CellSize;
+					const FColor WaterTint = Palette.Water.ToFColor(true);
+					const FVector3f SouthWestWater(X0, Y0, WaterZ);
+					const FVector3f SouthEastWater(X1, Y0, WaterZ);
+					const FVector3f NorthEastWater(X1, Y1, WaterZ);
+					const FVector3f NorthWestWater(X0, Y1, WaterZ);
+					AppendTriangle(OutMesh, Welder, SouthWestWater, NorthEastWater, SouthEastWater,
+						FVector3f::UpVector, WaterTint, ETerrainMaterialSlot::Water);
+					AppendTriangle(OutMesh, Welder, SouthWestWater, NorthWestWater, NorthEastWater,
+						FVector3f::UpVector, WaterTint, ETerrainMaterialSlot::Water);
 				}
 
 				const int32 NorthCode = CodeAt(LocalX, LocalY + 1);
