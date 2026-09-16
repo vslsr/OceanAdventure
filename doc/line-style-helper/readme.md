@@ -15,21 +15,29 @@ Get-ChildItem 'HKLM:\SOFTWARE\EpicGames\Unreal Engine' -ErrorAction SilentlyCont
 Get-ItemProperty 'HKCU:\SOFTWARE\Epic Games\Unreal Engine\Builds' -ErrorAction SilentlyContinue
 ```
 
-拿到路径后（记作 <Engine>，就是含 Engine\Build\BatchFiles\ 的那一层）：
+拿到路径后放进 `$Engine`（就是含 `Engine\Build\BatchFiles\` 的那一层），**在仓库根目录**执行：
 
 ```
-& '<Engine>\Engine\Build\BatchFiles\Build.bat' LyraEditor Win64 Development '-Project=C:\EpicWkspc\OceanAdventure\LyraTemplate.uproject' -WaitMutex -NoHotReloadFromIDE -NoUBA -MaxParallelActions=1
+& "$Engine\Engine\Build\BatchFiles\Build.bat" LyraEditor Win64 Development "-Project=$PWD\LyraTemplate.uproject" -WaitMutex -NoHotReloadFromIDE -NoUBA -MaxParallelActions=1
 ```
 
 ## 2. 开编辑器 → 生成材质
 
 第一次启动会因为 `r.ForwardShading=True` 全量重编着色器，等它跑完。然后**在非 PIE 状态**（没点 Play）打开 Output Log，切 `Cmd` 模式：
 
+把输入框左侧的下拉从 `Cmd` 切到 **Python**（不是 Cmd —— 见 `PY-UE-002` 第二次发生：
+`import` 在 Cmd 模式下被静默丢弃，零输出零报错，看上去像「跑了但没做事」），然后：
+
 ```
-py "D:/UEPrj/OceanAdventure/Plugins/LineArtCore/Content/Python/CreateLineArtCoreAssets.py"
+import importlib, CreateLineArtCoreAssets
+importlib.reload(CreateLineArtCoreAssets)
+CreateLineArtCoreAssets.main()
 ```
 
-看到 `LINEART_CORE_ASSETS_OK` 才算成功。再跑一次，第二次不应改动任何资产。
+不需要写路径——UE 已经把每个启用插件的 `Content/Python` 放进了 `sys.path`。
+
+看到 `LINEART_CORE_ASSETS_OK` 才算成功；**没有这一行就等于没成功**，哪怕前面没报错。
+再跑一次，第二次不应改动任何资产。
 
 产物在内容浏览器 `/LineArtCore/Materials/`（要先开 Settings → **Show Plugin Content**，否则看不见）。
 

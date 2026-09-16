@@ -49,7 +49,7 @@ RuntimeError: Could not locate OceanAdventure project root
 
 修复：保留环境变量覆盖和结构验证；动态锚点失败后使用经过验证的标准工作区回退。修改磁盘文件后重新加载 Blender 文本块。
 
-验证：伪路径、OceanAdventure cwd、LyraStarterGame cwd 三种测试均解析到 `C:\EpicWkspc\OceanAdventure`。
+验证：伪路径、OceanAdventure cwd、LyraStarterGame cwd 三种测试均解析到同一个工程根。
 
 ## 已发生故障二：救生筏被舰炮前置条件阻断
 

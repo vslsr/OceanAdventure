@@ -30,6 +30,18 @@
   （含引擎源码路径 `D:\build\++UE5\Sync\...`）是证据，必须逐字保留；
 - `.agents/vendor/` 与 `.agents/plugins/` 是第三方资料，不归本仓库改。
 
+**怎么检查**：
+
+```bash
+python Tools/check_absolute_paths.py        # 有违规则退出码 1，干净时打印 ABSOLUTE_PATH_CHECK_OK
+python Tools/check_absolute_paths.py --list # 看当前放行了哪些、为什么
+```
+
+在此之前这条禁令没有任何自动检查，这正是它反复复发的原因：一份文档从另一份抄了命令，
+源头后来改好了，抄件留在原地。上面那个例外里「原始报错文本」的豁免是按 **fenced 代码块**
+实现的——证据整块放行，而散文里那种会被人照抄的入口命令照样拦。
+确属新例外的，在脚本的 `ALLOW` 里加一条并写明理由，别改判定规则。
+
 
 ## Python 脚本强制门禁
 

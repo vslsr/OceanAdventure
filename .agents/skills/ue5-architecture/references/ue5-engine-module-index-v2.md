@@ -1,6 +1,5 @@
 # UE5.6/UE5.7 Engine Module Index V2.3 (Draft)
 
-- Engine Source: `E:\UEVersion\UE_5.7\Engine\Source`
 - Detected Engine Version: `5.7`
 - Generated At: 2026-03-02 14:36:58
 - Total Modules (.Build.cs): **713**

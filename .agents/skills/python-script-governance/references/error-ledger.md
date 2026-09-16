@@ -123,8 +123,8 @@
   ```
 
 - 首次错误转换：引擎初始化 DDC 时终止，尚未进入 PythonScript commandlet，也没有执行迁移脚本。
-- 根因：受限执行环境不能更新用户级 Zen 安装，也不能写
-  `C:/Users/db/AppData/Local/UnrealEngine/Common/DerivedDataCache`，默认 DDC 图因此没有可写节点。
+- 根因：受限执行环境不能更新用户级 Zen 安装，也不能写用户级 DDC 目录
+  （`%LOCALAPPDATA%/UnrealEngine/Common/DerivedDataCache`），默认 DDC 图因此没有可写节点。
 - 预防规则：在受限环境启动 UE commandlet 时显式传入 `-DDC-ForceMemoryCache`；若宿主仍需要用户级目录，申请在沙箱外执行，不把启动失败误判为 Python 脚本失败。
 - 修复：使用 `-DDC-ForceMemoryCache`，并在沙箱外重新执行同一个 commandlet；迁移脚本本身未修改。
 - 验证证据：2026-08-28 重跑成功越过 DDC，日志出现
@@ -255,7 +255,9 @@
 
 - 日期：2026-08-28；发生一次。
 - 宿主与入口：UE 5.7 Unreal Editor Output Log，Cmd 模式执行
-  `py "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py"`。
+  `py "<repo>/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py"`。
+  （原始命令里是本机绝对路径，下方 traceback 逐字保留；这一行是会被照抄的入口，按
+  `AGENTS.md` 的绝对路径禁令改成占位符。）
 - 脚本：
   - `Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py`；
   - `Plugins/GameFeatures/Raft/Content/Python/CreateRaftNavalAssets.py`；

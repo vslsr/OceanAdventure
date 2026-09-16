@@ -273,7 +273,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--engine-source",
         type=Path,
         default=None,
-        help="Path to Engine/Source. If omitted, auto-detect UE_5.7 then UE_5.6.",
+        help="Path to Engine/Source. If omitted, read UE_ENGINE_SOURCE or UE_ENGINE_ROOT.",
     )
     parser.add_argument(
         "--out-dir",
@@ -299,40 +299,46 @@ def normalize_engine_source(path_like: Path) -> Path:
 
 
 def default_engine_candidates(preferred_version: str | None) -> list[Path]:
-    env_candidates: list[Path] = []
+    """Engine locations this machine has told us about -- nothing else.
+
+    The engine install lives outside the repository, so there is no relative form for it and
+    no default worth guessing. AGENTS.md says why: a machine-specific default turns "you did
+    not tell me where it is" into a baffling "that path does not exist" much later, on someone
+    else's machine. This function used to carry four hardcoded drive roots; it now returns
+    only what the environment supplies, and resolve_engine_source fails fast when that is
+    nothing.
+    """
+    candidates: list[Path] = []
     env_engine = os.getenv("UE_ENGINE_SOURCE")
     env_root = os.getenv("UE_ENGINE_ROOT")
     if env_engine:
-        env_candidates.append(Path(env_engine))
+        candidates.append(normalize_engine_source(Path(env_engine)))
     if env_root:
-        env_candidates.append(normalize_engine_source(Path(env_root)))
-
-    root_candidates = [
-        Path(r"E:\UEVersion"),
-        Path(r"D:\UEVersion"),
-        Path(r"C:\UEVersion"),
-        Path(r"C:\Program Files\Epic Games"),
-    ]
-    version_tokens = ["5.7", "5.6"]
-    if preferred_version in {"5.6", "5.7"}:
-        version_tokens = [preferred_version] + [v for v in version_tokens if v != preferred_version]
-
-    engine_candidates: list[Path] = []
-    for root in root_candidates:
-        for version in version_tokens:
-            engine_candidates.append(root / f"UE_{version}" / "Engine" / "Source")
-            engine_candidates.append(root / f"UnrealEngine-{version}" / "Engine" / "Source")
-    return env_candidates + engine_candidates
+        candidates.append(normalize_engine_source(Path(env_root)))
+    return candidates
 
 
 def resolve_engine_source(override: Path | None, preferred_version: str | None) -> Path:
     if override is not None:
         return normalize_engine_source(override)
-    for candidate in default_engine_candidates(preferred_version):
+
+    candidates = default_engine_candidates(preferred_version)
+    for candidate in candidates:
         if candidate.exists():
             return candidate
-    searched = ", ".join(str(p) for p in default_engine_candidates(preferred_version))
-    raise SystemExit(f"Engine source not found. Checked: {searched}")
+
+    if candidates:
+        checked = ", ".join(str(p) for p in candidates)
+        raise SystemExit(
+            f"Engine source not found. Checked: {checked}. "
+            "Point UE_ENGINE_SOURCE at Engine/Source, or UE_ENGINE_ROOT at the engine root."
+        )
+    raise SystemExit(
+        "Engine source unknown. The engine install is outside this repository, so it has to "
+        "come from this machine: set UE_ENGINE_SOURCE to <engine>/Engine/Source, or "
+        "UE_ENGINE_ROOT to <engine>, or pass --engine-source. "
+        "No path is guessed on purpose -- see the absolute-path ban in AGENTS.md."
+    )
 
 
 def detect_engine_version(engine_source: Path) -> str:
@@ -444,7 +450,9 @@ def main(argv: list[str]) -> int:
     lines: list[str] = []
     lines.append("# UE5.6/UE5.7 Engine Module Index V2.3 (Draft)")
     lines.append("")
-    lines.append(f"- Engine Source: `{engine_source}`")
+    # The engine path is machine-specific, so it does not go into a committed artifact -- the
+    # version is what a reader actually needs, and writing the path here is how the absolute
+    # paths kept coming back after each cleanup.
     lines.append(f"- Detected Engine Version: `{engine_version}`")
     lines.append(f"- Generated At: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"- Total Modules (.Build.cs): **{len(rows)}**")

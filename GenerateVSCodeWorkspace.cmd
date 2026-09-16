@@ -3,7 +3,7 @@ setlocal EnableExtensions
 
 rem Standalone Unreal Engine VS Code workspace generator.
 rem Place this file next to a .uproject and double-click it.
-rem Optional: GenerateVSCodeWorkspace.cmd "D:\Path\Game.uproject" -NoOpen
+rem Optional: GenerateVSCodeWorkspace.cmd "<path-to>\Game.uproject" -NoOpen
 
 set "UE_VSCODE_TOOL_FILE=%~f0"
 set "UE_VSCODE_TOOL_ARGS=%*"
