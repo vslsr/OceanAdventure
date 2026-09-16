@@ -10,7 +10,31 @@
 
 **第 1 步 · 先跑自动化测试(最便宜,不用开地图)**
 
-`Window → Developer Tools → Session Frontend → Automation`,过滤 `OceanCore.Terrain`,应该有 5 条:
+入口**不要走菜单**——UE5 把 Session Frontend 从 UE4 的 `窗口 → 开发者工具` 挪走了，
+菜单位置在版本间变过，写死在文档里只会把人带偏（这份文档上一版就是这么错的）。
+用控制台，它不依赖菜单布局：打开**输出日志**，切 `Cmd` 模式，
+
+```
+Automation List
+```
+
+列出全部测试名，确认下面 5 条都在，然后用 `+` 连起来跑：
+
+```
+Automation RunTests OceanCore.Terrain.Parity+OceanCore.Terrain.CellCode+OceanCore.Terrain.Outline+OceanCore.Terrain.Mesh+OceanCore.Terrain.Patches
+```
+
+不想开编辑器的话，命令行跑并拿退出码（也是以后进 CI 的形式）：
+
+```powershell
+& "$Engine\Engine\Binaries\Win64\UnrealEditor-Cmd.exe" "$PWD\LyraTemplate.uproject" `
+  -ExecCmds="Automation RunTests OceanCore.Terrain" `
+  -unattended -nopause -nosplash `
+  -testexit="Automation Test Queue Empty" `
+  -log -ReportExportPath="$PWD\Saved\AutomationReport"
+```
+
+五条测试是:
 
 | 测试 | 它保的东西 |
 |---|---|
