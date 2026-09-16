@@ -6,6 +6,7 @@ Creates, or rebuilds in place:
     /LineArtCore/Materials/M_LineArt_Fill           flat fill, Unlit, per-instance tint
     /LineArtCore/Materials/M_LineArt_Outline        inverted-hull ink outline
     /LineArtCore/Materials/M_LineArt_CharacterInk   legs / eyes / mouth, always pure black
+    /LineArtCore/Materials/MI_LineArt_Paper        backdrop tint, for a preview level
 
 Idempotent: every material's graph is deleted and rebuilt from this script, and the
 collection's parameter arrays are rebuilt by stable parameter name.  Running it twice must
@@ -41,6 +42,10 @@ COLLECTION_PATH = f"{MATERIAL_ROOT}/MPC_LineArtEnvironment"
 FILL_PATH = f"{MATERIAL_ROOT}/M_LineArt_Fill"
 OUTLINE_PATH = f"{MATERIAL_ROOT}/M_LineArt_Outline"
 CHARACTER_INK_PATH = f"{MATERIAL_ROOT}/M_LineArt_CharacterInk"
+PAPER_INSTANCE_PATH = f"{MATERIAL_ROOT}/MI_LineArt_Paper"
+
+#: The paper the whole style is drawn on: SkyLand's 0xFDFBF6, in linear.
+PAPER_COLOR = unreal.LinearColor(0.9823, 0.9647, 0.9216, 1.0)
 
 SHADER_INCLUDE = "/Plugin/LineArtCore/LineArtEnvironment.ush"
 
@@ -485,6 +490,27 @@ def build_character_ink_material():
     return material
 
 
+def build_paper_instance(character_ink):
+    """The backdrop.
+
+    Without one, the scene's background is the engine's default grey-blue and the ink lines
+    read as stickers floating on it rather than marks on paper. M_LineArt_CharacterInk is
+    already exactly the right material for the job -- Unlit, two-sided, one flat colour
+    parameter -- and two-sided is what lets a camera inside the backdrop sphere see it.
+    """
+    instance = create_or_load(
+        PAPER_INSTANCE_PATH,
+        unreal.MaterialInstanceConstantFactoryNew(),
+        unreal.MaterialInstanceConstant,
+    )
+    set_property(instance, "parent", character_ink)
+    unreal.MaterialEditingLibrary.set_material_instance_vector_parameter_value(
+        instance, unreal.Name("InkColor"), PAPER_COLOR
+    )
+    unreal.MaterialEditingLibrary.update_material_instance(instance)
+    return instance
+
+
 def main():
     require_editor_asset_mode()
 
@@ -494,8 +520,9 @@ def main():
     fill = build_fill_material(collection)
     outline = build_outline_material(collection)
     character_ink = build_character_ink_material()
+    paper = build_paper_instance(character_ink)
 
-    for asset in (collection, fill, outline, character_ink):
+    for asset in (collection, fill, outline, character_ink, paper):
         path = package_path(asset)
         require(unreal.EditorAssetLibrary.save_asset(path, False), f"Unable to save {path}")
         log(f"Saved {path}")
