@@ -1,6 +1,6 @@
 ---
 name: blender-skeletal-asset-workflow
-description: 为 OceanAdventure 用 Blender Python 程序化生成带骨骼的资产并烘出动画 clip，导入 Unreal 成 SkeletalMesh + AnimSequence。用户要求给道具/武器/生物加骨骼、绑定蒙皮、做拉弓/开合/摆动之类的形变动画、烘 Action、导出动画 FBX，或问「骨骼绑定怎么做」「脚本里没有动画内容」「时间轴上没有关键帧」「动画导进 UE 不动/没形变」「弦/布/软体权重怎么给」时使用。纯静态模型与通用导出路径规范改用 `blender-asset-workflow`（本技能依赖它的工程根解析与目录规范）；`/Raft/Vehicles/<HullName>` 船体资产族改用 `raft-hull-asset-workflow`；Lyra AbilitySet/InputConfig/GameFeatureData 改用 `lyra-editor-asset-automation`。不负责 AnimBlueprint 连线、运行时玩法 C++ 或手工编辑 `.uasset`。
+description: 为 OceanAdventure 用 Blender Python 程序化生成带骨骼的资产并烘出动画 clip，导入 Unreal 成 SkeletalMesh + AnimSequence。用户要求给道具/武器/生物加骨骼、绑定蒙皮、做拉弓/开合/摆动/待机循环之类的形变动画、烘 Action、导出动画 FBX（含「几段 clip 装一个还是几个 FBX」），或问「骨骼绑定怎么做」「脚本里没有动画内容」「时间轴上没有关键帧」「动作编辑器里有 clip 却没有通道」「烘 clip 的脚本跑完什么都没有/看不到输出」「idle 循环看不出在动」「动画导进 UE 不动/没形变」「弦/布/软体权重怎么给」时使用。纯静态模型与通用导出路径规范改用 `blender-asset-workflow`（本技能依赖它的工程根解析与目录规范）；`/Raft/Vehicles/<HullName>` 船体资产族改用 `raft-hull-asset-workflow`；Lyra AbilitySet/InputConfig/GameFeatureData 改用 `lyra-editor-asset-automation`；Blender 通用 bpy API（算子、modifier、数据模型）改用 `blender-python-scripting` / `blender-modeling-modifiers`。不负责 AnimBlueprint 连线、运行时玩法 C++ 或手工编辑 `.uasset`。
 ---
 
 # Blender 骨骼资产与动画 clip 流水线
@@ -17,9 +17,12 @@ description: 为 OceanAdventure 用 Blender Python 程序化生成带骨骼的�
 
 ## 参考实现
 
-- `blender/script/python/create_wood_bow.py` —— 骨架 + 蒙皮 + 两段 clip 的完整样板；
+- `blender/script/python/create_wood_bow.py` —— 骨架 + 蒙皮 + 四段 clip（idle / draw /
+  aim / release，两种循环 + 一段姿势斜坡 + 一段表演）的完整样板；
 - `blender/script/python/create_round_body_character.py` —— 更早的刚性绑定样板；
-- `Plugins/GameFeatures/OceanAdventure/Content/Python/CreateWoodBowAssets.py` —— UE 导入侧。
+- `blender/script/python/preview_wood_bow.py` —— 只读复核脚本（第 4 节第 6 层）的样板；
+- `Plugins/GameFeatures/OceanAdventure/Content/Python/CreateWoodBowAssets.py` —— UE 导入侧：
+  合并包导入后按 Action 名认领 AnimSequence 的做法在这里。
 
 ## 1. 骨架契约只能有一份
 
@@ -114,11 +117,30 @@ def get_fcurves(action):   # 仓库里已有同名 helper，别再造一个
             for fc in bag.fcurves]
 ```
 
-新建的空 Action 没绑上 slot 时，`keyframe_insert` 照样返回成功而 Action 是空的 ——
-导出的就是一段什么都不做的 clip。所以赋 Action 与绑 slot 写成同一个入口
-（`animation_data.action = action` 后取/建 `animation_data.action_slot`），
-回放校验和导出也走它；烘完立刻断言上面那个访问器的返回非空，报错信息带上走的是哪条 API。
-〔`get_fcurves` 两条分支与 slot 绑定已用假对象在普通 CPython 验证；Blender 宿主重跑待验证〕
+**而「有没有通道」这个问题问错了**：rig 只播**它绑定的那个 slot** 的 bag。键落在别的 slot 的
+bag 里时，`get_fcurves()` 照样非空、FBX 照样导得出、校验全绿，而动作编辑器显示这段 clip、
+底下没有任何通道、什么都不动。所以烘完要断言的是**绑定 slot 的那一组**：
+
+```python
+# 实现见 blender/script/python/create_wood_bow.py 的 slot_fcurves()
+#   slot 为 None（4.3 及以前）时退回 get_fcurves；
+#   否则优先 strip.channelbag(slot)，取不到再在 strip.channelbags 里按 bag.slot 找。
+slot = rig.animation_data.action_slot    # 断言 slot_fcurves(action, slot) 非空，
+                                         # 不是 get_fcurves(action)
+```
+
+配套三条：
+
+- **不要自己造 slot**。新建的空 Action 没有 slot，交给第一次 `keyframe_insert` 创建 ——
+  那才是键一定会落进去的那个。自己 `slots.new()` 再绑，只可能绑到一个键不会去的 slot。
+- **回放与导出时才需要绑**：赋 Action 后 Blender 通常自己绑上名字匹配的 slot，helper 无事可做
+  返回 `None` 是正常的；报告里要打印 `animation_data.action_slot` 的实际值，别把 helper 的
+  `None` 当成「没有 slot」吓自己。连烘多段时只认属于当前 Action 的 slot，上一段的不算。
+- **再断言键的帧跨度**等于采样区间。键全堆在第 0 帧的 clip 一样有通道、一样导得出、
+  播起来是静止姿势。
+
+〔宿主已验证：Blender 5.1.0 上四段 clip 各 11 条曲线（两根弓臂四元数各 4 + 弦中点位移 3）、
+帧跨度与实测位移全部符合设计值。见失败档案 `PY-BLENDER-002`〕
 
 ### 2.7 不要用 pose 模式算子
 
@@ -139,11 +161,23 @@ def get_fcurves(action):   # 仓库里已有同名 helper，别再造一个
 姿势斜坡烘成非线性关键帧是最常见的错误：缓动会被施加两次。
 
 手感常量（拉多开、回弹多久、过冲多少）只写一份，clip 由它们**生成**，不要手摆关键帧 ——
-否则改手感要同时改常量和一堆键，漏一处没人会发现。
+否则改手感要同时改常量和一堆键，漏一处没人会发现。派生量也要推导而不是再调一个常量：
+弓臂弯多少是弦拉多远的函数（满弓 180mm ↔ 16°，其余按比例），两个手调常量一定会走散，
+读起来就成了「弦在硬木头上滑」。
+
+**幅度按「看不看得见」定，不是按物理合理性定。** 循环类 clip（idle、待机、呼吸）最容易栽在
+这里：1.05m 的弓上 4mm 的弦位移物理上无可指摘，肉眼完全看不见，而**看不见的动画和没有动画
+是同一件事**——它会被当成 bug 报上来。参照物取这个资产自己最大的动作：弓的满弓是 180mm，
+idle 取到 20mm（约九分之一）、aim 颤抖 ±12mm 才读得出来。校验和日志一律用**毫米**报告幅度，
+因为「为什么看不见」这个问题是用毫米问的。
+〔宿主已验证的部分：4mm 版本被用户连续三次报告为「没有任何动画」；20mm / ±12mm 版本在
+Blender 5.1.0 上实测位移 20.0mm / 24.0mm。「20mm 就一定看得见」是据此推的经验值，未单独验证〕
 
 **几个 clip 装几个 FBX**：单一物件、动画不复杂（clip 少、同一组骨骼、同一个脚本一次产出）
 就合并成一个动画 FBX；角色或会被单独重导的复杂资产按 UE5 的习惯一个 clip 一个 FBX。
 合并的代价是资产名由导入器定，所以 UE 侧必须「导入后发现 + 按名认领 + 认不出就停」。
+〔**未验证**：UE 5.7 从单文件多 stack 究竟产出几个 AnimSequence、怎么命名，尚未在宿主跑过；
+判据本身来自资产复杂度，与该验证无关，但落地前要留好退回「一个 clip 一个 FBX」的开关〕
 
 细节（曲线怎么移植成纯函数、采样率怎么定、合并/分开的判据与两条必补校验、UE 导入的
 重采样陷阱）见 [references/animation-clips.md](references/animation-clips.md)。
@@ -171,6 +205,14 @@ def get_fcurves(action):   # 仓库里已有同名 helper，别再造一个
    确认该动的动了、不该动的没动。**第 2 层全绿的 rig 照样可能一动不动**，这一层才拦得住。
 4. **clip 播放读回**：把 clip 播回骨架读姿势。只断言「有关键帧」挡不住被重采样压平的曲线。
 5. **宿主运行**：`blender --background --python <script>`。
+6. **给人用的复核脚本**（这一层是给人的，不是给断言的）：生成脚本跑完就退出了，人回头复核时
+   只剩 Blender 的 UI，而 UI 恰好答不了两个问题——「文件里到底有几段 clip」（大纲视图的
+   「动画」节点只显示当前挂着的那一个，其余三段看着像不存在）和「它到底动没动」（小幅度循环
+   和完全静止长得一样）。配一个**只读**脚本：列出全部 clip 的帧跨度与曲线数，逐段回放**实测
+   驱动骨骼的位移并按毫米报告**，对一动不动的直接点名，最后挂上一段并设好帧范围。
+   它不 import 生成脚本——粘进文本编辑器时可能既没有磁盘路径也找不到工程根。
+   先例：`blender/script/python/preview_wood_bow.py`。
+   〔宿主已验证：连续三轮「没有任何动画」是靠它的输出一次定位的〕
 
 **结论要放在用户看得见的地方**：`print()` 只进系统控制台（Windows 默认隐藏，
 窗口 → 切换系统控制台），Blender 的 Python 控制台和信息编辑器都不显示它 ——
