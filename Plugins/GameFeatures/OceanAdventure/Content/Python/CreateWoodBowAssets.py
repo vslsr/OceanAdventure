@@ -21,6 +21,11 @@ AnimBlueprint silently wired to a clip that is not the one it names.
 The bow is the player's weapon, so it belongs to the gameplay-layer GameFeature that owns
 the player Pawn -- this one. Nothing here may reference /Raft or another feature's content.
 
+Run in the Output Log's **Python input mode**, NOT Cmd mode -- the mode dropdown sits to
+the LEFT of the input box. Cmd mode only accepts engine console commands; it discards a
+bare ``import`` silently, so the script appears to run and do nothing. The only Python
+entry allowed in Cmd mode is ``py "<script>"``.
+
 Run in the full Unreal Editor, Output Log Python input mode (the GameFeature's
 Content/Python is already on sys.path, so no path is needed)::
 

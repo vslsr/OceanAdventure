@@ -13,6 +13,11 @@ The canonical layout is:
     /NavalCore/Arts/Cannon             cannon meshes and materials
     /NavalCore/Arts/HelmWheel          helm-wheel meshes and materials
 
+Run in the Output Log's **Python input mode**, NOT Cmd mode -- the mode dropdown sits to
+the LEFT of the input box. Cmd mode only accepts engine console commands; it discards a
+bare ``import`` silently, so the script appears to run and do nothing. The only Python
+entry allowed in Cmd mode is ``py "<script>"``.
+
 This must run inside Unreal Editor. In the Output Log's Python input mode use
 (the plugin's Content/Python is already on sys.path, so no path is needed):
 
