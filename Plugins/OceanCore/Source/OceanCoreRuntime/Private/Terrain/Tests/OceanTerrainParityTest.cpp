@@ -9,6 +9,7 @@
 #include "Misc/Paths.h"
 #include "Terrain/OceanTerrainBiome.h"
 #include "Terrain/OceanTerrainContent.h"
+#include "Terrain/OceanTerrainMeshBuilder.h"
 #include "Terrain/OceanTerrainOutline.h"
 #include "Terrain/OceanTerrainWater.h"
 
@@ -577,6 +578,165 @@ bool FOceanTerrainOutlineTest::RunTest(const FString& Parameters)
 					ShapeIndex, DirectionIndex),
 				Contains(First) && Contains(Second));
 		}
+	}
+
+	return !HasAnyErrors();
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FOceanTerrainMeshTest,
+	"OceanCore.Terrain.Mesh",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FOceanTerrainMeshTest::RunTest(const FString& Parameters)
+{
+	using namespace OceanTerrain;
+
+	constexpr uint32 Seed = 0x5c1a2d0b;
+	const FTerrainPalette Palette;
+
+	TArray<int32> Codes;
+	FTerrainMeshData Mesh;
+	FTerrainInkData Ink;
+
+	for (int32 ChunkY = -1; ChunkY <= 1; ++ChunkY)
+	{
+		for (int32 ChunkX = -1; ChunkX <= 1; ++ChunkX)
+		{
+			const FIntPoint ChunkCoord(ChunkX, ChunkY);
+			BuildChunkCodes(Seed, ChunkCoord, TArrayView<const int32>(), Codes);
+			TestEqual(TEXT("code window is (ChunkGrid + 1) squared"), Codes.Num(), ChunkCodeSpan * ChunkCodeSpan);
+
+			BuildChunkMesh(ChunkCoord, Codes, Palette, 0.0, Mesh);
+			BuildChunkInk(ChunkCoord, Codes, Ink);
+
+			TestTrue(TEXT("chunk produced triangles"), Mesh.TriangleCount() > 0);
+			TestEqual(TEXT("one normal per vertex"), Mesh.Normals.Num(), Mesh.Positions.Num());
+			TestEqual(TEXT("one colour per vertex"), Mesh.Colors.Num(), Mesh.Positions.Num());
+			TestEqual(TEXT("index count is a multiple of three"), Mesh.Indices.Num() % 3, 0);
+
+			// The projected area of the top faces has to tile the chunk exactly. This is the
+			// strongest single check available here: a dropped cell, a doubled cell, and a corner
+			// shape that triangulates over itself all break it, and none of them are visible in a
+			// triangle count or in a screenshot.
+			double ProjectedArea = 0.0;
+			bool bAllNormalsValid = true;
+			bool bAllCliffsVertical = true;
+			bool bAllInsideChunk = true;
+			for (int32 Triangle = 0; Triangle < Mesh.TriangleCount(); ++Triangle)
+			{
+				const int32 IndexA = static_cast<int32>(Mesh.Indices[Triangle * 3]);
+				const int32 IndexB = static_cast<int32>(Mesh.Indices[Triangle * 3 + 1]);
+				const int32 IndexC = static_cast<int32>(Mesh.Indices[Triangle * 3 + 2]);
+				if (!Mesh.Positions.IsValidIndex(IndexA)
+					|| !Mesh.Positions.IsValidIndex(IndexB)
+					|| !Mesh.Positions.IsValidIndex(IndexC))
+				{
+					AddError(TEXT("triangle references a vertex that does not exist"));
+					return false;
+				}
+
+				const FVector3f A = Mesh.Positions[IndexA];
+				const FVector3f B = Mesh.Positions[IndexB];
+				const FVector3f C = Mesh.Positions[IndexC];
+				const FVector3f Normal = Mesh.Normals[IndexA];
+
+				bAllNormalsValid &= FMath::IsNearlyEqual(Normal.Size(), 1.0f, 1.0e-3f);
+				// Nothing may face downward: top faces point up, cliff faces stand vertical.
+				bAllNormalsValid &= Normal.Z > -1.0e-3f;
+
+				const double Cross =
+					static_cast<double>(B.X - A.X) * (C.Y - A.Y)
+					- static_cast<double>(B.Y - A.Y) * (C.X - A.X);
+				if (Normal.Z > 0.5f)
+				{
+					ProjectedArea += 0.5 * Cross;
+				}
+				else
+				{
+					bAllCliffsVertical &= FMath::Abs(Normal.Z) < 1.0e-3f;
+				}
+
+				for (const FVector3f& Vertex : { A, B, C })
+				{
+					bAllInsideChunk &= Vertex.X >= -0.01f && Vertex.X <= ChunkSize + 0.01f;
+					bAllInsideChunk &= Vertex.Y >= -0.01f && Vertex.Y <= ChunkSize + 0.01f;
+				}
+			}
+
+			TestTrue(TEXT("normals are unit length and never face down"), bAllNormalsValid);
+			TestTrue(TEXT("cliff faces are vertical"), bAllCliffsVertical);
+			TestTrue(TEXT("vertices stay inside the chunk footprint"), bAllInsideChunk);
+
+			const double ExpectedArea =
+				static_cast<double>(ChunkGrid) * ChunkGrid * CellSize * CellSize;
+			TestTrue(
+				FString::Printf(
+					TEXT("chunk (%d,%d) top faces tile it exactly: %.1f vs %.1f"),
+					ChunkX, ChunkY, ProjectedArea, ExpectedArea),
+				FMath::Abs(ProjectedArea - ExpectedArea) < 1.0);
+
+			bool bAllSegmentsHaveLength = true;
+			for (const FTerrainInkSegment& Segment : Ink.Segments)
+			{
+				bAllSegmentsHaveLength &= !Segment.Start.Equals(Segment.End);
+			}
+			TestTrue(TEXT("every ink segment has length"), bAllSegmentsHaveLength);
+		}
+	}
+
+	//
+	// Chunk seams. The two sides are not symmetric, and that is correct rather than a tolerance
+	// to paper over: the cell that owns a cliff emits both its own lip and the neighbour's foot,
+	// so the owning chunk places strictly more vertices on the shared plane. What has to hold is
+	// containment -- every vertex the far chunk puts on the plane is already there. Shrink the
+	// code window from ChunkGrid + 1 to ChunkGrid and the owning chunk stops knowing the
+	// neighbour's heights, the feet vanish, and this is what notices.
+	//
+	const auto BoundaryVertices =
+		[Seed, &Palette](FIntPoint ChunkCoord, int32 Axis, bool bFarSide, TSet<FIntPoint>& Out)
+	{
+		TArray<int32> LocalCodes;
+		FTerrainMeshData LocalMesh;
+		BuildChunkCodes(Seed, ChunkCoord, TArrayView<const int32>(), LocalCodes);
+		BuildChunkMesh(ChunkCoord, LocalCodes, Palette, 0.0, LocalMesh);
+
+		const float Plane = bFarSide ? ChunkSize : 0.0f;
+		Out.Reset();
+		for (const FVector3f& Position : LocalMesh.Positions)
+		{
+			const float Along = Axis == 0 ? Position.X : Position.Y;
+			if (FMath::Abs(Along - Plane) >= 0.01f)
+			{
+				continue;
+			}
+			const float Across = Axis == 0 ? Position.Y : Position.X;
+			Out.Add(FIntPoint(
+				FMath::RoundToInt(Across * 16.0f),
+				FMath::RoundToInt(Position.Z * 16.0f)));
+		}
+	};
+
+	const FIntPoint Neighbours[2] = { FIntPoint(1, 0), FIntPoint(0, 1) };
+	const TCHAR* AxisNames[2] = { TEXT("east/west"), TEXT("north/south") };
+	for (int32 Axis = 0; Axis < 2; ++Axis)
+	{
+		TSet<FIntPoint> Owner;
+		TSet<FIntPoint> Far;
+		BoundaryVertices(FIntPoint::ZeroValue, Axis, true, Owner);
+		BoundaryVertices(Neighbours[Axis], Axis, false, Far);
+
+		TestTrue(
+			FString::Printf(TEXT("%s boundary has vertices"), AxisNames[Axis]),
+			Owner.Num() > 0);
+
+		const int32 Unmatched = Far.Difference(Owner).Num();
+		TestEqual(
+			FString::Printf(
+				TEXT("%s seam is covered: %d of %d neighbour vertices unmatched"),
+				AxisNames[Axis], Unmatched, Far.Num()),
+			Unmatched,
+			0);
 	}
 
 	return !HasAnyErrors();

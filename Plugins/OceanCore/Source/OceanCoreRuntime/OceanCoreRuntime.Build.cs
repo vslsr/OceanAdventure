@@ -14,6 +14,11 @@ public class OceanCoreRuntime : ModuleRules
 				"Core",
 				"CoreUObject",
 				"Engine",
+				// GeometryCore/GeometryFramework: the terrain chunk component is a
+				// UDynamicMeshComponent, so the fill mesh and the collision body are one
+				// surface rather than two that can drift apart.
+				"GeometryCore",
+				"GeometryFramework",
 				"NetCore"
 			}
 		);

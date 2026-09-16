@@ -579,14 +579,49 @@ SkyLand (x, y, z)  →  UE (X, Y, Z) = (x, z, y)
 它也能在引擎外单独编译执行——P1 的比对就是这么跑出来的。这不是巧合，是 §3 那条
 「底下两层不碰 `UObject`」换来的：真相层出问题时，不必起编辑器就能定位。
 
-### P2 — 网格与碰撞（3~4 天）
+### P2 — 网格与碰撞 ✅ 代码完成，**待引擎内验证**
 
-- `OceanTerrainMeshBuilder.cpp` ← `terrainCollisionMesh.mjs`
-- `UOceanTerrainChunkComponent`：`UDynamicMeshComponent` + trimesh `UBodySetup`
-- 挂到 `AOceanChunkActor`，服务端与客户端各自构建
-- 异步化：builder 进 `UE::Tasks`
+| 文件 | 内容 |
+|---|---|
+| `Public/Terrain/OceanTerrainMeshBuilder.h` + `Private/…cpp` | 格子码窗口 → 填充网格 + 墨线段，纯数据 |
+| `Public/Terrain/OceanTerrainChunkComponent.h` + `Private/…cpp` | `UDynamicMeshComponent` 子类，渲染 + 碰撞 + 异步构建 |
+| `OceanCoreRuntime.Build.cs` | 加 `GeometryCore` / `GeometryFramework` |
 
-产出验收：编辑器里能看到一整片台阶地形，角色能走上斜坡、被崖面挡住、chunk 边界无裂缝。
+几处落地时定下来的事：
+
+- **绕序问题在这一层解决掉了。** builder 不照搬参考实现的角点顺序，而是**按几何定向**：
+  三角形按 `cross(B-A, C-A)` 与该面的外法线同向来排，法线逐顶点写出。
+  所以着色一定对；万一编辑器里背面剔除反了，只需要在这一处翻一次。
+  这就是 4.6 末尾说的「只在写入缓冲那一处翻」。
+- **地形不用反转外壳。** 外壳会把整个 chunk 往外挤，于是沿每条 chunk 边界画出一条线——
+  那条缝只存在于流送网格里、世界里并没有——同时它依然画不出任何内部折边。
+  地形的墨全部来自 4.6 的折边数据。这一条写进了 `FTerrainInkData` 的注释。
+- **墨线只出数据，还没画。** 生产路径是一条由材质在屏幕空间保持等宽的 ribbon
+  （线稿方案 §2.1 与 §6），那支材质还不存在。现在先存 segment，
+  `bDrawInk` 打开时用 debug line 画。**现在就按世界等宽生成 ribbon，等于把 §2.1 明确警告的
+  东西烤进几何里**，所以没做——ribbon 是 segment 的纯函数，之后补不损失任何东西。
+- **chunk 尺寸校验**：组件在初始化时比对 `AOceanChunkActor::GetChunkSize()` 与
+  `OceanTerrain::ChunkSize`，不一致就报 Error。这是决策二没拍板期间的护栏——
+  两者不一致的表现是「每一格看着都对，但整片地形错位」，从画面反推极其难查。
+- **组件自接线**：它从 owner 找 `AOceanChunkActor` 并订阅 `OnChunkInitialized`，
+  `AOceanChunkActor` 不需要知道地形存在。这样纯海面的地图不受影响。
+  客户端上复制状态可能先于组件 BeginPlay 到达，所以还要补一次「已经初始化过」的检查——
+  少了它那块 chunk 会永远空白。
+
+**验收（已过的部分）**：9 个 chunk 建出 18960 个三角形、1028 条墨线段，全部通过：
+
+- 顶面投影面积**精确等于** `ChunkGrid² × CellSize²`——掉一格、重一格、角坡三角化自交都会破坏它，
+  而这三种错误在三角形数量和截图里都看不出来；
+- 法线全是单位长度、没有一个朝下，崖面全部竖直；
+- 顶点不越出 chunk 足迹；
+- **chunk 接缝**：邻块放在共享平面上的顶点，本块一个不少地都放了。
+  两侧数量本来就不对称（拥有崖面的那一格同时吐出自己的崖顶和邻格的崖脚），
+  所以判据是**包含**而不是相等。把采样窗口从 `ChunkGrid + 1` 缩回 `ChunkGrid`，
+  这一条立刻红——它就是为坑 #3 准备的。
+
+**尚未验证**：UE 侧的编译、四条自动化测试、以及「编辑器里能看到一整片台阶地形，
+角色能走上斜坡、被崖面挡住」。这些要有引擎才能跑。
+`UOceanTerrainChunkComponent` 里的 `FDynamicMesh3` 接线是按文档写的，没有编译验证过。
 
 ### P3 — 稀疏编辑层（2~3 天）
 
@@ -691,5 +726,6 @@ cell 1545219339
 | 日期 | 内容 |
 |---|---|
 | 2026-09-15 | 初版。第五节的三个决策尚未拍板，实施前需补齐。 |
+| 2026-09-16 | P2 代码完成：网格 builder + chunk 组件。绕序改为按几何定向；确认地形不走反转外壳，墨线全部来自折边数据。builder 的纯数据部分已在引擎外跑通（接缝包含性、顶面投影面积精确平铺）；组件的 `FDynamicMesh3` 接线未经编译验证。 |
 | 2026-09-16 | P0 复核完成：`bAutoActivate` 早已修复；本项目未启用 Replication Graph 与 Iris，`IsNetRelevantFor()` 有效，推翻代码审查文档的严重问题 #2。 |
 | 2026-09-16 | 合入 main 后跟进：决策一由 `Line-Art-Style-UE5-Mobile-Rendering.md` §0 拍板（台阶地形取代噪声高度场，服务端权威改走 UE 原生复制）；决策三的轴映射由 `(z,x,y)` 改为 `(x,z,y)`；新增 4.6 折边一节，承接线稿方案 §2.4。**P1 已完成**，parity 全绿。决策二（chunk 尺寸）仍未拍板，但它只影响 chunk 寻址，不影响真相层。 |
