@@ -5,6 +5,27 @@
 # Placement   : can_ground=True  can_floor=True
 # Description : 可放置在任何地表的建造地基，带 5cm 凸起边框增加可视辨识度
 
+from pathlib import Path
+
+
+# --- Output location --------------------------------------------------------
+# Derived from this file's own location (``<project>/blender/script/python/``) so the
+# script exports into this checkout wherever it is cloned. The repository convention is
+# ``<project>/blender/models/``; the old hard-coded destination pointed at a sibling
+# LyraStarterGame checkout, which is exactly the cross-project export the asset workflow
+# forbids. Running as an unsaved Blender text block leaves no ``__file__`` to derive from,
+# so stop with the fix rather than exporting somewhere arbitrary.
+def models_dir():
+    if "__file__" not in globals():
+        raise RuntimeError(
+            "Cannot derive the project root: this script has no __file__ (unsaved Blender "
+            "text block). Save it to <project>/blender/script/python/ and run it from disk."
+        )
+    target = Path(__file__).resolve().parents[3] / "blender" / "models"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 import bpy
 import bmesh
 import math
@@ -151,7 +172,7 @@ def run():
     merged.select_set(True)
     bpy.context.view_layer.objects.active = merged
 
-    export_path = "C:/EpicWkspc/LyraStarterGame/blender/fbx/SM_Foundation.fbx"
+    export_path = str(models_dir() / "SM_Foundation.fbx")
     bpy.ops.export_scene.fbx(
         filepath=export_path,
         use_selection=True,

@@ -68,8 +68,8 @@ def find_project_root():
             visited.add(candidate)
             search_roots.append(candidate)
 
-    # A blend opened from C:/EpicWkspc/LyraStarterGame is next to the real
-    # C:/EpicWkspc/OceanAdventure project. Check those siblings without scanning the disk.
+    # A blend opened from a sibling Lyra checkout sits next to the real OceanAdventure
+    # project. Check those siblings without scanning the disk.
     sibling_candidates = []
     for candidate in search_roots:
         try:
@@ -86,7 +86,7 @@ def find_project_root():
     raise RuntimeError(
         "Could not locate OceanAdventure (expected a .uproject plus "
         "Plugins/GameFeatures/OceanAdventure). Set OCEAN_ADVENTURE_PROJECT_ROOT to "
-        r"C:\EpicWkspc\OceanAdventure before running this script."
+        "this repository's checkout before running this script."
     )
 
 

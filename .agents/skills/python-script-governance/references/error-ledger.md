@@ -12,6 +12,12 @@
 | PY-UE-004 | 2026-08-28 | Unreal Editor-Cmd / DDC 启动 | `no writable nodes available` | VERIFIED | 1 |
 | PY-UE-005 | 2026-08-28 | Unreal Python / 资产布局迁移 | `FindAssetPackageReferencers failed` / `AsyncLoading2.cpp !bHasFailed` | VERIFIED | 2 |
 | PY-UE-006 | 2026-08-28 | Unreal Commandlet / Interchange 导入 | `SlateApplication CurrentApplication.IsValid()` | VERIFIED | 1 |
+| PY-UE-007 | 2026-08-28 | Unreal Python / StaticMesh 材质读回 | `'StaticMesh' object has no attribute 'get_static_materials'` | VERIFIED | 1 |
+| PY-UE-008 | 2026-08-28 | Unreal Python / PIE 资产编辑 | `The Editor is currently in a play mode` / 误报资产缺失或创建失败 | VERIFIED | 3 |
+| PY-UE-009 | 2026-08-28 | Unreal Python / 读回探针 | `'NoneType' object has no attribute 'get_editor_property'` | VERIFIED | 1 |
+| PY-BLENDER-001 | 2026-09-15 | Blender bpy / Pose 骨骼空间 | `String midpoint moved -0.0000m at full draw` | VERIFIED | 1 |
+| PY-BLENDER-002 | 2026-09-16 | Blender bpy / Action 通道 API | `'Action' object has no attribute 'fcurves'` | VERIFIED | 1 |
+| PY-BLENDER-003 | 2026-09-16 | Blender bpy / 脚本输出可见性 | 宿主报告「run script 后什么都没有」 | VERIFIED | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
 | PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
@@ -77,7 +83,7 @@
 
 ## PY-UE-004：受限环境没有可写 DDC 节点
 
-- 日期：2026-08-28；发生一次。
+- 日期：2026-08-28；发生三次。
 - 宿主与入口：UE 5.7.4 `UnrealEditor-Cmd.exe`，`-run=pythonscript` 执行
   `Plugins/NavalCore/Content/Python/MigrateNavalCoreContentLayout.py`。
 - 原始错误：
@@ -184,6 +190,232 @@
   宿主验证分别覆盖 OceanAdventure 与 Raft，均为退出码 0、`Success - 0 error(s)`。Raft 重跑加载
   并复用 `/Raft/Vehicles/LifeRaft/SM_LifeRaft`，未再次进入 `ImportAssetTasks`，稳定命名的
   GameFeature Action 与资产配置未出现重复增长。
+- 状态：`VERIFIED`。
+- 发生次数：1。
+
+## PY-UE-007：StaticMesh 包装器未暴露 get_static_materials
+
+- 日期：2026-08-28；发生一次。
+- 宿主与入口：UE 5.7 Unreal Editor，通过 Nwiro MCP `execute_python` 执行只读材质读回探针。
+- 脚本：内联只读探针；目标资产
+  `/NavalCore/Arts/Cannon/Meshes/SM_Naval_Cannon`。仓库脚本
+  `Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py` 未在本次失败中执行。
+- 原始错误：
+
+  ```text
+  Traceback (most recent call last):
+
+    File "<string>", line 3, in <module>
+
+  AttributeError: 'StaticMesh' object has no attribute 'get_static_materials'
+  ```
+
+- 首次错误转换：只读探针直接调用 `mesh.get_static_materials()`。
+- 根因：UE 5.7 当前 `StaticMesh` Python 包装器没有暴露该便利方法；同一属性可通过
+  `mesh.get_editor_property("static_materials")` 读取。仓库修复脚本已经使用
+  `getattr(mesh, "get_static_materials", None)` 并在缺失时回退到反射属性，因此材质修复与双跑验证未受影响。
+- 预防规则：StaticMesh 材质数组读回必须先探测 `get_static_materials`；不可用时固定读取
+  `static_materials`，不得在临时验证探针中省略与正式脚本相同的兼容分支。
+- 修复：使用与正式修复脚本相同的 `getattr` 探测与 `static_materials` 反射属性回退，重新运行材质实例 Parent 与六槽读回探针。
+- 验证证据：同一 UE 5.7 Editor 宿主重跑成功，六个槽分别读回 Wood、DarkWood、DarkMetal、WheelRim、Bronze、Bore；六个材质实例均解析到
+  `/InterchangeAssets/Materials/FBXLegacyPhongSurfaceMaterial` Parent，未再出现 traceback。
+- 状态：`VERIFIED`。
+- 发生次数：1。
+
+## PY-UE-008：PIE 中 EditorAssetLibrary 拒绝资产查询
+
+- 日期：2026-08-28；发生一次。
+- 宿主与入口：UE 5.7 Unreal Editor Output Log，Cmd 模式执行
+  `py "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py"`。
+- 脚本：
+  - `Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py`；
+  - `Plugins/GameFeatures/Raft/Content/Python/CreateRaftNavalAssets.py`；
+  - `Plugins/GameFeatures/OceanAdventure/Content/Python/CreateNavalP0Assets.py`。
+- 原始错误：
+
+  ```text
+  LogUtils: Error: The Editor is currently in a play mode.
+  LogPython: Error: Traceback (most recent call last):
+  LogPython: Error:   File "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py", line 171, in <module>
+  LogPython: Error:     main()
+  LogPython: Error:   File "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py", line 133, in main
+  LogPython: Error:     mesh = load_asset(MESH_PATH)
+  LogPython: Error:   File "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py", line 46, in load_asset
+  LogPython: Error:     require(
+  LogPython: Error:   File "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/RepairNavalCannonMaterials.py", line 35, in require
+  LogPython: Error:     raise RuntimeError(message)
+  LogPython: Error: RuntimeError: Required asset does not exist: /NavalCore/Arts/Cannon/Meshes/SM_Naval_Cannon
+  ```
+
+  同一 PIE 会话随后复发：
+
+  ```text
+  LogUtils: Error: The Editor is currently in a play mode.
+  RuntimeError: Missing /Raft/Build/Materials/M_Raft_BuildPreview_Invalid; run CreateRaftBuildPieceAssets.py first
+  ```
+
+  ```text
+  LogUtils: Error: The Editor is currently in a play mode.
+  InputMappingContext /OceanAdventure/Input/IMC_OceanNaval.IMC_OceanNaval正在使用中。
+  External referencers:
+    LyraPlayerInput /OceanAdventure/Maps/UEDPIE_0_L_NavalP0...LyraPlayerInput_0
+  RuntimeError: Unable to create /OceanAdventure/Input/IMC_OceanNaval
+  ```
+
+- 首次错误转换：`load_asset()` 在 PIE 中调用
+  `EditorAssetLibrary.does_asset_exist()`；宿主先拒绝编辑器资产操作，函数随后返回假值，脚本把宿主限制误报为资产不存在。
+- 根因：这些脚本只能在非 Play 的完整 Editor 会话中修改并保存资产，但没有在首次
+  `EditorAssetLibrary` 调用前检测 PIE 状态，也没有把执行前提写成可执行门禁。PIE 中查询返回假值后，
+  Naval 脚本还进入“创建缺失资产”分支，碰到 `LyraPlayerInput` 对正在使用的 IMC 的外部引用。
+- 伴随噪声：`AutomationController` 的 large delta 与 `PSOHitching` 计数是 PIE 运行噪声，不是 Python 根因。
+- 复发原因：首次错误发生后尚未来得及把门禁写入脚本，用户在同一 PIE 会话继续执行了另外两个资产脚本；原有的文档性执行说明不能阻断错误宿主。
+- 预防规则：所有通过 `EditorAssetLibrary` 修改内容资产的完整 Editor 脚本，应在首次资产查询前调用 UE 5.7 已验证的
+  `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).is_in_play_in_editor()` fail-fast；提示必须明确要求点击 Stop 后重跑，不能继续并误报目标资产缺失或进入创建分支。
+- 修复：已在真实 UE 5.7 Editor 反射中确认 `LevelEditorSubsystem.is_in_play_in_editor() -> bool`，并在三个入口的
+  `main()` 首次 Asset Registry / EditorAssetLibrary 调用前增加统一门禁。门禁在 PIE 时明确要求点击 Stop 后重跑。
+- 验证证据：修复前的真实 Editor 探针读回 `IS_IN_PLAY_IN_EDITOR=True`，证明所选 API 能识别错误宿主状态。随后重新启动完整 UE 5.7 Editor，读回
+  `IS_IN_PLAY_IN_EDITOR=False`，并确认 `IMC_OceanNaval`、`M_Raft_BuildPreview_Invalid`、`SM_Naval_Cannon` 均存在；三个修复后脚本分别连续执行两次成功，无 traceback。最终读回确认 Raft Catalog 为 10 条且无重复、Naval Fire 不消费输入、炮网格六个材质槽全部正确。
+- 状态：`VERIFIED`。
+- 发生次数：3。
+
+## PY-UE-009：读回探针的 require helper 漏返回值
+
+- 日期：2026-08-28；发生一次。
+- 宿主与入口：UE 5.7 Unreal Editor，通过 Nwiro MCP `execute_python` 执行内联只读汇总探针。
+- 脚本：内联只读探针；仓库中的三个资产脚本均已在此前连续运行两次成功，本次没有执行或修改它们。
+- 原始错误：
+
+  ```text
+  Traceback (most recent call last):
+
+    File "<string>", line 8, in <module>
+
+  AttributeError: 'NoneType' object has no attribute 'get_editor_property'
+  ```
+
+- 首次错误转换：探针执行
+  `catalog = require(EditorAssetLibrary.load_asset(...), ...)` 后读取
+  `catalog.get_editor_property("pieces")`。
+- 根因：内联探针的 `require(value, message)` 只在假值时抛错，却漏写成功路径的
+  `return value`；Catalog 实际加载成功，但 helper 把局部变量变成了 `None`。
+- 预防规则：内联读回探针复用项目既有 helper 语义时，`require` 的成功路径必须显式返回输入值；在第一个资产字段读取前先打印或断言包装类型。
+- 修复：补回内联 helper 的 `return value`，并在首次字段访问前断言 Catalog 包装类型为
+  `BuildPieceCatalog`。
+- 验证证据：同一 UE 5.7 Editor 宿主重新执行纯读回探针成功，输出
+  `READBACK_OK IS_IN_PLAY=False`、`READBACK_RAFT_CATALOG_COUNT=10 DUPLICATES=0`、
+  `READBACK_NAVAL_FIRE_CONSUME=False` 和六个正确炮材质槽映射；无 traceback。
+- 状态：`VERIFIED`。
+- 发生次数：1。
+
+## PY-BLENDER-001：Pose 骨骼的 location/rotation 用的是骨骼局部空间，不是世界轴
+
+- 日期：2026-09-15；发生一次。
+- 宿主与入口：Blender（用户在 Scripting 工作区运行磁盘脚本）。
+- 脚本：`blender/script/python/create_wood_bow.py`。
+- 原始错误：
+
+  ```text
+  Python: Traceback (most recent call last):
+    File "\create_wood_bow.py", line 744, in <module>
+    File "\create_wood_bow.py", line 727, in build_wood_bow
+    File "\create_wood_bow.py", line 647, in validate_draw_pose
+  RuntimeError: String midpoint moved -0.0000m at full draw, expected 0.1800m. The string_mid weights are not reaching it.
+  ```
+
+- 首次错误转换：`validate_draw_pose()` 执行
+  `rig.pose.bones["string_mid"].location = (0.0, 0.0, BOW_STRING_PULL)`，随后读回形变网格，
+  弦中点在世界 Y 上的位移为 0。
+- 根因：`PoseBone.location` 与 `PoseBone.rotation_euler` 都定义在**骨骼局部空间**，其中局部 Y
+  沿 head→tail，局部 X/Z 由 roll 决定。脚本按世界轴写了分量（把「沿 +Y 拉弦」写成局部 Z），
+  位移落到了与世界 Y 垂直的方向上，世界 Y 分量因此恰好为 0。断言本身正确，被测的驱动代码错了。
+  **不是蒙皮权重问题**：同一次运行里 `validate_bow()` 的权重归一化断言已全部通过。
+- 预防规则：pose 驱动一律不直接写世界轴分量。先把世界方向换算到该骨骼的局部空间
+  （`bone.matrix_local.to_3x3().inverted() @ world_vector`），再写 `location`；旋转同样用
+  换算后的局部轴构造 `Quaternion(local_axis, angle)`，不要靠猜 roll 让局部 X 恰好等于世界 X。
+  失败信息里必须带上三维位移全量，否则「没动」和「动错方向」两种故障长得一模一样。
+- 修复：`validate_draw_pose()` 改为按 `matrix_local` 换算世界 +Y 平移与世界 X 旋转；断言改为
+  同时报告世界 Y 位移与三维位移模长。
+- 验证证据：2026-09-15 用户在 Blender 5.1.0 中重跑成功，产物 `blender/models/SK_WoodBow.fbx`
+  （40732 字节）已提交到 main（`3d51379`，`08b394b` 为再次导出）。该文件能存在即证明
+  `validate_draw_pose()` 已通过——它正是修复前抛错的那一步，且排在导出之前。FBX 内含且仅含
+  契约里的七根骨 `root/grip/limb_upper/limb_lower/string_upper/string_mid/string_lower`，
+  无 `nock`，并带 Deformer 与两个材质，说明骨架、蒙皮与导出参数一并成立。
+- 状态：`VERIFIED`。
+- 发生次数：1。
+
+## PY-BLENDER-002：Blender 5.x 的 Action 没有 `fcurves`，通道挂在 slot 的 channelbag 上
+
+- 日期：2026-09-16；发生一次。
+- 宿主与入口：Blender 5.1.0（用户在 Scripting 工作区运行，Text Block 显示为
+  `\create_wood_bow.py.002`）。
+- 脚本：`blender/script/python/create_wood_bow.py`。
+- 原始错误：
+
+  ```text
+  Python: Traceback (most recent call last):
+    File "\create_wood_bow.py.002", line 1312, in <module>
+    File "\create_wood_bow.py.002", line 1256, in build_wood_bow
+    File "\create_wood_bow.py.002", line 994, in bake_action
+  AttributeError: 'Action' object has no attribute 'fcurves'
+  ```
+
+- 首次错误转换：`bake_action()` 在插完关键帧后执行 `if not action.fcurves:` —— 那行本来是用来
+  挡「Action 没绑 slot、keyframe_insert 静默写空」的断言，结果它自己先用了一个不存在的属性。
+- 根因：4.4 引入 slotted Action 后，`Action.fcurves` 只是 legacy Action 的兼容外壳；5.x 取消
+  legacy Action，通道改挂在 `action.layers[].strips[].channelbag(slot).fcurves` 上，属性被移除。
+  脚本按 4.x 的形状读通道，且**三处**都这么读：非空断言、设 LINEAR 插值、`validate_clips()` 里
+  按 `data_path` 取骨骼名。
+- 为什么之前没发现：这三处都排在网格 FBX 导出**之后**。`PY-BLENDER-001` 结案时凭
+  `blender/models/SK_WoodBow.fbx` 存在判定通过，那个产物只证明到导出网格为止；
+  `blender/models/` 里从来没有出现过 `A_WoodBow_*.fbx`，也就是说 clip 一次都没烘成功过。
+  **产物证据只能证明它排在哪一步之前，不能证明整条脚本跑完。**
+- 预防规则：
+  1. 读 Action 通道一律走兼容访问器（仓库里 `boiler_animation.py` / `door_animation.py` /
+     `claude-blender.md` 早就有 `get_fcurves()`，写新脚本前先 grep 一遍），不直接写
+     `action.fcurves`：有该属性走 legacy，
+     没有就遍历 `layers[].strips[].channelbags[]`（或按当前 slot 取 `channelbag(slot)`）。
+  2. 赋 Action 的同时把 slot 绑上（`animation_data.action_slot`），再插关键帧；
+     赋值散落在回放、导出等多处时抽成一个 `assign_action()`，不要各写各的。
+  3. 结案证据必须落在**脚本最后一步之后**的产物或成功标记上；用中途产物结案等于没验证。
+- 修复：新增 `assign_action()` / `bind_action_slot()` / `get_fcurves()` 三个兼容入口
+  （`get_fcurves` 沿用 `boiler_animation.py` 等脚本里已有的同名 helper），三处读通道全部改走它；非空断言的报错信息带上走的是哪条 API 与 slot 名。
+- 验证证据：普通 CPython 用假 bpy 对象分别模拟 legacy Action（有 `fcurves`）与 slotted
+  Action（只有 `layers/strips/channelbags`），两条路径都取到同一组通道，缺通道时按预期抛错。
+  2026-09-16 用户在 Blender 5.1.0 重跑：`preview_wood_bow.py` 的报告列出四段 clip，
+  每段 11 条曲线（两根弓臂四元数各 4 + 弦中点位移 3），帧跨度 0..288 / 0..24 / 0..192 / 0..15，
+  逐段回放实测弦位移 20.0 / 180.0 / 24.0 / 192.2 mm。四段 Action 能被烘出来并被读回，
+  就证明 `bake_action()` 里那次 `AttributeError` 已消失、通道读取走通了 slotted API。
+- 状态：`VERIFIED`（限于 Blender 侧的通道读取与烘焙。合并包
+  `blender/models/A_WoodBow_Clips.fbx` 的导出与 UE 导入仍未验证，属
+  `blender-skeletal-asset-workflow` 里标注的未验证项，不在本条范围内）。
+- 发生次数：1。
+
+## PY-BLENDER-003：脚本只用 print 报告，等于在宿主里没有输出
+
+- 日期：2026-09-16；发生一次（导致三轮误诊）。
+- 宿主与入口：Blender 5.1.0，Text Editor 的 Run Script（信息面板记录 `bpy.ops.text.run_script()`）。
+- 脚本：`blender/script/python/create_wood_bow.py`、`preview_wood_bow.py`。
+- 原始现象：用户连续报告「什么都没有」「run script 后什么都没有」；信息面板只有算子记录，
+  没有任何脚本输出，也没有 traceback。
+- 根因：`print()` 只写到**系统控制台**，Windows 上默认隐藏（窗口 → 切换系统控制台）。
+  Blender 的 Python 控制台和信息编辑器都不显示它。脚本把全部校验结论、clip 清单、
+  导出路径都放在 print 里，于是从 UI 看，一次成功的运行和一次什么都没做的运行完全一样。
+- 误诊代价：我据此三次让用户「看控制台输出」，每次都得到「什么都没有」，把注意力引到
+  「clip 是不是没烘出来」上；期间真正的两个 bug（slot 读错、幅度太小到看不见）
+  是靠读代码发现的，不是靠这条现象。
+- 预防规则：
+  1. 面向宿主 UI 的脚本，结论必须落在**用户不用找就能看到的地方**：写进 Text datablock
+     （Text Editor 里可打开）并尝试 `window_manager.popup_menu`，print 只作为补充；
+  2. 报告每次运行**覆盖**同名 datablock，不要追加，否则第二次运行的结论被上一次淹没；
+  3. 没有 window manager（background 模式）时 popup 必须吞掉异常，datablock 照写；
+  4. 指导用户排查前，先确认他看得到脚本的输出通道；「看控制台」不是通用建议，
+     Windows 上要先让他开系统控制台。
+- 修复：两个脚本新增 `report(lines)`，同时写 `WoodBow_Report` datablock、弹窗与 print；
+  收尾结论全部改走它。
+- 验证证据：普通 CPython 用假 bpy 验证——datablock 每次运行被替换而非追加、
+  popup 被调用、`window_manager` 为 None 时不抛错且 datablock 仍写入。
+  2026-09-16 用户在 Blender 5.1.0 重跑后，首次看到脚本输出：`WoodBow_Report` 面板里
+  完整列出四段 clip 与实测位移。同一份信息在此前三轮里一直存在于 print，用户一次也没看到。
 - 状态：`VERIFIED`。
 - 发生次数：1。
 

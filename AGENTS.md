@@ -1,5 +1,36 @@
 # 项目规范
 
+## 绝对路径禁令（硬性）
+
+**仓库内任何文件都不得写死绝对路径**——不写盘符、不写某台机器的检出位置。
+代码、脚本、文档、注释、提交信息一视同仁。
+
+理由是这条已经反复付过代价：`D:\UEPrj\...`、`C:\EpicWkspc\...`、`E:\...`
+在同一个仓库里同时存在过，换台机器就整条命令跑不起来，而报错（`不会被识别为 cmdlet`、
+`Could not load Python file`）看上去都不像路径问题。
+
+按目标位置分四种写法：
+
+| 目标 | 写法 |
+| --- | --- |
+| 仓库内的文件 | 从脚本自身位置推导。Blender 脚本住在 `<project>/blender/script/python/`，`Path(__file__).resolve().parents[3]` 就是工程根 |
+| UE 资产 | 用 `/GameFeature/...` 虚拟包路径，不用磁盘路径 |
+| 编辑器 Python 入口 | 用模块名 `import`，UE 已把每个启用插件的 `Content/Python` 放进 `sys.path`，不需要也不应该给路径 |
+| 仓库外（引擎安装、参考工程） | **没有相对形式**。只能走环境变量或本机探测，**且不给默认值** |
+
+最后一行是重点：给一个机器相关的默认值，只会把「你没告诉我它在哪」变成很久以后
+一句莫名其妙的「这个路径不存在」。宁可当场 fail-fast，说清楚要设哪个环境变量。
+
+`__file__` 不存在时（Blender 文本块、内联探针）**停下来报错**，不要猜一个路径兜底——
+把产物导到别处比导不出去更难发现。
+
+两处例外，改动时不要顺手「修正」：
+
+- `.agents/skills/python-script-governance/references/error-ledger.md` 里引用的**原始报错文本**
+  （含引擎源码路径 `D:\build\++UE5\Sync\...`）是证据，必须逐字保留；
+- `.agents/vendor/` 与 `.agents/plugins/` 是第三方资料，不归本仓库改。
+
+
 ## Python 脚本强制门禁
 
 - 创建、修改、审计、排查或准备执行仓库内任何 Python 脚本时，**必须先使用**
@@ -36,6 +67,28 @@
 - 两个 GameFeature 需要用同一份资产时，把资产下沉到通用插件的 `Content/`，不要在各自目录里各存一份。
   先例：`/NavalCore/Blueprints/Cannon/BP_Naval_Cannon` —— 野战架设（OceanAdventure）与甲板建造（Raft）共用的那门炮。
   通用插件要装内容需在 `.uplugin` 里打开 `CanContainContent`，其内容只能引用 Engine 与其它通用插件。
+
+## Skill 目录（统一入口）
+
+- **所有 Skill 的唯一真相是 `.agents/skills/<skill-name>/SKILL.md`**，一个 Skill 一个目录，平铺，不再按
+  `SKILL/`、`UE5-Skills/skills/`、上游包自带的 `.trae/skills/` 各存一份。
+- 各工具按自己的约定读取：
+  - Codex / 通用 Agent：原生读 `.agents/skills/`，无需额外配置。
+  - Claude Code：`.claude/skills/<skill-name>` 是指向 `../../.agents/skills/<skill-name>` 的软链。
+  - Trae：`.trae/skills/<skill-name>` 同样是指向 `../../.agents/skills/<skill-name>` 的软链。
+- **不要往 `.claude/skills/`、`.trae/skills/` 里放真实文件**，那里只允许软链；新增或删除 Skill 后跑一次：
+
+  ```bash
+  bash .agents/sync-skill-links.sh
+  ```
+
+  脚本按 `.agents/skills/` 重建各工具目录里的软链，遇到真实目录会报警告而不是默默覆盖。
+- **插件自带的 Skill**（`.agents/plugins/<plugin>/skills/<name>/`）也在 `.agents/skills/` 里露出，但是**软链**：
+  那个目录归插件的 sync 脚本所有，它会按远端 catalog 把对不上的条目 `rm -rf`，所以不能把真实 Skill
+  搬进去，也不能把插件的 skills 目录指向 `.agents/skills/`——下次开会话就被删光。
+  `sync-skill-links.sh` 负责挂载，并在插件那边删掉 Skill 后清理断链。
+- 上游 Skill 包里非 Skill 本体的资料（课程讲义、许可证、示意图、包自带的校验脚本）放在
+  `.agents/vendor/<包名>/`，只作参考，不参与 Skill 加载。
 
 ## 模块分层
 

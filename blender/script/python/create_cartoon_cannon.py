@@ -67,7 +67,7 @@ def find_project_root():
     raise RuntimeError(
         "Could not locate OceanAdventure (expected a .uproject plus "
         "Plugins/GameFeatures/OceanAdventure). Set OCEAN_ADVENTURE_PROJECT_ROOT "
-        r"to C:\EpicWkspc\OceanAdventure before running this script."
+        "to this repository's checkout before running this script."
     )
 
 

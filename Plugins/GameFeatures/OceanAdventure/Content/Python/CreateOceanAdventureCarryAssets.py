@@ -23,6 +23,7 @@ import unreal
 # asset creation, the edge trigger). Same feature, same folder, one copy of each.
 from CreateNavalP0Assets import (
     asset_path,
+    configure_unique_asset_array_entry,
     configure_pressed_trigger,
     gameplay_tag,
     load_or_create,
@@ -197,10 +198,7 @@ def configure_pawn_data(ability_set):
         unreal.EditorAssetLibrary.load_asset(PAWN_DATA_PATH),
         f"{PAWN_DATA_PATH} is missing; run CreateOceanAdventureExperience.py first",
     )
-    ability_sets = list(pawn_data.get_editor_property("ability_sets"))
-    if ability_set not in ability_sets:
-        ability_sets.append(ability_set)
-    pawn_data.set_editor_property("ability_sets", ability_sets)
+    configure_unique_asset_array_entry(pawn_data, "ability_sets", ability_set)
     save(pawn_data)
 
     require(

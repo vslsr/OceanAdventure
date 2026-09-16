@@ -1,9 +1,11 @@
-Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BP_Raft_Helm" FILE="C:/EpicWkspc/OceanAdventure/Plugins/GameFeatures/Raft/Content/Naval/BP_Raft_Helm.uasset" SILENT=true
-Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BPC_NavalVessel_RaftT0" FILE="C:/EpicWkspc/OceanAdventure/Plugins/GameFeatures/Raft/Content/Naval/BPC_NavalVessel_RaftT0.uasset" SILENT=true
-Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BPC_NavalLoad_RaftT0" FILE="C:/EpicWkspc/OceanAdventure/Plugins/GameFeatures/Raft/Content/Naval/BPC_NavalLoad_RaftT0.uasset" SILENT=true
-Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BPC_NavalHelm_RaftT0" FILE="C:/EpicWkspc/OceanAdventure/Plugins/GameFeatures/Raft/Content/Naval/BPC_NavalHelm_RaftT0.uasset" SILENT=true
-Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BPC_NavalMovement_RaftT0" FILE="C:/EpicWkspc/OceanAdventure/Plugins/GameFeatures/Raft/Content/Naval/BPC_NavalMovement_RaftT0.uasset" SILENT=true
-Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Raft" FILE="C:/EpicWkspc/OceanAdventure/Plugins/GameFeatures/Raft/Content/Raft.uasset" SILENT=true
+# 草稿：UE 控制台 OBJ SAVEPACKAGE 命令。<repo> 换成本机的仓库根目录再粘贴执行
+# （该命令的 FILE= 需要绝对路径，相对路径会按引擎可执行文件所在目录解析）。
+Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BP_Raft_Helm" FILE="<repo>/Plugins/GameFeatures/Raft/Content/Naval/BP_Raft_Helm.uasset" SILENT=true
+Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BPC_NavalVessel_RaftT0" FILE="<repo>/Plugins/GameFeatures/Raft/Content/Naval/BPC_NavalVessel_RaftT0.uasset" SILENT=true
+Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BPC_NavalLoad_RaftT0" FILE="<repo>/Plugins/GameFeatures/Raft/Content/Naval/BPC_NavalLoad_RaftT0.uasset" SILENT=true
+Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BPC_NavalHelm_RaftT0" FILE="<repo>/Plugins/GameFeatures/Raft/Content/Naval/BPC_NavalHelm_RaftT0.uasset" SILENT=true
+Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Naval/BPC_NavalMovement_RaftT0" FILE="<repo>/Plugins/GameFeatures/Raft/Content/Naval/BPC_NavalMovement_RaftT0.uasset" SILENT=true
+Cmd: OBJ SAVEPACKAGE PACKAGE="/Raft/Raft" FILE="<repo>/Plugins/GameFeatures/Raft/Content/Raft.uasset" SILENT=true
 
 改完 .uplugin 后重启编辑器（/NavalCore/ 才会挂载）
 MigrateSharedCannon.py — 搬资产

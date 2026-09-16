@@ -4,6 +4,27 @@
 # Dimensions  : W=200cm  H=300cm  D=15cm  (Blender: 2.0m × 3.0m × 0.15m)
 # Placement   : can_ground=True
 
+from pathlib import Path
+
+
+# --- Output location --------------------------------------------------------
+# Derived from this file's own location (``<project>/blender/script/python/``) so the
+# script exports into this checkout wherever it is cloned. The repository convention is
+# ``<project>/blender/models/``; the old hard-coded destination pointed at a sibling
+# LyraStarterGame checkout, which is exactly the cross-project export the asset workflow
+# forbids. Running as an unsaved Blender text block leaves no ``__file__`` to derive from,
+# so stop with the fix rather than exporting somewhere arbitrary.
+def models_dir():
+    if "__file__" not in globals():
+        raise RuntimeError(
+            "Cannot derive the project root: this script has no __file__ (unsaved Blender "
+            "text block). Save it to <project>/blender/script/python/ and run it from disk."
+        )
+    target = Path(__file__).resolve().parents[3] / "blender" / "models"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 import bpy
 import math
 
@@ -77,7 +98,7 @@ def main():
     bpy.ops.object.mode_set(mode='OBJECT')
 
     # FBX 导出
-    export_path = "C:/EpicWkspc/LyraStarterGame/blender/fbx/SM_Wall.fbx"
+    export_path = str(models_dir() / "SM_Wall.fbx")
     bpy.ops.export_scene.fbx(
         filepath=export_path,
         use_selection=True,
