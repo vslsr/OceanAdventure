@@ -129,9 +129,17 @@ namespace OceanTerrain
 				Normal = -Normal;
 			}
 
+			// Winding, resolved in the engine rather than reasoned about (2026-09-16). Unreal is
+			// left-handed and treats clockwise-as-seen-from-the-front as the front face, which
+			// is cross(C - A, B - A) -- the opposite of the right-hand rule used to pick Normal
+			// above. Emitting A, B, C put every front face downwards: the terrain was invisible
+			// from above and visible from underwater, which is what the screenshots showed.
+			//
+			// This is the single flip the whole pipeline needs; CellTriangleNormal and the ink
+			// segments do not depend on it. If it ever inverts again, it inverts here.
 			const uint32 IndexA = Welder.Add(A, Normal, Color);
-			const uint32 IndexB = Welder.Add(bFlip ? C : B, Normal, Color);
-			const uint32 IndexC = Welder.Add(bFlip ? B : C, Normal, Color);
+			const uint32 IndexB = Welder.Add(bFlip ? B : C, Normal, Color);
+			const uint32 IndexC = Welder.Add(bFlip ? C : B, Normal, Color);
 			Mesh.Indices.Add(IndexA);
 			Mesh.Indices.Add(IndexB);
 			Mesh.Indices.Add(IndexC);

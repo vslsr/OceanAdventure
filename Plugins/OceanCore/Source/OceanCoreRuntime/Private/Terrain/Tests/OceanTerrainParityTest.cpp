@@ -647,9 +647,13 @@ bool FOceanTerrainMeshTest::RunTest(const FString& Parameters)
 				// Nothing may face downward: top faces point up, cliff faces stand vertical.
 				bAllNormalsValid &= Normal.Z > -1.0e-3f;
 
+				// Unreal's front face is clockwise seen from the front, i.e. cross(C-A, B-A).
+				// Measuring the signed area with that convention makes an up-facing front face
+				// positive, so this assertion pins the winding as well as the tiling: flip the
+				// builder's emission order and this goes negative.
 				const double Cross =
-					static_cast<double>(B.X - A.X) * (C.Y - A.Y)
-					- static_cast<double>(B.Y - A.Y) * (C.X - A.X);
+					static_cast<double>(C.X - A.X) * (B.Y - A.Y)
+					- static_cast<double>(C.Y - A.Y) * (B.X - A.X);
 				if (Normal.Z > 0.5f)
 				{
 					ProjectedArea += 0.5 * Cross;

@@ -49,6 +49,10 @@ public:
 	/** Editing facade over the store. Null until EnsureStore has run. */
 	OceanTerrain::FTerrainEditor* GetEditor() const { return Editor.Get(); }
 
+	/** Registered chunk components, for diagnostics. Entries with a stale component are skipped. */
+	void GetRegisteredChunks(
+		TArray<TPair<FIntPoint, UOceanTerrainChunkComponent*>>& OutChunks) const;
+
 	void RegisterChunk(UOceanTerrainChunkComponent* Chunk, FIntPoint ChunkCoord);
 	void UnregisterChunk(UOceanTerrainChunkComponent* Chunk);
 

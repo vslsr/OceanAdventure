@@ -54,6 +54,22 @@ OceanTerrain::FTerrainPatchStore& UOceanTerrainSubsystem::EnsureStore(uint32 Wor
 	return *Store;
 }
 
+void UOceanTerrainSubsystem::GetRegisteredChunks(
+	TArray<TPair<FIntPoint, UOceanTerrainChunkComponent*>>& OutChunks) const
+{
+	OutChunks.Reset();
+	for (const TPair<FIntPoint, TWeakObjectPtr<UOceanTerrainChunkComponent>>& Entry : Chunks)
+	{
+		if (UOceanTerrainChunkComponent* Chunk = Entry.Value.Get())
+		{
+			OutChunks.Add({ Entry.Key, Chunk });
+		}
+	}
+	OutChunks.Sort([](const TPair<FIntPoint, UOceanTerrainChunkComponent*>& A,
+					  const TPair<FIntPoint, UOceanTerrainChunkComponent*>& B)
+		{ return A.Key.Y != B.Key.Y ? A.Key.Y < B.Key.Y : A.Key.X < B.Key.X; });
+}
+
 void UOceanTerrainSubsystem::RegisterChunk(UOceanTerrainChunkComponent* Chunk, FIntPoint ChunkCoord)
 {
 	if (Chunk)
