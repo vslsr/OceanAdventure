@@ -13,9 +13,12 @@ The canonical layout is:
     /NavalCore/Arts/Cannon             cannon meshes and materials
     /NavalCore/Arts/HelmWheel          helm-wheel meshes and materials
 
-This must run inside Unreal Editor. In Output Log ``Cmd`` mode use:
+This must run inside Unreal Editor. In the Output Log's Python input mode use
+(the plugin's Content/Python is already on sys.path, so no path is needed):
 
-    py "C:/EpicWkspc/OceanAdventure/Plugins/NavalCore/Content/Python/MigrateNavalCoreContentLayout.py"
+    import importlib, MigrateNavalCoreContentLayout
+    importlib.reload(MigrateNavalCoreContentLayout)
+    MigrateNavalCoreContentLayout.main()
 
 The script is idempotent. It keeps an existing canonical destination first, otherwise it
 prefers the asset already filed under NavalArts over the duplicate later regenerated under

@@ -1,6 +1,6 @@
 # 海域海岛冒险基础设计
 
-> 适用工程：`LyraTemplate`，Unreal Engine 5.7。本文整理海域冒险玩法的第一阶段设计：动态生成地图、水域、离散岛屿，以及后续适配生存建造的网络同步与持久化边界。`../LyraStarterGame` 可作为完整 Lyra 参考项目，`E:/WildOmission-1.0.1-beta` 可作为生存、采集、世界分块思路参考。
+> 适用工程：`LyraTemplate`，Unreal Engine 5.7。本文整理海域冒险玩法的第一阶段设计：动态生成地图、水域、离散岛屿，以及后续适配生存建造的网络同步与持久化边界。`../LyraStarterGame` 可作为完整 Lyra 参考项目，Wild Omission（由环境变量 `WILD_OMISSION_ROOT` 指向的本机检出）可作为生存、采集、世界分块思路参考。
 
 ## 1. 设计目标
 

@@ -317,17 +317,34 @@ bpy.ops.object.mode_set(mode='OBJECT')
 
 ### 导出路径约定
 
-所有 FBX 统一导出到：
+所有 FBX 统一导出到本仓库的：
 ```
-C:/EpicWkspc/LyraStarterGame/blender/fbx/
+<project>/blender/models/
 ```
 
-脚本中固定写法：
+**路径从脚本自身位置推导，不写死盘符**——脚本住在 `<project>/blender/script/python/`，
+往上三层就是工程根。写死绝对路径的旧写法既换机器就废，又会把 FBX 导到同级的别的工程里去：
+
 ```python
-base_path = "C:/EpicWkspc/LyraStarterGame/blender/fbx"
+from pathlib import Path
+
+def models_dir():
+    if "__file__" not in globals():
+        raise RuntimeError(
+            "Cannot derive the project root: this script has no __file__ (unsaved Blender "
+            "text block). Save it to <project>/blender/script/python/ and run it from disk."
+        )
+    target = Path(__file__).resolve().parents[3] / "blender" / "models"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+base_path = str(models_dir())
 # 静态网格：f"{base_path}/SM_ModelName.fbx"
 # 骨骼网格：f"{base_path}/SK_ModelName.fbx"
 ```
+
+作为 Blender 文本块运行时没有 `__file__`，这时**停下来报错**，不要猜一个路径——
+把 FBX 导到别处比导不出去更难发现。
 
 UE5 从该目录导入，不直接导出到 Content 目录（避免 Blender 覆盖 UE5 已处理的资产）。
 
@@ -371,7 +388,7 @@ FBX 文件内部声明单位为 cm，UE5 直接读取 cm 值，不再二次换�
 
 ```python
 bpy.ops.export_scene.fbx(
-    filepath="C:/EpicWkspc/LyraStarterGame/blender/fbx/SM_Model.fbx",
+    filepath=f"{models_dir()}/SM_Model.fbx",
     use_selection=True,
     global_scale=1.0,
     apply_scale_options='FBX_SCALE_UNITS',  # 将 m→cm 烘焙进几何体
@@ -387,7 +404,7 @@ bpy.ops.export_scene.fbx(
 
 ```python
 bpy.ops.export_scene.fbx(
-    filepath="C:/EpicWkspc/LyraStarterGame/blender/fbx/SK_Model.fbx",
+    filepath=f"{models_dir()}/SK_Model.fbx",
     use_selection=True,
     global_scale=1.0,
     apply_scale_options='FBX_SCALE_UNITS',  # 将 m→cm 烘焙进几何体

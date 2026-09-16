@@ -7,6 +7,27 @@
 #               导入 UE5 后在该槽位挂流光材质即可，无需改模型。
 # 先不创建动画（纯静态网格）。
 
+from pathlib import Path
+
+
+# --- Output location --------------------------------------------------------
+# Derived from this file's own location (``<project>/blender/script/python/``) so the
+# script exports into this checkout wherever it is cloned. The repository convention is
+# ``<project>/blender/models/``; the old hard-coded destination pointed at a sibling
+# LyraStarterGame checkout, which is exactly the cross-project export the asset workflow
+# forbids. Running as an unsaved Blender text block leaves no ``__file__`` to derive from,
+# so stop with the fix rather than exporting somewhere arbitrary.
+def models_dir():
+    if "__file__" not in globals():
+        raise RuntimeError(
+            "Cannot derive the project root: this script has no __file__ (unsaved Blender "
+            "text block). Save it to <project>/blender/script/python/ and run it from disk."
+        )
+    target = Path(__file__).resolve().parents[3] / "blender" / "models"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 import bpy
 import math
 
@@ -196,7 +217,7 @@ def run():
     bpy.context.view_layer.objects.active = sm
 
     # 规范：global_scale=1.0 + FBX_SCALE_UNITS，禁止 ×100
-    export_path = "C:/EpicWkspc/LyraStarterGame/blender/fbx/SM_Car.fbx"
+    export_path = str(models_dir() / "SM_Car.fbx")
     bpy.ops.export_scene.fbx(
         filepath=export_path,
         use_selection=True,

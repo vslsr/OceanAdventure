@@ -36,20 +36,28 @@ HOST_PROJECT = HOST_ROOT / "WildOmissionMigration.uproject"
 HOST_PLUGIN = HOST_ROOT / "Plugins" / "OceanAdventure"
 UNREAL_SCRIPT = SCRIPT_PATH.with_name("MigrateWildOmissionEnvironment_Unreal.py")
 
-SOURCE_PROJECT_ROOT = Path(
-    os.environ.get("WILD_OMISSION_ROOT", r"E:\WildOmission-1.0.1-beta")
+# These three live OUTSIDE this repository -- a separate game checkout and two engine
+# installs -- so there is no relative form for them and no default worth hard-coding: a
+# machine-specific default only turns "you did not tell me where it is" into a confusing
+# "that path does not exist" much later. Require the environment variable instead.
+def required_external_path(variable, description):
+    value = os.environ.get(variable)
+    if not value:
+        raise SystemExit(
+            f"Set {variable} to {description}. It lives outside this repository, so the "
+            f"path cannot be derived from the checkout."
+        )
+    return Path(value)
+
+
+SOURCE_PROJECT_ROOT = required_external_path(
+    "WILD_OMISSION_ROOT", "the Wild Omission reference project root"
 )
-UE53_EDITOR = Path(
-    os.environ.get(
-        "UE53_EDITOR",
-        r"E:\Program Files\Epic Games\UE_5.3\Engine\Binaries\Win64\UnrealEditor-Cmd.exe",
-    )
+UE53_EDITOR = required_external_path(
+    "UE53_EDITOR", "UE 5.3's Engine/Binaries/Win64/UnrealEditor-Cmd.exe"
 )
-UE57_EDITOR = Path(
-    os.environ.get(
-        "UE57_EDITOR",
-        r"E:\Program Files\Epic Games\UE_5.7\Engine\Binaries\Win64\UnrealEditor-Cmd.exe",
-    )
+UE57_EDITOR = required_external_path(
+    "UE57_EDITOR", "UE 5.7's Engine/Binaries/Win64/UnrealEditor-Cmd.exe"
 )
 
 SOURCE_PACKAGES = [

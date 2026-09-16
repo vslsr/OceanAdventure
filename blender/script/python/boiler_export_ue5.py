@@ -2,6 +2,27 @@
 锅炉骨骼动画导出脚本（UE5 兼容版）
 修复：自动注入 3D 视口上下文，解决 context is incorrect 错误
 """
+from pathlib import Path
+
+
+# --- Output location --------------------------------------------------------
+# Derived from this file's own location (``<project>/blender/script/python/``) so the
+# script exports into this checkout wherever it is cloned. The repository convention is
+# ``<project>/blender/models/``; the old hard-coded destination pointed at a sibling
+# LyraStarterGame checkout, which is exactly the cross-project export the asset workflow
+# forbids. Running as an unsaved Blender text block leaves no ``__file__`` to derive from,
+# so stop with the fix rather than exporting somewhere arbitrary.
+def models_dir():
+    if "__file__" not in globals():
+        raise RuntimeError(
+            "Cannot derive the project root: this script has no __file__ (unsaved Blender "
+            "text block). Save it to <project>/blender/script/python/ and run it from disk."
+        )
+    target = Path(__file__).resolve().parents[3] / "blender" / "models"
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 import bpy
 import math
 
@@ -250,7 +271,7 @@ def main():
     scene.frame_set(1)
 
     # ── STEP 7：导出 FBX ──
-    base_path = "C:/EpicWkspc/LyraStarterGame/blender/fbx"
+    base_path = str(models_dir())
 
     bpy.ops.object.select_all(action='DESELECT')
     boiler_static.select_set(True)

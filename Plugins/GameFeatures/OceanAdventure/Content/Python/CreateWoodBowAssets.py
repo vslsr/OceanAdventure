@@ -21,9 +21,12 @@ AnimBlueprint silently wired to a clip that is not the one it names.
 The bow is the player's weapon, so it belongs to the gameplay-layer GameFeature that owns
 the player Pawn -- this one. Nothing here may reference /Raft or another feature's content.
 
-Run in the full Unreal Editor (Output Log, Cmd mode)::
+Run in the full Unreal Editor, Output Log Python input mode (the GameFeature's
+Content/Python is already on sys.path, so no path is needed)::
 
-    py "C:/EpicWkspc/OceanAdventure/Plugins/GameFeatures/OceanAdventure/Content/Python/CreateWoodBowAssets.py"
+    import importlib, CreateWoodBowAssets
+    importlib.reload(CreateWoodBowAssets)
+    CreateWoodBowAssets.main()
 
 Safe to re-run. In the full Editor a re-run re-imports the FBX, so a Blender revision lands;
 in a PythonScript commandlet it reuses what exists instead (see import_or_reuse_bow below).

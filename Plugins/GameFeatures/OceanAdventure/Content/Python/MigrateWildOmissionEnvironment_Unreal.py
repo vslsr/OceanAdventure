@@ -6,9 +6,14 @@ import shutil
 import unreal
 
 
-SOURCE_PROJECT_ROOT = os.environ.get(
-    "WILD_OMISSION_ROOT", r"E:\WildOmission-1.0.1-beta"
-)
+# Set by the launcher script. Outside this repository, so it cannot be derived from the
+# checkout and has no default -- see required_external_path() in the launcher.
+SOURCE_PROJECT_ROOT = os.environ.get("WILD_OMISSION_ROOT")
+if not SOURCE_PROJECT_ROOT:
+    raise RuntimeError(
+        "WILD_OMISSION_ROOT is not set. Run this through MigrateWildOmissionEnvironment.py "
+        "rather than invoking it directly."
+    )
 DESTINATION_ROOT = "/OceanAdventure/Environment/WildOmission"
 SOURCE_PACKAGES = [
     "/Game/WildOmissionCore/Art/Common/T_Fingerprints_01",
