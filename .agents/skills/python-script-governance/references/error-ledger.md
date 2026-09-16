@@ -16,8 +16,8 @@
 | PY-UE-008 | 2026-08-28 | Unreal Python / PIE 资产编辑 | `The Editor is currently in a play mode` / 误报资产缺失或创建失败 | VERIFIED | 3 |
 | PY-UE-009 | 2026-08-28 | Unreal Python / 读回探针 | `'NoneType' object has no attribute 'get_editor_property'` | VERIFIED | 1 |
 | PY-BLENDER-001 | 2026-09-15 | Blender bpy / Pose 骨骼空间 | `String midpoint moved -0.0000m at full draw` | VERIFIED | 1 |
-| PY-BLENDER-002 | 2026-09-16 | Blender bpy / Action 通道 API | `'Action' object has no attribute 'fcurves'` | OPEN | 1 |
-| PY-BLENDER-003 | 2026-09-16 | Blender bpy / 脚本输出可见性 | 宿主报告「run script 后什么都没有」 | OPEN | 1 |
+| PY-BLENDER-002 | 2026-09-16 | Blender bpy / Action 通道 API | `'Action' object has no attribute 'fcurves'` | VERIFIED | 1 |
+| PY-BLENDER-003 | 2026-09-16 | Blender bpy / 脚本输出可见性 | 宿主报告「run script 后什么都没有」 | VERIFIED | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
 | PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
@@ -380,10 +380,14 @@
 - 修复：新增 `assign_action()` / `bind_action_slot()` / `get_fcurves()` 三个兼容入口
   （`get_fcurves` 沿用 `boiler_animation.py` 等脚本里已有的同名 helper），三处读通道全部改走它；非空断言的报错信息带上走的是哪条 API 与 slot 名。
 - 验证证据：普通 CPython 用假 bpy 对象分别模拟 legacy Action（有 `fcurves`）与 slotted
-  Action（只有 `layers/strips/channelbags`），两条路径都取到同一组通道，缺通道时按预期抛错；
-  两个脚本 `ast.parse` 通过。Blender 宿主尚未重跑。
-- 状态：`OPEN`（宿主重跑并产出四个 `blender/models/A_WoodBow_*.fbx` 后才可转
-  `VERIFIED`——这次不再拿中途产物结案）。
+  Action（只有 `layers/strips/channelbags`），两条路径都取到同一组通道，缺通道时按预期抛错。
+  2026-09-16 用户在 Blender 5.1.0 重跑：`preview_wood_bow.py` 的报告列出四段 clip，
+  每段 11 条曲线（两根弓臂四元数各 4 + 弦中点位移 3），帧跨度 0..288 / 0..24 / 0..192 / 0..15，
+  逐段回放实测弦位移 20.0 / 180.0 / 24.0 / 192.2 mm。四段 Action 能被烘出来并被读回，
+  就证明 `bake_action()` 里那次 `AttributeError` 已消失、通道读取走通了 slotted API。
+- 状态：`VERIFIED`（限于 Blender 侧的通道读取与烘焙。合并包
+  `blender/models/A_WoodBow_Clips.fbx` 的导出与 UE 导入仍未验证，属
+  `blender-skeletal-asset-workflow` 里标注的未验证项，不在本条范围内）。
 - 发生次数：1。
 
 ## PY-BLENDER-003：脚本只用 print 报告，等于在宿主里没有输出
@@ -409,9 +413,10 @@
 - 修复：两个脚本新增 `report(lines)`，同时写 `WoodBow_Report` datablock、弹窗与 print；
   收尾结论全部改走它。
 - 验证证据：普通 CPython 用假 bpy 验证——datablock 每次运行被替换而非追加、
-  popup 被调用、`window_manager` 为 None 时不抛错且 datablock 仍写入；
-  preview 脚本的假文件测试里断言报告含 clip 清单与「flat」点名。Blender 宿主待重跑。
-- 状态：`OPEN`。
+  popup 被调用、`window_manager` 为 None 时不抛错且 datablock 仍写入。
+  2026-09-16 用户在 Blender 5.1.0 重跑后，首次看到脚本输出：`WoodBow_Report` 面板里
+  完整列出四段 clip 与实测位移。同一份信息在此前三轮里一直存在于 print，用户一次也没看到。
+- 状态：`VERIFIED`。
 - 发生次数：1。
 
 ## PY-LYRA-001：USTRUCT 包装器拒绝带参数构造
