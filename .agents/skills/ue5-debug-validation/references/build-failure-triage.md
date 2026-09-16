@@ -1,10 +1,11 @@
 # Build Failure Triage (UBT / UHT)
 
 编译失败和运行期故障不是一类问题：这里的证据在 UBT 输出里，不在 Output Log 里，
-而且**最常见的两种报错都会把人引向错误的方向**——它们看起来像代码写错了，其实是
-`Intermediate/` 陈旧。
+而且**最常见的几种报错都会把人引向错误的方向**——它们看起来像代码写错了或者本地没拉全，
+实际上前两种是 `Intermediate/` 陈旧、第三种是有人把一次改动拆开提交了。
+三种的处理互不相同，所以先对签名、再动手。
 
-## 两个会误导人的签名
+## 三个会误导人的签名
 
 ### 1. `UCLASS(...)` 报 C4430 / 下一行报 C2143
 
@@ -37,9 +38,40 @@ Module.SomeModule.cpp(18,1): Error C1083: 无法打开包括文件: ".../Private
 **常见触发**：切分支（尤其是分支间新增/删除了源文件）、第一次把一批新文件拉进来、
 中途打断过一次编译。
 
+### 3. `#include` 的**头文件**报 C1083——先分清是缺文件还是缓存
+
+```
+SomeFile.cpp(3,1): Error C1083: 无法打开包括文件: "Terrain/SomeFile.h"
+```
+
+和第 2 种长得像，**但处理完全相反**，而且最容易把人引向「我是不是没拉全」：
+
+| | 第 2 种：陈旧缓存 | 第 3 种：不完整落地 |
+| --- | --- | --- |
+| 报错指向 | `.cpp`（unity blob 里的一行） | `.h`（源文件自己的 `#include`） |
+| 那个文件在仓库里 | **在** | **不在** |
+| 处理 | 删 `Intermediate/` | 把缺的文件合过来，删缓存没用 |
+
+**30 秒判别**——问的是「远端有没有这个文件」，不是「我本地是不是旧了」：
+
+```bash
+git ls-files "*/SomeFile.h"                 # 当前检出里有吗
+git log --oneline --all -- "*/SomeFile.h"   # 哪个提交带来它，在哪条分支上
+```
+
+两条都空 → 那是引擎头，检查模块的 `Build.cs` 依赖漏了哪个。
+第一条空、第二条有 → **文件在别的分支上，当前分支不完整**。这时 `git pull` 再多次也没用，
+远端那个分支上本来就没有它。
+
+**为什么会出现不完整的分支**：有人把一次改动的一部分单独提交上去了——最常见的是
+GitHub 网页版的「Create file」，它一次只能提交一个文件且直接落在 main。
+规则见 `AGENTS.md` 的「源码变更必须整套落地」。
+
 ## 处理
 
-两种签名同因，同一个动作解决——**删掉 `Intermediate/`，包括插件自己的那份**：
+**第 1、2 种同因**（陈旧 `Intermediate/`），同一个动作解决；**第 3 种不是**，
+它缺的是文件本身，删缓存只会浪费一次全量重编。先按第 3 种的两条 `git` 命令排除掉，
+再做下面这步——**删掉 `Intermediate/`，包括插件自己的那份**：
 
 ```powershell
 Remove-Item -Recurse -Force .\Intermediate, .\Plugins\<PluginName>\Intermediate -ErrorAction SilentlyContinue
@@ -73,6 +105,13 @@ static_assert(
 保证一样强（编译期），但依赖只存在于 `.cpp`，头文件的行号和依赖图都不动。
 
 ## 已发生记录
+
+- 2026-09-16：`76b5c25` 用 GitHub 网页版把 `OceanTerrainMeshBuilder.cpp` 单独提交到 main，
+  它依赖的 22 个地形源文件还在功能分支上。main 编译报
+  `C1083: 无法打开包括文件 "Terrain/OceanTerrainMeshBuilder.h"`。
+  排查先走了「是不是没拉全」——验证了本地 HEAD、`origin/main` 与实时远端三者一致、
+  工作区干净、无子模块，**全部正常**，因为问题不在拉取侧。
+  把完整分支合入 main 后解决。上面第 3 个签名就是为这次写的。
 
 - 2026-09-16：为「让 `ChunkSize` 从 `ChunkGrid` 派生」，往 `OceanChunkActor.h`、
   `OceanWorldManagerComponent.h`、`OceanGenerationSettings.h` 三个 public 头各加了一行
