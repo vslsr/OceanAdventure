@@ -299,7 +299,24 @@ def set_map_default_experience(level_subsystem):
         unreal.EditorAssetLibrary.load_blueprint_class(EXPERIENCE_PATH),
         f"Unable to load blueprint class: {EXPERIENCE_PATH}",
     )
-    world_settings.set_editor_property("default_gameplay_experience", experience_class)
+    # DefaultGameplayExperience is EditDefaultsOnly, and the WorldSettings in a level is an
+    # INSTANCE, so Python cannot write it (PY-LYRA-002). Try anyway -- a future engine or a
+    # native bridge may allow it -- but treat failure as the expected path and hand the user
+    # the two clicks rather than pretending the level is finished.
+    try:
+        world_settings.set_editor_property("default_gameplay_experience", experience_class)
+    except Exception as error:
+        unreal.log_warning(
+            f"[LineArtPreviewLevel] Could not set DefaultGameplayExperience from Python: {error}\n"
+            "  This is expected: the property is EditDefaultsOnly and a level's WorldSettings "
+            "is an instance.\n"
+            "  FINISH BY HAND: open the map, Window > World Settings > Default Gameplay "
+            "Experience, choose BP_Experience_Ocean, save.\n"
+            "  Everything else in this level is already built. Without this step PIE opens the "
+            "frontend menu instead of the level."
+        )
+        return None
+
     stored = world_settings.get_editor_property("default_gameplay_experience")
     require(
         stored is not None and stored.get_path_name() == experience_class.get_path_name(),
@@ -329,11 +346,15 @@ def main():
           unreal.Vector(-700.0, 0.0, 120.0))
     build_preview_actors(actor_subsystem)
 
-    set_map_default_experience(level_subsystem)
+    experience = set_map_default_experience(level_subsystem)
     require(level_subsystem.save_current_level(), f"Unable to save {MAP_PATH}")
 
     log(f"Built {MAP_PATH}")
-    log("LINEART_PREVIEW_LEVEL_OK")
+    if experience is None:
+        log("LINEART_PREVIEW_LEVEL_OK_EXPERIENCE_PENDING")
+        log("  The level is built but its Experience is NOT set. See the warning above.")
+    else:
+        log("LINEART_PREVIEW_LEVEL_OK")
 
 
 if __name__ == "__main__":

@@ -573,9 +573,16 @@ def configure_project_settings(collection, fill, outline):
     """
     settings = getattr(unreal, "LineArtCoreSettings", None)
     if settings is None:
+        # Absent from `unreal` does NOT mean the module is off. The C++ subsystem logs under
+        # LogLineArtCore whether or not Python can see the class: an editor that was running
+        # when the module was built keeps the old reflection bindings. Say both, or the
+        # reader goes hunting through plugin settings for a problem that is not there.
         unreal.log_warning(
-            "[CreateLineArtCoreAssets] LineArtCoreRuntime is not loaded; set Project Settings > "
-            "Game > Line Art Core by hand."
+            "[CreateLineArtCoreAssets] unreal.LineArtCoreSettings is not exposed to Python. "
+            "Most likely the editor still holds pre-build bindings -- RESTART THE EDITOR and "
+            "re-run. (Check LogLineArtCore: if it logs at all, the module is loaded and this "
+            "is only a stale-binding problem.) Until then set Project Settings > Game > "
+            "Line Art Core by hand."
         )
         return False
 
