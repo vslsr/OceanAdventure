@@ -9,6 +9,7 @@
 #include "TopDownPawnComponent.generated.h"
 
 class APlayerController;
+class UCharacterMovementComponent;
 class UCommonActivatableWidget;
 class UEnhancedInputComponent;
 struct FComponentRequestHandle;
@@ -60,6 +61,21 @@ private:
 	void Input_CameraRotateStarted(const FInputActionValue& InputActionValue);
 	void Input_CameraRotateCompleted(const FInputActionValue& InputActionValue);
 	void Input_CameraRotate(const FInputActionValue& InputActionValue);
+	void Input_SprintStarted(const FInputActionValue& InputActionValue);
+	void Input_SprintCompleted(const FInputActionValue& InputActionValue);
+	void SetSprinting(bool bNewSprinting);
+	void ApplySprintSpeed();
+	void CaptureBaseMaxWalkSpeed();
+	UCharacterMovementComponent* FindCharacterMovement() const;
+
+	/**
+	 * The owning client decides when it sprints; the server has to agree or its own
+	 * simulation keeps walking at base speed and corrects the client back every update.
+	 * Simulated proxies need nothing: they already see the replicated movement.
+	 */
+	UFUNCTION(Server, Reliable, WithValidation)
+	void ServerSetSprinting(bool bNewSprinting);
+
 	void EnsureInputWidget(APlayerController* PlayerController);
 	void RemoveInputWidget();
 	void PushCameraDragInputWidget(APlayerController* PlayerController);
@@ -91,6 +107,13 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
 	FGameplayTag CameraRotateInputTag;
 
+	/**
+	 * Optional. InputConfigs without a sprint entry (SimpleExperience still uses
+	 * DA_InputConfig_Base) keep every other top-down binding; only sprint goes missing.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input", meta = (Categories = "InputTag"))
+	FGameplayTag SprintInputTag;
+
 	/** CommonUI policy widget that keeps the cursor visible without touching PlayerController state. */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Input")
 	TSubclassOf<UCommonActivatableWidget> InputWidgetClass;
@@ -111,9 +134,17 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Trace")
 	bool bTraceComplex;
 
-	/** Degrees per second used to turn the pawn toward the mouse-plane direction. Zero snaps. */
+	/**
+	 * Exponential smoothing rate (per second) for turning the pawn toward the mouse-plane
+	 * direction, as in RInterpTo: the step is the remaining angle times Clamp(Speed * Dt, 0, 1),
+	 * so it is fast while the error is large and settles without overshoot. Zero snaps.
+	 */
 	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Movement", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float FacingRotationInterpSpeed;
+
+	/** Multiplies MaxWalkSpeed while the sprint input is held. */
+	UPROPERTY(EditDefaultsOnly, Category = "Top Down|Movement", meta = (ClampMin = "1.0", UIMin = "1.0"))
+	float SprintSpeedMultiplier;
 
 	/**
 	 * While any of these ASC tags is present, station/building input owns the cursor and the
@@ -150,6 +181,9 @@ private:
 	UPROPERTY(Transient)
 	TObjectPtr<UCommonActivatableWidget> PushedCameraDragInputWidget;
 
+	/** MaxWalkSpeed as the pawn blueprint tuned it, captured before sprint ever scales it. */
+	float BaseMaxWalkSpeed;
+
 	TArray<uint32> InputBindingHandles;
 	TSharedPtr<FComponentRequestHandle> ExtensionRequestHandle;
 	FVector MoveTarget;
@@ -158,6 +192,8 @@ private:
 	bool bHasMoveTarget;
 	bool bInputBound;
 	bool bCameraRotateHeld;
+	bool bSprinting;
+	bool bBaseMaxWalkSpeedCaptured;
 	bool bOriginalUseControllerRotationYaw;
 	bool bRotationPolicyOverridden;
 };

@@ -247,6 +247,29 @@ def build_preview_actors(actor_subsystem):
     return spawned
 
 
+def find_world_settings(world):
+    """Reach AWorldSettings through whatever this engine version actually exposes.
+
+    GameplayStatics.get_world_settings does NOT exist in UE 5.7's Python bindings, despite
+    two other scripts in this repository calling it -- neither had ever run past that line.
+    "The repo already writes it this way" is a lead, not evidence that an API exists.
+    """
+    getter = getattr(unreal.GameplayStatics, "get_world_settings", None)
+    if getter is not None:
+        return getter(world)
+
+    getter = getattr(world, "get_world_settings", None)
+    if getter is not None:
+        return getter()
+
+    actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    for actor in actor_subsystem.get_all_level_actors():
+        if isinstance(actor, unreal.WorldSettings):
+            return actor
+
+    return None
+
+
 def set_map_default_experience(level_subsystem):
     """Point World Settings at the Ocean Adventure Experience.
 
@@ -256,10 +279,14 @@ def set_map_default_experience(level_subsystem):
     """
     editor_subsystem = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
     world = require(editor_subsystem.get_editor_world(), "No editor world after loading the map")
-    world_settings = require(
-        unreal.GameplayStatics.get_world_settings(world),
-        f"Unable to reach the World Settings of {MAP_PATH}",
-    )
+    world_settings = find_world_settings(world)
+    if world_settings is None:
+        unreal.log_warning(
+            f"[LineArtPreviewLevel] Could not reach the World Settings of {MAP_PATH} from Python. "
+            "Open the map, use Window > World Settings, and set Default Gameplay Experience to "
+            "BP_Experience_Ocean by hand; everything else in this level is already built."
+        )
+        return None
     if not isinstance(world_settings, unreal.LyraWorldSettings):
         unreal.log_warning(
             f"[LineArtPreviewLevel] {MAP_PATH} uses {type(world_settings).__name__}, not "
@@ -273,6 +300,11 @@ def set_map_default_experience(level_subsystem):
         f"Unable to load blueprint class: {EXPERIENCE_PATH}",
     )
     world_settings.set_editor_property("default_gameplay_experience", experience_class)
+    stored = world_settings.get_editor_property("default_gameplay_experience")
+    require(
+        stored is not None and stored.get_path_name() == experience_class.get_path_name(),
+        f"World Settings did not retain the experience; it reads back as {stored}",
+    )
     log(f"{MAP_PATH}: DefaultGameplayExperience = BP_Experience_Ocean")
     return experience_class
 

@@ -18,6 +18,8 @@
 | PY-BLENDER-001 | 2026-09-15 | Blender bpy / Pose 骨骼空间 | `String midpoint moved -0.0000m at full draw` | VERIFIED | 1 |
 | PY-BLENDER-002 | 2026-09-16 | Blender bpy / Action 通道 API | `'Action' object has no attribute 'fcurves'` | VERIFIED | 1 |
 | PY-BLENDER-003 | 2026-09-16 | Blender bpy / 脚本输出可见性 | 宿主报告「run script 后什么都没有」 | VERIFIED | 1 |
+| PY-UE-010 | 2026-09-17 | Unreal Python / 材质集合参数 | `CollectionParameter has invalid parameter None` | OPEN | 1 |
+| PY-UE-011 | 2026-09-17 | Unreal Python / WorldSettings | `GameplayStatics has no attribute 'get_world_settings'` | OPEN | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
 | PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
@@ -449,6 +451,72 @@
   完整列出四段 clip 与实测位移。同一份信息在此前三轮里一直存在于 print，用户一次也没看到。
 - 状态：`VERIFIED`。
 - 发生次数：1。
+
+## PY-UE-010：CollectionParameter 节点编译期参数名为 None
+
+- 日期：2026-09-17；发生一次。
+- 宿主与入口：UE 5.7 Unreal Editor，Output Log Python 输入模式运行
+  `Plugins/LineArtCore/Content/Python/CreateLineArtCoreAssets.py`。
+- 原始错误：
+
+  ```text
+  LogMaterial: Warning: [AssetLog] ...\M_LineArt_Fill.uasset: Failed to compile Material for
+  platform PCD3D_SM6, Default Material will be used in game.
+      (Node CollectionParameter) CollectionParameter has invalid parameter None
+      (Node CollectionParameter) CollectionParameter has invalid parameter None
+  ```
+
+  `M_LineArt_Outline` 同样两条。**脚本本身没有 traceback，四个资产全部保存成功、缩略图也渲出来了。**
+
+- 首次错误转换：`GraphBuilder.collection_parameter()` 依次设置节点的 `collection` 与
+  `parameter_name`，随后 `recompile_material` 时材质编译器报参数名为 `None`。
+- 根因（**待宿主确认**）：`UMaterialExpressionCollectionParameter` 的真相是 `ParameterId`（FGuid），
+  `ParameterName` 是**派生值**——`PostEditChangeProperty` 会用 `ParameterId` 反查集合来重写
+  `ParameterName`。Python 侧构造 `CollectionScalarParameter` / `CollectionVectorParameter` 时没有给
+  `Id`，集合里的参数因此带零 GUID；节点的 `ParameterId` 也是零，反查得到 `NAME_None`，于是编译期
+  打印出来的名字就是 `None`。**写 `parameter_name` 是写在派生字段上，会被反查覆盖。**
+- **为什么读回没拦住**：脚本断言的是
+  `str(node.get_editor_property("parameter_name")) == parameter_name`——验的是「我刚写进去的值还在不在」，
+  而不是「这个名字在集合里解析得到」。验证对象选错了一层：**一个只校验自己写入的读回，对派生字段
+  永远是同义反复**。真正该验的是节点的 `parameter_id` 非零，且它在集合的参数表里能查到。
+- 预防规则：
+  1. 写任何**派生字段**前先确认真相字段是谁。`CollectionParameter` 的真相是 `ParameterId`，
+     不是 `ParameterName`。
+  2. Python 构造带 `Id` 的 USTRUCT 参数条目时必须显式赋一个**确定性** GUID
+     （按参数名做 uuid5，重跑保持一致），否则零 GUID 会让下游解析静默失败。
+  3. 节点侧先取集合里实际存储的 name→id 表，再按表写 `parameter_id`；读回断言 `parameter_id` 非零。
+  4. **资产脚本跑完必须检查材质编译结果**，不能只看「保存成功」。缩略图能渲出来也不等于编译通过——
+     本次四个资产全部保存、缩略图全部渲出，而两支材质在游戏里会退化成 Default Material。
+- 修复：按上述 2/3 改 `CreateLineArtCoreAssets.py`；读回改为校验 id 与集合解析。
+- 状态：`OPEN`。待在宿主重跑且 Output Log 无 `Failed to compile Material` 后转 `VERIFIED`。
+
+## PY-UE-011：GameplayStatics 没有暴露 get_world_settings
+
+- 日期：2026-09-17；发生一次。
+- 宿主与入口：UE 5.7 Unreal Editor，Output Log Python 输入模式运行
+  `Plugins/GameFeatures/OceanAdventure/Content/Python/CreateLineArtPreviewLevel.py`。
+- 原始错误：
+
+  ```text
+  File ".../CreateLineArtPreviewLevel.py", line 260, in set_map_default_experience
+    unreal.GameplayStatics.get_world_settings(world),
+  AttributeError: type object 'GameplayStatics' has no attribute 'get_world_settings'
+  ```
+
+- 首次错误转换：关卡已创建、Actor 已生成、地图已保存，随后在设置
+  `DefaultGameplayExperience` 这一步抛错，**Experience 没配上**。
+- 根因：UE 5.7 的 Python 暴露里 `GameplayStatics` 没有这个方法。写法照抄自仓库既有的
+  `Plugins/GameFeatures/OceanAdventure/Content/Python/BuildCannonTestbed.py:274`
+  与 `create_frontend_experience_entry.py:255`——**仓库内的既有写法不等于已验证的写法**，
+  那两处要么同样从未执行到这一步，要么是更早引擎版本的遗留。
+- 预防规则：
+  1. 「仓库里已经这么写过」只能作为**线索**，不能作为 API 存在的证据；门禁要求的优先级是
+     「当前仓库已**成功调用**过」，没有成功运行记录的抄写不满足这一条。
+  2. 取 `AWorldSettings` 一律走探测链，并在全部失败时报出可手工执行的替代路径
+     （World Settings 面板里直接设 Default Gameplay Experience）。
+- 波及：`BuildCannonTestbed.py` 与 `create_frontend_experience_entry.py` 同一处写法，一并修。
+- 状态：`OPEN`。待宿主重跑出现 `LINEART_PREVIEW_LEVEL_OK` 且地图 World Settings 读回到
+  `BP_Experience_Ocean` 后转 `VERIFIED`。
 
 ## PY-LYRA-001：USTRUCT 包装器拒绝带参数构造
 

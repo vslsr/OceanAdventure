@@ -34,6 +34,8 @@ every enabled plugin's Content/Python on sys.path, so no path is needed or wante
     CreateLineArtCoreAssets.main()
 """
 
+import uuid
+
 import unreal
 
 
@@ -136,6 +138,30 @@ def make_struct(struct_type, **fields):
         return instance
 
 
+#: Namespace for deterministic parameter GUIDs. Fixed forever: change it and every
+#: CollectionParameter node in every material stops resolving.
+PARAMETER_GUID_NAMESPACE = uuid.UUID("6f1d0a2e-3b47-5c88-9a10-2d4e6f8b0c31")
+
+
+def parameter_guid(parameter_name):
+    """A stable GUID for one parameter name.
+
+    Deterministic rather than random so a re-run produces byte-identical assets and every
+    material that already points at this parameter keeps resolving. A fresh random GUID on
+    every run would silently orphan every node referencing it.
+    """
+    value = uuid.uuid5(PARAMETER_GUID_NAMESPACE, parameter_name)
+    a, b, c, d = (int.from_bytes(value.bytes[i * 4:(i + 1) * 4], "big") for i in range(4))
+    guid = unreal.Guid()
+    for field, part in (("a", a), ("b", b), ("c", c), ("d", d)):
+        set_property(guid, field, part)
+    return guid
+
+
+def guid_is_valid(guid):
+    return any(int(guid.get_editor_property(field)) != 0 for field in ("a", "b", "c", "d"))
+
+
 def package_path(asset):
     return "" if asset is None else str(asset.get_path_name()).split(".", 1)[0]
 
@@ -190,12 +216,25 @@ def build_collection():
         if str(entry.get_editor_property("parameter_name")) not in owned_vectors
     ]
 
+    # Every entry gets an explicit Id. A Python-built struct leaves it a zero GUID, and a
+    # zero GUID is what makes a CollectionParameter node resolve to nothing later -- the
+    # node's ParameterId is the real link, the name is only a label derived from it.
     scalars = list(preserved_scalars) + [
-        make_struct(unreal.CollectionScalarParameter, parameter_name=unreal.Name(name), default_value=value)
+        make_struct(
+            unreal.CollectionScalarParameter,
+            parameter_name=unreal.Name(name),
+            default_value=value,
+            id=parameter_guid(name),
+        )
         for name, value in SCALAR_PARAMETERS
     ]
     vectors = list(preserved_vectors) + [
-        make_struct(unreal.CollectionVectorParameter, parameter_name=unreal.Name(name), default_value=value)
+        make_struct(
+            unreal.CollectionVectorParameter,
+            parameter_name=unreal.Name(name),
+            default_value=value,
+            id=parameter_guid(name),
+        )
         for name, value in VECTOR_PARAMETERS
     ]
 
@@ -217,16 +256,33 @@ def build_collection():
         f"{len(preserved_vectors) + len(VECTOR_PARAMETERS)}",
     )
 
+    # The map the material nodes will be wired from: whatever the collection ACTUALLY
+    # stored, not what this script intended to store. If UE reassigned an id, follow it.
+    parameter_ids = {}
+    for entry in final_scalars + final_vectors:
+        name = str(entry.get_editor_property("parameter_name"))
+        entry_id = entry.get_editor_property("id")
+        require(
+            guid_is_valid(entry_id),
+            f"Collection parameter '{name}' has a zero GUID; CollectionParameter nodes "
+            f"referencing it would compile to 'invalid parameter None'.",
+        )
+        parameter_ids[name] = entry_id
+
+    for name in list(owned_scalars) + list(owned_vectors):
+        require(name in parameter_ids, f"Collection lost parameter '{name}' after write-back")
+
     log(f"Collection ready: {len(final_scalars)} scalars, {len(final_vectors)} vectors")
-    return collection
+    return collection, parameter_ids
 
 
 class GraphBuilder:
     """Thin wrapper over MaterialEditingLibrary that caches one node per collection parameter."""
 
-    def __init__(self, material, collection):
+    def __init__(self, material, collection, parameter_ids=None):
         self.material = material
         self.collection = collection
+        self.parameter_ids = parameter_ids or {}
         self.collection_nodes = {}
         self.node_x = -1600
         self.node_y = -600
@@ -245,14 +301,32 @@ class GraphBuilder:
         if parameter_name in self.collection_nodes:
             return self.collection_nodes[parameter_name]
 
+        parameter_id = require(
+            self.parameter_ids.get(parameter_name),
+            f"No id known for collection parameter '{parameter_name}'",
+        )
+
         node = self.expression(unreal.MaterialExpressionCollectionParameter)
-        # Collection first: setting the name is what resolves the parameter id, and it can
-        # only resolve against a collection the node already points at.
+        # Collection first, then the ID. The ID is the real link: the node's ParameterName is
+        # derived from it by looking the id up in the collection, so writing the name alone
+        # gets overwritten with None and the material compiles to the Default Material while
+        # every readback of "did the name stick" still passes.
         set_property(node, "collection", self.collection)
+        set_property(node, "parameter_id", parameter_id)
         set_property(node, "parameter_name", unreal.Name(parameter_name))
+
+        # Verify resolution, not storage: that the id survived AND the name UE derives from
+        # it is the one asked for. Checking only the name proves nothing -- it is the field
+        # this failure mode silently rewrites.
         require(
-            str(node.get_editor_property("parameter_name")) == parameter_name,
-            f"CollectionParameter did not retain '{parameter_name}'",
+            guid_is_valid(node.get_editor_property("parameter_id")),
+            f"CollectionParameter '{parameter_name}' kept a zero id; it will not resolve.",
+        )
+        resolved = str(node.get_editor_property("parameter_name"))
+        require(
+            resolved == parameter_name,
+            f"CollectionParameter resolved to '{resolved}', expected '{parameter_name}'. "
+            f"The id is not the one stored in the collection.",
         )
         self.collection_nodes[parameter_name] = node
         return node
@@ -350,7 +424,7 @@ return saturate(-Parameters.TwoSidedSign);
 """
 
 
-def build_fill_material(collection):
+def build_fill_material(collection, parameter_ids):
     material = create_or_load(FILL_PATH, unreal.MaterialFactoryNew(), unreal.Material)
     unreal.MaterialEditingLibrary.delete_all_material_expressions(material)
 
@@ -362,7 +436,7 @@ def build_fill_material(collection):
     set_property_optional(material, "used_with_instanced_static_meshes", True,
                           "HISM batches will prompt for usage on first apply")
 
-    builder = GraphBuilder(material, collection)
+    builder = GraphBuilder(material, collection, parameter_ids)
 
     base_tint = builder.expression(unreal.MaterialExpressionVectorParameter)
     set_property(base_tint, "parameter_name", unreal.Name("BaseColor"))
@@ -425,7 +499,7 @@ def build_fill_material(collection):
     return material
 
 
-def build_outline_material(collection):
+def build_outline_material(collection, parameter_ids):
     material = create_or_load(OUTLINE_PATH, unreal.MaterialFactoryNew(), unreal.Material)
     unreal.MaterialEditingLibrary.delete_all_material_expressions(material)
 
@@ -436,7 +510,7 @@ def build_outline_material(collection):
     set_property_optional(material, "used_with_instanced_static_meshes", True,
                           "HISM batches will prompt for usage on first apply")
 
-    builder = GraphBuilder(material, collection)
+    builder = GraphBuilder(material, collection, parameter_ids)
 
     builder.connect_property(
         builder.collection_parameter("InkColor"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR
@@ -511,22 +585,64 @@ def build_paper_instance(character_ink):
     return instance
 
 
+def configure_project_settings(collection, fill, outline):
+    """Point Line Art Core at what was just authored, so nothing has to be wired by hand.
+
+    Best effort: a failure here costs three clicks in Project Settings, not the assets, so
+    it warns rather than aborting. Without it the runtime logs "No FillMaterial configured"
+    once per preview actor and draws untextured white.
+    """
+    settings = getattr(unreal, "LineArtCoreSettings", None)
+    if settings is None:
+        unreal.log_warning(
+            "[CreateLineArtCoreAssets] LineArtCoreRuntime is not loaded; set Project Settings > "
+            "Game > Line Art Core by hand."
+        )
+        return False
+
+    defaults = unreal.get_default_object(settings)
+    try:
+        defaults.set_editor_property("environment_collection", collection)
+        defaults.set_editor_property("fill_material", fill)
+        defaults.set_editor_property("outline_material", outline)
+    except Exception as error:
+        unreal.log_warning(f"[CreateLineArtCoreAssets] Could not write Line Art Core settings: {error}")
+        return False
+
+    save_config = getattr(defaults, "save_config", None)
+    if save_config is None:
+        unreal.log_warning(
+            "[CreateLineArtCoreAssets] Settings written in memory but save_config is not exposed; "
+            "open Project Settings > Game > Line Art Core and press Set as Default to persist."
+        )
+        return False
+
+    save_config()
+    log("Project Settings > Game > Line Art Core now points at the authored assets")
+    return True
+
+
 def main():
     require_editor_asset_mode()
 
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([MATERIAL_ROOT], True)
 
-    collection = build_collection()
-    fill = build_fill_material(collection)
-    outline = build_outline_material(collection)
+    collection, parameter_ids = build_collection()
+    fill = build_fill_material(collection, parameter_ids)
+    outline = build_outline_material(collection, parameter_ids)
     character_ink = build_character_ink_material()
     paper = build_paper_instance(character_ink)
+
+    configure_project_settings(collection, fill, outline)
 
     for asset in (collection, fill, outline, character_ink, paper):
         path = package_path(asset)
         require(unreal.EditorAssetLibrary.save_asset(path, False), f"Unable to save {path}")
         log(f"Saved {path}")
 
+    # Saving is not compiling. Materials save, render thumbnails and validate clean while
+    # still failing to compile and falling back to the Default Material at runtime.
+    log("Now check the log for 'Failed to compile Material' -- saving proves nothing about it")
     log("LINEART_CORE_ASSETS_OK")
 
 
