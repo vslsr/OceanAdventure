@@ -73,6 +73,14 @@
 		{
 			"Name": "CommonGame",
 			"Enabled": true
+		},
+		{
+			"Name": "ScriptCore",
+			"Enabled": true
+		},
+		{
+			"Name": "Niagara",
+			"Enabled": true
 		}
 	],
 	"ExplicitlyLoaded": true,

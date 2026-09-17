@@ -65,6 +65,15 @@
 			"Enabled": true
 		},
 		{
+			"Name": "ScriptCore",
+			"Enabled": true
+		},
+		{
+			"Name": "Puerts",
+			"Enabled": true,
+			"Optional": true
+		},
+		{
 			"Name": "ModularGameplayActors",
 			"Enabled": true
 		},

@@ -15,6 +15,9 @@
 #include "Naval/NavalPartComponent.h"
 #include "Naval/NavalVesselComponent.h"
 #include "Naval/OceanAdventureNavalTags.h"
+#include "Script/OceanAdventureCombatScriptLibrary.h"
+#include "Script/OceanAdventureScriptHooks.h"
+#include "Script/OceanAdventureScriptTypes.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureGameplayAbility_Carry)
 
@@ -39,7 +42,7 @@ UCarrierComponent* UOceanAdventureGameplayAbility_Carry::GetCarrierComponent() c
 bool UOceanAdventureGameplayAbility_Carry::CanCarryTarget(
 	const UCarryableComponent* Carryable, FGameplayTag& OutFailReason) const
 {
-	const AActor* CarryActor = Carryable ? Carryable->GetOwner() : nullptr;
+	AActor* CarryActor = Carryable ? Carryable->GetOwner() : nullptr;
 	if (!CarryActor)
 	{
 		OutFailReason = CarryGameplayTags::Fail_Carry_Invalid;
@@ -50,8 +53,8 @@ bool UOceanAdventureGameplayAbility_Carry::CanCarryTarget(
 	if (!Weapon)
 	{
 		// Nothing else carries naval rules yet; a crate or a cargo box passes on the
-		// framework's checks alone.
-		return true;
+		// framework's checks alone -- and then on whatever the scripted rule adds.
+		return AllowedByScriptRule(CarryActor, OutFailReason);
 	}
 
 	if (UNavalVesselComponent::FindVessel(Weapon) != nullptr)
@@ -77,7 +80,39 @@ bool UOceanAdventureGameplayAbility_Carry::CanCarryTarget(
 		return false;
 	}
 
-	return true;
+	return AllowedByScriptRule(CarryActor, OutFailReason);
+}
+
+bool UOceanAdventureGameplayAbility_Carry::AllowedByScriptRule(
+	AActor* CarryActor, FGameplayTag& OutFailReason) const
+{
+	const UOceanAdventureScriptHooks* Hooks = UOceanAdventureScriptHooks::Get(this);
+	if (!Hooks || !Hooks->HasInteractionRule())
+	{
+		return true;
+	}
+
+	AActor* Avatar = GetAvatarActorFromActorInfo();
+
+	FOceanAdventureInteractionContext Context;
+	Context.Instigator = Avatar;
+	Context.Target = CarryActor;
+	Context.InteractionTag = OceanAdventureCarryTags::InputTag_Carry;
+	Context.WorldLocation = CarryActor ? CarryActor->GetActorLocation() : FVector::ZeroVector;
+	Context.InstigatorTeamId = UOceanAdventureCombatScriptLibrary::GetTeamId(Avatar);
+	Context.TargetTeamId = UOceanAdventureCombatScriptLibrary::GetTeamId(CarryActor);
+
+	const FOceanAdventureInteractionVerdict Verdict = Hooks->ResolveInteraction(Context);
+	if (Verdict.bAllowed)
+	{
+		return true;
+	}
+
+	// A refusal without a reason is the failure this system already learned the hard way: the
+	// player is told nothing and concludes the game is broken. If the rule did not name one,
+	// the generic refusal still reaches the HUD.
+	OutFailReason = Verdict.DeniedReason.IsValid() ? Verdict.DeniedReason : CarryGameplayTags::Fail_Carry_Invalid;
+	return false;
 }
 
 void UOceanAdventureGameplayAbility_Carry::ActivateAbility(

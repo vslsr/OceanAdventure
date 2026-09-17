@@ -2,15 +2,16 @@
 
 #include "Naval/OceanAdventureNavalDamageRelay.h"
 
-#include "AbilitySystemComponent.h"
-#include "AbilitySystemGlobals.h"
 #include "Engine/World.h"
 #include "GameFramework/GameplayMessageSubsystem.h"
-#include "GameplayEffect.h"
 #include "Naval/NavalGameplayTags.h"
 #include "Naval/NavalMessages.h"
-#include "Naval/OceanAdventureNavalSettings.h"
+#include "Naval/OceanAdventureNavalTags.h"
 #include "OceanAdventureRuntimeModule.h"
+#include "Script/OceanAdventureCombatScriptLibrary.h"
+#include "Script/OceanAdventureFeedbackScriptLibrary.h"
+#include "Script/OceanAdventureScriptHooks.h"
+#include "Script/OceanAdventureScriptTypes.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OceanAdventureNavalDamageRelay)
 
@@ -55,43 +56,52 @@ void UOceanAdventureNavalDamageRelay::OnProjectileImpact(
 		return;
 	}
 
-	UAbilitySystemComponent* TargetAbilitySystem =
-		UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Message.HitActor);
-	if (!TargetAbilitySystem)
+	// The scripted damage rule sits exactly here: after the framework has resolved *whether*
+	// and *where* a shot landed, before GAS is told how much it hurt. That split is what makes
+	// the rule safe to hot reload -- ballistics, authority and the wall-and-window rule stay in
+	// C++ where they are reviewed, and only the arithmetic on top of a confirmed hit moves.
+	const FOceanAdventureDamageContext Context = UOceanAdventureCombatScriptLibrary::MakeDamageContext(
+		Message.Instigator,
+		Message.HitActor,
+		Message.Projectile,
+		Message.PendingCharacterDamage,
+		Message.ImpactLocation,
+		Message.ImpactNormal,
+		OceanAdventureNavalTags::SetByCaller_Naval_Damage);
+
+	FOceanAdventureDamageVerdict Verdict;
+	Verdict.Damage = Message.PendingCharacterDamage;
+
+	if (const UOceanAdventureScriptHooks* Hooks = UOceanAdventureScriptHooks::Get(this))
 	{
-		return;
+		// With no rule bound -- no script VM, a bundle that failed to parse, a designer
+		// mid-edit -- this returns the base damage unchanged, so the loop behaves exactly as
+		// it did before scripting existed.
+		Verdict = Hooks->ResolveDamage(Context);
 	}
 
-	const UOceanAdventureNavalSettings& Settings = UOceanAdventureNavalSettings::Get();
-	const TSubclassOf<UGameplayEffect> DamageEffect = Settings.ProjectileDamageEffect.LoadSynchronous();
-	if (!DamageEffect)
+	if (Verdict.bCancelled)
 	{
-		// Loud rather than silent: a project that forgets to configure this would otherwise
-		// ship heavy weapons that cannot hurt anybody, and nothing would say so.
 		UE_LOG(
 			LogOceanAdventure,
-			Warning,
-			TEXT("[NavalDamage] No ProjectileDamageEffect configured; character damage from %s was dropped"),
-			*GetNameSafe(Message.Projectile));
+			Verbose,
+			TEXT("[NavalDamage] A script cancelled %.1f damage to %s (%s)"),
+			Message.PendingCharacterDamage,
+			*GetNameSafe(Message.HitActor),
+			*Verdict.ReasonTag.ToString());
 		return;
 	}
 
-	UAbilitySystemComponent* SourceAbilitySystem =
-		UAbilitySystemGlobals::GetAbilitySystemComponentFromActor(Message.Instigator);
-	UAbilitySystemComponent* EffectSource = SourceAbilitySystem ? SourceAbilitySystem : TargetAbilitySystem;
-
-	FGameplayEffectContextHandle ContextHandle = EffectSource->MakeEffectContext();
-	ContextHandle.AddInstigator(Message.Instigator, Message.Projectile);
-	ContextHandle.AddOrigin(Message.ImpactLocation);
-
-	const FGameplayEffectSpecHandle SpecHandle =
-		EffectSource->MakeOutgoingSpec(DamageEffect, /*Level=*/1.0f, ContextHandle);
-	if (!SpecHandle.IsValid())
+	if (Verdict.ImpactCueTag.IsValid())
 	{
-		return;
+		UOceanAdventureFeedbackScriptLibrary::PlayCueOnActor(
+			Message.HitActor, Verdict.ImpactCueTag, Message.ImpactLocation, Message.ImpactNormal);
 	}
 
-	SpecHandle.Data->SetSetByCallerMagnitude(
-		Settings.DamageSetByCallerTag, Message.PendingCharacterDamage);
-	EffectSource->ApplyGameplayEffectSpecToTarget(*SpecHandle.Data, TargetAbilitySystem);
+	UOceanAdventureCombatScriptLibrary::ApplyCharacterDamage(
+		Message.HitActor,
+		Message.Instigator,
+		Message.Projectile,
+		Verdict.Damage,
+		Message.ImpactLocation);
 }

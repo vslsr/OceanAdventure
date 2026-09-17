@@ -58,7 +58,15 @@ public class OceanAdventureRuntime : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
-				"EnhancedInput"
+				"EnhancedInput",
+				// The TypeScript host. Private on purpose: only the .cpp files under Script/ talk
+				// to the VM, and no public header of this module exposes a script type.
+				"ScriptCoreRuntime",
+				// Feedback a script asked for by asset path, and the serialiser that lets a
+				// forwarded gameplay message carry the fields the flattening does not name.
+				"Niagara",
+				"Json",
+				"JsonUtilities"
 			}
 		);
 	}

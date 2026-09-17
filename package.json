@@ -1,0 +1,22 @@
+{
+  "name": "oceanadventure-scripts",
+  "private": true,
+  "version": "1.0.0",
+  "description": "TypeScript gameplay scripting for OceanAdventure. Sources live with the plugin or GameFeature that owns them; this manifest only ties the workspaces together.",
+  "workspaces": [
+    "Plugins/ScriptCore/TypeScript",
+    "Plugins/GameFeatures/*/TypeScript"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "watch": "npm run watch --workspace Plugins/GameFeatures/OceanAdventure/TypeScript",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "check": "npm run typecheck && npm run check:api && npm run check:dist",
+    "check:api": "node Plugins/ScriptCore/TypeScript/tools/check-api-parity.mjs",
+    "check:dist": "node Plugins/ScriptCore/TypeScript/tools/check-dist-fresh.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.7.0"
+  }
+}

@@ -240,6 +240,30 @@ git merge-base --is-ancestor <你的提交> origin/main && echo 在 main 上 || 
 - 玩法层（GameplayAbility、输入资产、UI Widget、玩家组件注入）归玩法 GameFeature，
   不要放进通用框架，也不要放进宿主 GameFeature。
 
+## TypeScript 玩法层（脚本）
+
+战斗数值、交互判定、反馈表现写在 TypeScript 里，通过反射调下层 C++ 接口；
+弹道、权威、GAS、复制留在 C++。完整说明见
+[`doc/tech/TypeScript-PuerTS.md`](doc/tech/TypeScript-PuerTS.md)，这里只列改动时的硬性要求。
+
+- **脚本住在拥有它的插件里**：`Plugins/<Owner>/TypeScript/src/`（源码）+
+  `Plugins/<Owner>/Content/Script/main.js`（产物）。和其它 Feature 内容一个规矩，
+  不许把某个 GameFeature 的脚本放到别处。
+- **产物要提交**，并在该插件的 `Config/FilterPlugin.ini` 里列出 `/Content/Script/main.js`。
+  引擎里没有 Node：只有源码的检出等于没有脚本，而没有脚本**不报错**——每条规则退回 C++ 默认值。
+- **每个钩子都要有 C++ 兜底。** 没装 PuerTS、bundle 语法错、脚本没绑——
+  这些情况下游戏必须和没有脚本时完全一致。「伤害悄悄不结算了」比「脚本没生效」糟得多。
+- **伤害类规则只在服务端；交互类规则两端都跑**（它是预测用的请求，服务端复检）。理由见文档。
+- **手写 typings 和 C++ 必须同步**，靠门禁保证，不靠自觉：
+
+  ```bash
+  npm run check        # typecheck + check:api（typings 对 C++）+ check:dist（产物对源码）
+  ```
+
+  改了 `Public/Script/` 下任何 UFUNCTION / UPROPERTY，或改了任何 `.ts`，都要跑这条。
+- **PuerTS 只许出现在 `ScriptBackend_Puerts.cpp` 里**。它是按机器安装的（`Plugins/Puerts/` 已 gitignore），
+  版本间 API 有差异，所以整个仓库只有那一个文件认识它。别在别处 `#include "JsEnv.h"`。
+
 ## Lyra 实现规范
 
 违反下列任何一条都会让功能脱离 Lyra 的既有系统（设置界面、重绑定、UI 栈、预测与回执），
