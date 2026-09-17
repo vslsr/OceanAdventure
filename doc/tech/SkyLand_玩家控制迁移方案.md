@@ -24,7 +24,7 @@ SkyLand 的输入本来就是「IA / IMC / InputConfig」三层声明式结构�
 「按恒定速率逼近目标速度」，UE 的 `CalcVelocity` 默认还带一项与速度成正比的摩擦。
 两个摩擦项不归零，数值抄对了手感也不对（见下方第三节）。
 
-### 已落地（脚本一次跑完）
+### 已落地（前四行由脚本一次跑完，最后一行是 C++）
 
 | 层 | 内容 |
 | --- | --- |
@@ -33,6 +33,7 @@ SkyLand 的输入本来就是「IA / IMC / InputConfig」三层声明式结构�
 | InputConfig | `DA_InputConfig_OceanAdventure` 的 Native/Ability 两个数组各加自己那几条 |
 | 手感数值 | `BP_OceanAdventure_Pawn` 的 CharacterMovement 九个浮点 + 一个开关 + 可行走坡度 |
 | Tag | `InputTag.Player.Sprint` 注册进 `Config/DefaultGameplayTags.ini` |
+| C++ | `UTopDownPawnComponent`：冲刺消费方（含服务端 RPC）+ 鼠标朝向改指数收敛 |
 
 ### 刻意不搬
 
@@ -52,7 +53,7 @@ SkyLand 的输入本来就是「IA / IMC / InputConfig」三层声明式结构�
 
 | SkyLand 映射 | 键 | 目标 IA | InputTag | 槽位 | 消费方 |
 | --- | --- | --- | --- | --- | --- |
-| `Sprint.Keyboard.Primary/Alternate` | 左/右 Shift | `IA_Player_Sprint` | `InputTag.Player.Sprint` | Native | ⚠️ **待接**，见第四节 |
+| `Sprint.Keyboard.Primary/Alternate` | 左/右 Shift | `IA_Player_Sprint` | `InputTag.Player.Sprint` | Native | `UTopDownPawnComponent` |
 | `Interact.Keyboard.Primary` | F | `IA_Player_Interact` | `InputTag.Ability.Interact` | Ability | Lyra 既有交互 GA |
 | `Drop.Keyboard.Primary` | Q | `IA_Player_Drop` | `InputTag.Ability.Quickslot.Drop` | Ability | Lyra 快捷栏 GA（当前 Experience 未必授予） |
 | `Move.Keyboard.*` | W/A/S/D | 已有 `IA_OceanAdventure_Move*` | `InputTag.TopDown.Move*` | Native | `UTopDownPawnComponent` |
@@ -76,7 +77,7 @@ SkyLand 的输入本来就是「IA / IMC / InputConfig」三层声明式结构�
 | SkyLand | 值 | UE 属性 | 值 | 换算 |
 | --- | --- | --- | --- | --- |
 | `walkSpeed` | 3.2 m/s | `MaxWalkSpeed` | 320 | ×100 |
-| `sprintMultiplier` | 1.65 | —— | (528) | ⚠️ 无消费方，见第四节 |
+| `sprintMultiplier` | 1.65 | `UTopDownPawnComponent.SprintSpeedMultiplier` | 1.65 | 是比例，不换算；按住时 `MaxWalkSpeed` = 320 × 1.65 = 528 |
 | `acceleration` | 28 m/s² | `MaxAcceleration` | 2800 | ×100 |
 | `deceleration` | 24 m/s² | `BrakingDecelerationWalking` | 2400 | ×100 |
 | —— | —— | `bUseSeparateBrakingFriction` | true | 见下 |
@@ -110,24 +111,42 @@ UE 的空中加速度是 `MaxAcceleration × AirControl`，SkyLand 的是 `airAc
 
 ---
 
-## 四、还没接线的两件事（都要 C++，不在本脚本范围）
+## 四、C++ 侧的两处（已完成）
 
-脚本把输入铺到了 ASC/组件门口，但这两处的**消费方**还不存在。不写清楚，跑完会以为已经生效：
+输入铺到门口还不够，这两处的消费方原本不存在。都落在
+`Plugins/GameFeatures/TopDownFeature/Source/TopDownFeatureRuntime/`。
 
-1. **冲刺（`InputTag.Player.Sprint`）没有消费方。** 按 F/Q 会进 ASC，按 Shift 目前什么都不会发生。
-   自然的落点是 `UTopDownPawnComponent`——移动本来就归它，它已经有一套
-   `EditDefaultsOnly` 的 InputTag + `BindNativeAction` 模式。加法是：一个 `SprintInputTag`
-   字段、`Input_SprintStarted/Completed` 两个处理函数，按下把 `MaxWalkSpeed` 乘 1.65、松开除回去。
+### 4.1 冲刺：`UTopDownPawnComponent` 按住 Shift ×1.65
 
-2. **鼠标朝向的平滑速度还是「瞬时对齐」。** SkyLand 用
-   `lerpAngle(current, target, min(1, dt × 10))`，`UTopDownPawnComponent::FacingRotationInterpSpeed`
-   的默认值是 `0.0f`（0 表示直接 snap）。两者公式同形，改成 `10.0f` 就等价。
-   它是原生类的 `EditDefaultsOnly` 默认值，**Python 改不了也存不下**（组件是
-   `GameFeatureAction_AddComponents` 按原生类注入的，CDO 改动不落盘），只能改 C++ 构造函数。
+移动本来就归这个组件，它已经有一套「`EditDefaultsOnly` 的 InputTag + `BindNativeAction`」的模式，
+冲刺照着加即可：`SprintInputTag`（默认 `InputTag.Player.Sprint`）+ `SprintSpeedMultiplier`（默认 1.65），
+按下/松开改写 `MaxWalkSpeed`。三个细节值得记下来：
 
-两件都落在 `Plugins/GameFeatures/TopDownFeature/`，一次编译能一起带走。
+- **基准速度只在第一次捕获，且从实例读。** `BaseMaxWalkSpeed` 在 `BeginPlay` 取当前值——那是
+  Pawn 蓝图调好的 320。写成 `GetDefault<UCharacterMovementComponent>()->MaxWalkSpeed` 会读到引擎默认的
+  600：**冲刺一次、松手一次，蓝图里那份调参就被静默覆盖掉了**，而且现象是「跑得比走还快之后就回不去了」，
+  没人会想到去查一个读 CDO 的默认值。
+- **必须告诉服务端。** 只在本地改 `MaxWalkSpeed`，服务端仍按 320 模拟，它的位置修正会每一帧把客户端拽回来——
+  典型现象是「按住 Shift 一顿一顿的」，看着像网络抖动。加了 `ServerSetSprinting`（`Server, Reliable, WithValidation`），
+  组件因此要 `SetIsReplicatedByDefault(true)`，否则 RPC 根本不路由。代价是一个 RTT 的短暂不一致，
+  不是持续橡皮筋；要彻底消掉得走 `FSavedMove_Character` 的压缩标志，那是另一个量级的改动。
+  其他客户端看到的是复制过来的移动，不需要知道谁在冲刺。
+- **冲刺绑定是可选的。** 它刻意留在那段「七个动作缺一就整体禁用」的检查之外：
+  `DA_InputConfig_Base` 没有冲刺条目，而 `SimpleExperience` 的 PawnData 还在用它。
+  把冲刺算作必需，等于让那个 Experience 的 WASD 和镜头一起失效。
 
----
+`UnbindInput()` 里会把冲刺清掉——服务端那份组件从不绑定输入，所以取消 possess 时也走这条路复位。
+
+### 4.2 朝向：`FixedTurn` 换成 `RInterpTo`
+
+**这里原来的写法和源工程不是同一条曲线，只改默认值不等价。**
+`FacingRotationInterpSpeed` 过去喂给 `FMath::FixedTurn`，语义是**每秒多少度**（恒定角速度）；
+SkyLand 用的是 `lerpAngle(current, target, min(1, dt × 10))`——步长是**剩余误差**的一个比例。
+
+差别不是细节：恒定角速度下，180° 大转身要爬 18 秒（按 10°/s），而最后 1° 仍以满速冲过去；
+指数收敛则是一开始快、越接近越慢，不会过冲。`FMath::RInterpTo` 的实现正是
+`Current + Delta × Clamp(Dt × Speed, 0, 1)`，与源工程同形，所以 `MOVEMENT_FACING_SHARPNESS = 10`
+可以原样搬过来。默认值从 `0.0f`（瞬时对齐）改成 `10.0f`；保留 0 = 瞬时对齐的语义。
 
 ## 五、幂等与所有权
 

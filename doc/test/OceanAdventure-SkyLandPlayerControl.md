@@ -1,11 +1,12 @@
 # SkyLand 玩家控制迁移验证协议
 
 覆盖 [`MigrateSkyLandPlayerControl.py`](../../Plugins/GameFeatures/OceanAdventure/Content/Python/MigrateSkyLandPlayerControl.py)
-产出的输入资产与 Pawn 移动数值。设计与换算表见
+产出的输入资产与 Pawn 移动数值，以及 `UTopDownPawnComponent` 的冲刺与朝向改动。设计与换算表见
 [`../tech/SkyLand_玩家控制迁移方案.md`](../tech/SkyLand_玩家控制迁移方案.md)。
 
-> **本协议尚未执行过。** 脚本目前只通过了 `ast.parse` 与 `Tools/check_absolute_paths.py`，
-> 状态是 `STATIC_ONLY`——没有任何一行在 UE 宿主里跑过。
+> **本协议尚未执行过。** 脚本只通过了 `ast.parse` 与 `Tools/check_absolute_paths.py`，
+> C++ 改动**没有编译过**（本环境没有引擎）。整体状态 `STATIC_ONLY`——
+> 没有任何一行在 UE 宿主里跑过，编译本身就是第一道验证。
 
 分三段：
 
@@ -27,10 +28,11 @@ C 不能被 A/B 代替：A/B 证明数值写进了资产，**证明不了按键�
    git ls-files "Plugins/GameFeatures/OceanAdventure/Content/Python/MigrateSkyLandPlayerControl.py" `
                 "doc/tech/SkyLand_玩家控制迁移方案.md"
    git grep -c "InputTag.Player.Sprint" -- Config/DefaultGameplayTags.ini
+   git grep -c "SprintSpeedMultiplier\|RInterpTo" -- Plugins/GameFeatures/TopDownFeature/Source/TopDownFeatureRuntime/Private/TopDownPawnComponent.cpp
    ```
 
-   **应列出 2 个文件，且计数为 1。** 少任何一项说明分支不完整，`git pull` 不解决问题——
-   见 `AGENTS.md`「修复必须落到 main」。
+   **应列出 2 个文件，两个计数分别为 1 与 ≥3。** 少任何一项说明分支不完整，`git pull` 不解决问题——
+   见 `AGENTS.md`「修复必须落到 main」。C++ 与它的头文件必须同进同出，见「源码变更必须整套落地」。
 
 2. 编译通过。测试入口不负责构建：
 
@@ -39,8 +41,11 @@ C 不能被 A/B 代替：A/B 证明数值写进了资产，**证明不了按键�
    & (Join-Path $env:UE_ROOT 'Engine/Build/BatchFiles/Build.bat') LyraEditor Win64 Development "-Project=$PWD\LyraTemplate.uproject" -WaitMutex -NoHotReloadFromIDE
    ```
 
-   预期末尾 `Result: Succeeded`。本脚本用到 `OceanAdventureAssetLibrary.create_add_input_context_mapping_action`，
-   它在 `OceanAdventureRuntime` 里；旧 DLL 会让脚本报「unreal.OceanAdventureAssetLibrary is missing」。
+   预期末尾 `Result: Succeeded`。两个模块都必须是新的：脚本用到
+   `OceanAdventureAssetLibrary.create_add_input_context_mapping_action`（在 `OceanAdventureRuntime`），
+   冲刺与朝向在 `TopDownFeatureRuntime`。旧 DLL 的表现是两种：脚本报
+   「unreal.OceanAdventureAssetLibrary is missing」，或者**脚本一切正常、按 Shift 没反应**——
+   后者会被当成资产问题查半天，所以这一步不能跳。编译后必须**完整重启编辑器**，不要热重载。
 
 3. `CreateOceanAdventureExperience.py` 已经跑过，这三个资产在：
    `/OceanAdventure/Input/DA_InputConfig_OceanAdventure`、
@@ -149,8 +154,13 @@ for name in ("max_walk_speed", "max_acceleration", "braking_deceleration_walking
 | C-4 | 空中按方向键 | 能小幅修正落点，但明显弱于地面转向 |
 | C-5 | 按 F | 触发交互，与按 E 表现一致 |
 | C-6 | 按 Q | 触发丢弃。当前 Experience 未授予快捷栏 GA 时无反应——**这条不算失败**，照实回报 |
-| C-7 | 按住 Shift | **预期无反应**。冲刺消费方还没写，见迁移方案第四节。有反应反而要回报 |
+| C-7 | 按住 Shift 前进 | 明显加速；松开立刻回到原速。数值上是 320 → 528 |
+| C-7b | 按住 Shift **不动**，再松开 | 松开后走路速度仍是 320，不是 600。若变快了，说明基准速度读到了引擎 CDO（迁移方案 4.1 第一条） |
+| C-7c | 两人 PIE（Net Mode: Play As Client，2 个玩家），按住 Shift 跑 5 秒 | 不出现每隔一下被拽回的顿挫。起跑瞬间有一个 RTT 的轻微不同步是预期内的 |
 | C-8 | 控制台 `showdebug enhancedinput` 后按 F/Q/Shift | 三个 IA 都应显示为已触发，且**不带 `OVERRIDDEN BY`**。出现覆盖说明优先级 2 没生效 |
+| C-9 | 鼠标从角色正前方快速甩到正后方 | 角色**平滑转身**，开头快、接近目标时变慢，不过冲也不瞬移；全程约 0.3 秒内完成大半 |
+| C-10 | 鼠标停在角色身上不动 | 朝向不抖动、不来回摆 |
+| C-11 | 用 `SimpleExperience` 的关卡（PawnData 仍指向 `DA_InputConfig_Base`） | WASD 与镜头照常可用，只是按 Shift 无反应。**若整套输入都失效，说明冲刺被当成了必需绑定** |
 
 ---
 
@@ -167,7 +177,8 @@ A-1  [ ] 成功标记   [ ] 无 traceback   kept: native=__ ability=__
      AUDIT 行原文：
 A-2  [ ] 成功标记   kept: native=__ ability=__（应与 A-1 相同）
 B    READBACK 原文（整段贴）：
-C    C-1 __  C-2 __  C-3 __  C-4 __  C-5 __  C-6 __  C-7 __  C-8 __
+C    C-1 __  C-2 __  C-3 __  C-4 __  C-5 __  C-6 __
+     C-7 __  C-7b __  C-7c __  C-8 __  C-9 __  C-10 __  C-11 __
 
 FAIL 时：从第一条报错到结尾的原始输出（不转述、不节选）：
 BLOCKED 时：哪一条前置没满足，以及当时的输出：
