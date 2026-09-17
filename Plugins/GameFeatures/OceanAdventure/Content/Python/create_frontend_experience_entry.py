@@ -232,6 +232,28 @@ def create_experience_definition():
     return experience
 
 
+def find_world_settings(world):
+    """Reach AWorldSettings through whatever this engine version actually exposes.
+
+    GameplayStatics.get_world_settings does not exist in UE 5.7's Python bindings; this
+    call used to be written that way here. See PY-UE-011 in the Python failure ledger.
+    """
+    getter = getattr(unreal.GameplayStatics, "get_world_settings", None)
+    if getter is not None:
+        return getter(world)
+
+    getter = getattr(world, "get_world_settings", None)
+    if getter is not None:
+        return getter()
+
+    actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    for actor in actor_subsystem.get_all_level_actors():
+        if isinstance(actor, unreal.WorldSettings):
+            return actor
+
+    return None
+
+
 def set_map_default_experience(generated_class):
     """Point the map's ALyraWorldSettings at the experience class."""
     level_subsystem = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
@@ -248,10 +270,13 @@ def set_map_default_experience(generated_class):
         )
         current_world = editor_subsystem.get_editor_world()
 
-    world_settings = require(
-        unreal.GameplayStatics.get_world_settings(current_world),
-        f"Unable to reach the World Settings of {MAP_ASSET_PATH}",
-    )
+    world_settings = find_world_settings(current_world)
+    if world_settings is None:
+        warn(
+            f"Could not reach the World Settings of {MAP_ASSET_PATH} from Python. "
+            "Set Default Gameplay Experience by hand in Window > World Settings."
+        )
+        return
     if not isinstance(world_settings, unreal.LyraWorldSettings):
         warn(
             f"{MAP_ASSET_PATH} uses {type(world_settings).__name__}, not "

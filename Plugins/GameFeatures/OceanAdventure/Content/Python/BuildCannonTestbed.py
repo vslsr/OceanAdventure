@@ -264,13 +264,39 @@ def build_lighting(actor_subsystem):
     )
 
 
+def find_world_settings(world):
+    """Reach AWorldSettings through whatever this engine version actually exposes.
+
+    GameplayStatics.get_world_settings does not exist in UE 5.7's Python bindings; this
+    call used to be written that way here and raised AttributeError the first time it was
+    ever reached. See PY-UE-011 in the Python failure ledger.
+    """
+    getter = getattr(unreal.GameplayStatics, "get_world_settings", None)
+    if getter is not None:
+        return getter(world)
+
+    getter = getattr(world, "get_world_settings", None)
+    if getter is not None:
+        return getter()
+
+    actor_subsystem = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+    for actor in actor_subsystem.get_all_level_actors():
+        if isinstance(actor, unreal.WorldSettings):
+            return actor
+
+    return None
+
+
 def set_map_default_experience(level_subsystem, generated_class):
     editor_subsystem = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
     world = require(editor_subsystem.get_editor_world(), "No editor world after loading the map")
-    world_settings = require(
-        unreal.GameplayStatics.get_world_settings(world),
-        f"Unable to reach the World Settings of {MAP_PATH}",
-    )
+    world_settings = find_world_settings(world)
+    if world_settings is None:
+        unreal.log_warning(
+            f"[CannonTestbed] Could not reach the World Settings of {MAP_PATH} from Python. "
+            "Set Default Gameplay Experience by hand in Window > World Settings."
+        )
+        return
     if not isinstance(world_settings, unreal.LyraWorldSettings):
         unreal.log_warning(
             f"[CannonTestbed] {MAP_PATH} uses {type(world_settings).__name__}, not "
