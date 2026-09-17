@@ -20,8 +20,9 @@
 | PY-BLENDER-003 | 2026-09-16 | Blender bpy / 脚本输出可见性 | 宿主报告「run script 后什么都没有」 | VERIFIED | 1 |
 | PY-UE-010 | 2026-09-17 | Unreal Python / 材质集合参数 | `CollectionParameter has invalid parameter None` | OPEN | 1 |
 | PY-UE-011 | 2026-09-17 | Unreal Python / WorldSettings | `GameplayStatics has no attribute 'get_world_settings'` | OPEN | 1 |
+| PY-UE-012 | 2026-09-17 | Unreal Python / 反射绑定 | 新 C++ 类在 `unreal` 模块里不存在 | OPEN | 1 |
 | PY-LYRA-001 | 历史记录 | Lyra Python / USTRUCT | `call() takes at most 0 arguments` | VERIFIED | 1+ |
-| PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | VERIFIED | 1+ |
+| PY-LYRA-002 | 历史记录 | Lyra Python / EditDefaultsOnly | `cannot be edited on instances` | OPEN（复发） | 2+ |
 | PY-LYRA-003 | 历史记录 | Lyra Python / GameplayTag | `InputConfig did not retain ...` 误报 | VERIFIED | 1+ |
 | PY-LYRA-004 | 历史记录 | Lyra Python / 数组幂等 | 重跑后 InputAction 条目倍增 | VERIFIED | 1+ |
 
@@ -545,6 +546,29 @@ Exception: CollectionScalarParameter: Property 'Id' for attribute 'id' on
 - 状态：`OPEN`。待宿主重跑出现 `LINEART_PREVIEW_LEVEL_OK` 且地图 World Settings 读回到
   `BP_Experience_Ocean` 后转 `VERIFIED`。
 
+## PY-UE-012：刚编译出的 C++ 类在 Python 里看不到
+
+- 日期：2026-09-17；发生一次。
+- 宿主与入口：UE 5.7 Unreal Editor，Python 输入模式运行 `CreateLineArtCoreAssets.py`。
+- 原始现象：
+
+  ```text
+  LogPython: Warning: [CreateLineArtCoreAssets] LineArtCoreRuntime is not loaded;
+  set Project Settings > Game > Line Art Core by hand.
+  ```
+
+  即 `getattr(unreal, "LineArtCoreSettings", None)` 返回 `None`。
+- **关键反证**：同一份日志里有 `LogLineArtCore: Warning: No EnvironmentCollection configured`
+  与多条 `No FillMaterial configured`——这些是 `LineArtCoreRuntime` 的 C++ 子系统和预览 Actor
+  打出来的。**模块确实加载并在运行，只是 Python 反射里没有它的绑定。**
+- 根因：编辑器仍持有编译前的 Python 绑定。`lyra-editor-asset-automation` 的故障速查已有此条：
+  「Python 中没有新函数或仍调用旧签名 → 编辑器仍加载旧 DLL → 成功编译目标后完整重启编辑器」。
+  本次是同一根因在**新增类**上的表现，不只是新增 `UFUNCTION`。
+- 预防规则：脚本里「模块没加载」这类判断**不能只看 `getattr(unreal, ...)`**，那分不清
+  「模块真的没启用」和「编辑器绑定过期」。提示语必须同时给出重启编辑器这条出路，
+  否则会把人引去查插件启用状态。新增或修改 C++ 类后，运行依赖它的 Python 前先完整重启编辑器。
+- 状态：`OPEN`。待重启编辑器后重跑确认 `unreal.LineArtCoreSettings` 可见。
+
 ## PY-LYRA-001：USTRUCT 包装器拒绝带参数构造
 
 - 日期：历史记录；至少一次。
@@ -561,7 +585,34 @@ Exception: CollectionScalarParameter: Property 'Id' for attribute 'id' on
 - 根因：对 Python 结构实例调用 `set_editor_property` 修改 `EditDefaultsOnly` 字段。
 - 预防规则：支持关键字构造的 `LyraInputAction` 用关键字一次构造；AbilitySet 条目使用既有原生桥接。
 - 技术细节与验证：见 `lyra-editor-asset-automation`。
-- 状态：`VERIFIED`。
+- 状态：`VERIFIED`（首次）。
+
+### 复发：2026-09-17，LyraWorldSettings::DefaultGameplayExperience
+
+- 宿主与入口：UE 5.7 Unreal Editor，Python 输入模式运行
+  `Plugins/GameFeatures/OceanAdventure/Content/Python/CreateLineArtPreviewLevel.py`。
+- 原始错误：
+
+  ```text
+  File ".../CreateLineArtPreviewLevel.py", line 302, in set_map_default_experience
+    world_settings.set_editor_property("default_gameplay_experience", experience_class)
+  Exception: LyraWorldSettings: Property 'DefaultGameplayExperience' for attribute
+  'default_gameplay_experience' on 'LyraWorldSettings' cannot be edited on instances
+  ```
+
+- 复发原因：本条之前只按「AbilitySet / InputConfig 条目」记录，**没有把 `EditDefaultsOnly`
+  写成一条跨资产类型的通则**，所以写地图 World Settings 时没人想到它同样适用。
+  `ALyraWorldSettings::DefaultGameplayExperience` 是 `EditDefaultsOnly`，而关卡里的
+  WorldSettings 是**实例**，Python 因此写不进去。
+- **这一条同时否证了 `PY-UE-011` 里对那两个既有脚本的判断**：`BuildCannonTestbed.py` 与
+  `create_frontend_experience_entry.py` 里那段设置 Experience 的代码即便修好了
+  `get_world_settings`，下一行也会栽在这里。它们从来没有真正成功过。
+- 预防规则（升级为通则）：**任何 `set_editor_property` 写入前，先确认目标是 CDO 还是实例。**
+  `EditDefaultsOnly` 字段只能写 CDO；要改关卡里的实例，只有两条路：
+  1. 在所属 GameFeature 里加一个窄原生编辑器桥接 `UFUNCTION`（本仓库既有先例：
+     `OceanAdventureAssetLibrary::ConfigureAbilitySetGameplayAbilities`）；
+  2. 让人在编辑器里手工设置，脚本给出准确到面板名的指引，并且**不要伪装成已完成**。
+- 状态：`OPEN`。
 
 ## PY-LYRA-003：GameplayTag 包装器身份比较产生写入误报
 
