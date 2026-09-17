@@ -46,3 +46,4 @@
 | 文档 | 覆盖 |
 | --- | --- |
 | [`OceanCore-Terrain.md`](OceanCore-Terrain.md) | 台阶地形：5 条自动化测试 + 编辑器目视与行走验收 |
+| [`OceanAdventure-SkyLandPlayerControl.md`](OceanAdventure-SkyLandPlayerControl.md) | SkyLand 玩家控制迁移：脚本幂等 + 资产读回 + 手感目视验收 |

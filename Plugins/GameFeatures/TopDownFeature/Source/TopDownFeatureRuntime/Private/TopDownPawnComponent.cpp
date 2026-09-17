@@ -9,6 +9,7 @@
 #include "Character/LyraPawnData.h"
 #include "Character/LyraPawnExtensionComponent.h"
 #include "Components/GameFrameworkComponentManager.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "CommonUIExtensions.h"
 #include "Engine/LocalPlayer.h"
 #include "Engine/World.h"
@@ -82,13 +83,20 @@ UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectIni
 	, CameraZoomInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraZoom)
 	, CameraRotateHoldInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraRotateHold)
 	, CameraRotateInputTag(TopDownFeatureGameplayTags::InputTag_TopDownCameraRotate)
+	// Registered in Config/DefaultGameplayTags.ini rather than natively: sprint is a
+	// project-level player-control tag, and declaring it here as well would register the
+	// same tag from two sources.
+	, SprintInputTag(FGameplayTag::RequestGameplayTag(FName("InputTag.Player.Sprint"), false))
 	, InputWidgetClass(UTopDownInputWidget::StaticClass())
 	, CameraDragInputWidgetClass(UTopDownCameraDragInputWidget::StaticClass())
 	, UILayerTag(FGameplayTag::RequestGameplayTag(FName("UI.Layer.Game"), false))
 	, GroundTraceChannel(ECC_Visibility)
 	, MaxGroundTraceDistance(100000.0f)
 	, bTraceComplex(false)
-	, FacingRotationInterpSpeed(0.0f)
+	// SkyLand's MOVEMENT_FACING_SHARPNESS. Same units as RInterpTo's InterpSpeed, which is
+	// the same formula the source uses -- see UpdateFacingFromMouse.
+	, FacingRotationInterpSpeed(10.0f)
+	, SprintSpeedMultiplier(1.65f)
 	, AcceptanceRadius(75.0f)
 	, InitialCameraDistance(1800.0f)
 	, MinCameraDistance(600.0f)
@@ -98,15 +106,21 @@ UTopDownPawnComponent::UTopDownPawnComponent(const FObjectInitializer& ObjectIni
 	, BoundInputComponent(nullptr)
 	, PushedInputWidget(nullptr)
 	, PushedCameraDragInputWidget(nullptr)
+	, BaseMaxWalkSpeed(0.0f)
 	, MoveTarget(FVector::ZeroVector)
 	, CameraDistance(InitialCameraDistance)
 	, CameraYawOffset(0.0f)
 	, bHasMoveTarget(false)
 	, bInputBound(false)
 	, bCameraRotateHeld(false)
+	, bSprinting(false)
+	, bBaseMaxWalkSpeedCaptured(false)
 	, bOriginalUseControllerRotationYaw(true)
 	, bRotationPolicyOverridden(false)
 {
+	// Required for ServerSetSprinting to route; the component is injected on both sides by
+	// the game feature, so there is nothing else to replicate.
+	SetIsReplicatedByDefault(true);
 	FacingBlockedTags.AddTag(TAG_Gameplay_MovementStopped);
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
@@ -117,6 +131,7 @@ void UTopDownPawnComponent::BeginPlay()
 	Super::BeginPlay();
 	CameraDistance = FMath::Clamp(InitialCameraDistance, MinCameraDistance, FMath::Max(MinCameraDistance, MaxCameraDistance));
 	CameraYawOffset = 0.0f;
+	CaptureBaseMaxWalkSpeed();
 
 	APawn* Pawn = GetPawn<APawn>();
 	if (!ensure(Pawn))
@@ -351,6 +366,26 @@ void UTopDownPawnComponent::BindInputIfReady()
 		InputComponent->BindAction(RotateHoldAction, ETriggerEvent::Canceled, this, &ThisClass::Input_CameraRotateCompleted).GetHandle());
 	InputBindingHandles.Add(
 		InputComponent->BindAction(RotateAction, ETriggerEvent::Triggered, this, &ThisClass::Input_CameraRotate).GetHandle());
+
+	// Sprint is bound only when the InputConfig carries it. It is deliberately outside the
+	// all-or-nothing check above: DA_InputConfig_Base has no sprint entry, and treating it as
+	// required would disable movement and camera for every experience that still uses it.
+	if (const UInputAction* SprintAction = SprintInputTag.IsValid() ? FindNativeAction(SprintInputTag) : nullptr)
+	{
+		InputBindingHandles.Add(
+			InputComponent->BindAction(SprintAction, ETriggerEvent::Started, this, &ThisClass::Input_SprintStarted).GetHandle());
+		InputBindingHandles.Add(
+			InputComponent->BindAction(SprintAction, ETriggerEvent::Completed, this, &ThisClass::Input_SprintCompleted).GetHandle());
+		InputBindingHandles.Add(
+			InputComponent->BindAction(SprintAction, ETriggerEvent::Canceled, this, &ThisClass::Input_SprintCompleted).GetHandle());
+	}
+	else
+	{
+		UE_LOG(LogTopDownPawnComponent, Verbose,
+			TEXT("InputConfig '%s' has no native action for %s; sprint is unavailable for '%s'."),
+			*GetNameSafe(InputConfig), *SprintInputTag.ToString(), *GetNameSafe(Pawn));
+	}
+
 	BoundInputComponent = InputComponent;
 	bInputBound = true;
 	SetComponentTickEnabled(true);
@@ -367,6 +402,9 @@ void UTopDownPawnComponent::UnbindInput()
 		}
 	}
 	InputBindingHandles.Reset();
+	// Losing input must not leave the pawn sprinting -- on the server this component never
+	// binds anything, so this is also what un-possessing clears.
+	SetSprinting(false);
 	bCameraRotateHeld = false;
 	PopCameraDragInputWidget();
 
@@ -544,6 +582,86 @@ void UTopDownPawnComponent::Input_CameraRotate(const FInputActionValue& InputAct
 	CameraYawOffset = FRotator::NormalizeAxis(CameraYawOffset + PointerDelta.X * RotationDegreesPerPixel);
 }
 
+void UTopDownPawnComponent::Input_SprintStarted(const FInputActionValue& InputActionValue)
+{
+	SetSprinting(true);
+}
+
+void UTopDownPawnComponent::Input_SprintCompleted(const FInputActionValue& InputActionValue)
+{
+	SetSprinting(false);
+}
+
+void UTopDownPawnComponent::SetSprinting(bool bNewSprinting)
+{
+	if (bSprinting == bNewSprinting)
+	{
+		return;
+	}
+
+	bSprinting = bNewSprinting;
+	ApplySprintSpeed();
+
+	const APawn* Pawn = GetPawn<APawn>();
+	if (Pawn && Pawn->IsLocallyControlled() && !Pawn->HasAuthority())
+	{
+		ServerSetSprinting(bNewSprinting);
+	}
+}
+
+void UTopDownPawnComponent::ServerSetSprinting_Implementation(bool bNewSprinting)
+{
+	if (bSprinting == bNewSprinting)
+	{
+		return;
+	}
+
+	bSprinting = bNewSprinting;
+	ApplySprintSpeed();
+}
+
+bool UTopDownPawnComponent::ServerSetSprinting_Validate(bool bNewSprinting)
+{
+	return true;
+}
+
+void UTopDownPawnComponent::ApplySprintSpeed()
+{
+	UCharacterMovementComponent* Movement = FindCharacterMovement();
+	if (!Movement)
+	{
+		return;
+	}
+
+	CaptureBaseMaxWalkSpeed();
+	Movement->MaxWalkSpeed = bSprinting
+		? BaseMaxWalkSpeed * FMath::Max(1.0f, SprintSpeedMultiplier)
+		: BaseMaxWalkSpeed;
+}
+
+void UTopDownPawnComponent::CaptureBaseMaxWalkSpeed()
+{
+	if (bBaseMaxWalkSpeedCaptured)
+	{
+		return;
+	}
+
+	// Captured from the live component, which carries the pawn blueprint's tuned value.
+	// GetDefault<UCharacterMovementComponent>() would report the engine default instead, and
+	// releasing sprint once would silently overwrite the tuning with it.
+	if (const UCharacterMovementComponent* Movement = FindCharacterMovement())
+	{
+		BaseMaxWalkSpeed = Movement->MaxWalkSpeed;
+		bBaseMaxWalkSpeedCaptured = true;
+	}
+}
+
+UCharacterMovementComponent* UTopDownPawnComponent::FindCharacterMovement() const
+{
+	const APawn* Pawn = GetPawn<APawn>();
+	return Pawn ? Pawn->FindComponentByClass<UCharacterMovementComponent>() : nullptr;
+}
+
 void UTopDownPawnComponent::UpdateFacingFromMouse(float DeltaTime)
 {
 	if (bCameraRotateHeld)
@@ -596,11 +714,14 @@ void UTopDownPawnComponent::UpdateFacingFromMouse(float DeltaTime)
 		return;
 	}
 
-	const float DesiredYaw = FacingDirection.Rotation().Yaw;
-	const float CurrentYaw = Pawn->GetActorRotation().Yaw;
-	const float MaxYawStep = FacingRotationInterpSpeed > 0.0f
-		? FacingRotationInterpSpeed * DeltaTime
-		: 360.0f;
-	const float NewYaw = FMath::FixedTurn(CurrentYaw, DesiredYaw, MaxYawStep);
-	Pawn->SetActorRotation(FRotator(0.0f, NewYaw, 0.0f));
+	const FRotator DesiredRotation(0.0f, FacingDirection.Rotation().Yaw, 0.0f);
+	const FRotator CurrentRotation(0.0f, Pawn->GetActorRotation().Yaw, 0.0f);
+	// The reference implementation smooths with lerpAngle(current, target, min(1, dt * speed)):
+	// the step is a fraction of the *remaining* error. RInterpTo is that same formula, so the
+	// source's sharpness transfers unchanged. A constant degrees-per-second turn -- what this
+	// used to do -- is a different curve: it crawls through a 180 and then snaps the last degree.
+	const FRotator NewRotation = FacingRotationInterpSpeed > 0.0f
+		? FMath::RInterpTo(CurrentRotation, DesiredRotation, DeltaTime, FacingRotationInterpSpeed)
+		: DesiredRotation;
+	Pawn->SetActorRotation(FRotator(0.0f, NewRotation.Yaw, 0.0f));
 }
