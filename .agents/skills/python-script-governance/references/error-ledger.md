@@ -487,8 +487,35 @@
   3. 节点侧先取集合里实际存储的 name→id 表，再按表写 `parameter_id`；读回断言 `parameter_id` 非零。
   4. **资产脚本跑完必须检查材质编译结果**，不能只看「保存成功」。缩略图能渲出来也不等于编译通过——
      本次四个资产全部保存、缩略图全部渲出，而两支材质在游戏里会退化成 Default Material。
-- 修复：按上述 2/3 改 `CreateLineArtCoreAssets.py`；读回改为校验 id 与集合解析。
-- 状态：`OPEN`。待在宿主重跑且 Output Log 无 `Failed to compile Material` 后转 `VERIFIED`。
+- 修复（第一次尝试，**已证伪**）：按上述 2/3 改 `CreateLineArtCoreAssets.py`。
+- 状态：`OPEN`。
+
+### 更正：零 GUID 这个根因是错的（2026-09-17）
+
+上面「Python 构造的条目带零 GUID」是**未经宿主验证的推断，已被证伪**。原文保留，更正如下。
+
+重跑时脚本在写 `Id` 这一步就失败了：
+
+```text
+Exception: CollectionScalarParameter: Property 'Id' for attribute 'id' on
+'CollectionScalarParameter' is protected and cannot be set
+```
+
+`FCollectionParameterBase::Id` 是 protected，Python 写不了；而它的默认构造本来就会生成 GUID，
+所以「零 GUID」这个前提根本不成立。**在没有宿主的情况下，我把一个假设直接当成了根因写进修复。**
+
+同一次 traceback 还确认了 `CollectionScalarParameter` 不支持关键字构造
+（`call() takes at most 0 arguments`，即 `PY-LYRA-001` 的又一次出现），`make_struct` 的兜底分支按预期生效。
+
+因此 `M_LineArt_Fill` / `M_LineArt_Outline` 编译失败的真实根因**仍然未知**。
+
+- 补充预防规则：**没有宿主证据时不要写「根因」，只写「现象 + 待验证的假设」。**
+  改脚本的第一步应该是加诊断、把真相打印出来，而不是照着假设改逻辑——后者会像这次一样，
+  用一个新错误覆盖掉原来的错误，两轮过去仍然不知道材质为什么编译不过。
+- 下一步：脚本改为诊断优先，读回并打印集合每个参数的 name/id 有效性、以及每个
+  CollectionParameter 节点解析到的 name/id；任一节点解析失败就**不打印成功标记**。
+  凭这次日志再定位。
+- 状态：`OPEN`，根因未知。
 
 ## PY-UE-011：GameplayStatics 没有暴露 get_world_settings
 

@@ -34,8 +34,6 @@ every enabled plugin's Content/Python on sys.path, so no path is needed or wante
     CreateLineArtCoreAssets.main()
 """
 
-import uuid
-
 import unreal
 
 
@@ -82,6 +80,11 @@ for _slot in range(MAX_POINT_LIGHTS):
     VECTOR_PARAMETERS.append((f"PointLight{_slot}Position", unreal.LinearColor(0.0, 0.0, 0.0, 1.0)))
     VECTOR_PARAMETERS.append((f"PointLight{_slot}Color", unreal.LinearColor(0.0, 0.0, 0.0, 0.0)))
     VECTOR_PARAMETERS.append((f"PointLight{_slot}EdgeColor", unreal.LinearColor(0.0, 0.0, 0.0, 1.0)))
+
+
+#: (material, requested name, resolved name, id readable/valid) for every CollectionParameter
+#: node this run created. Emptied at the start of main(); reported just before the marker.
+NODE_DIAGNOSTICS = []
 
 
 def log(message):
@@ -138,28 +141,23 @@ def make_struct(struct_type, **fields):
         return instance
 
 
-#: Namespace for deterministic parameter GUIDs. Fixed forever: change it and every
-#: CollectionParameter node in every material stops resolving.
-PARAMETER_GUID_NAMESPACE = uuid.UUID("6f1d0a2e-3b47-5c88-9a10-2d4e6f8b0c31")
+def guid_field_is_valid(owner, name):
+    """True / False / None for a GUID field, where None means "Python cannot see it".
 
-
-def parameter_guid(parameter_name):
-    """A stable GUID for one parameter name.
-
-    Deterministic rather than random so a re-run produces byte-identical assets and every
-    material that already points at this parameter keeps resolving. A fresh random GUID on
-    every run would silently orphan every node referencing it.
+    FCollectionParameterBase::Id is protected: reading it can raise just as writing it does.
+    The three-way answer matters -- reporting a wrapper limitation as an invalid GUID is
+    what sent the last round of debugging after a root cause that did not exist.
     """
-    value = uuid.uuid5(PARAMETER_GUID_NAMESPACE, parameter_name)
-    a, b, c, d = (int.from_bytes(value.bytes[i * 4:(i + 1) * 4], "big") for i in range(4))
-    guid = unreal.Guid()
-    for field, part in (("a", a), ("b", b), ("c", c), ("d", d)):
-        set_property(guid, field, part)
-    return guid
-
-
-def guid_is_valid(guid):
-    return any(int(guid.get_editor_property(field)) != 0 for field in ("a", "b", "c", "d"))
+    try:
+        guid = owner.get_editor_property(name)
+    except Exception:
+        return None
+    if guid is None:
+        return False
+    try:
+        return any(int(guid.get_editor_property(field)) != 0 for field in ("a", "b", "c", "d"))
+    except Exception:
+        return None
 
 
 def package_path(asset):
@@ -216,15 +214,13 @@ def build_collection():
         if str(entry.get_editor_property("parameter_name")) not in owned_vectors
     ]
 
-    # Every entry gets an explicit Id. A Python-built struct leaves it a zero GUID, and a
-    # zero GUID is what makes a CollectionParameter node resolve to nothing later -- the
-    # node's ParameterId is the real link, the name is only a label derived from it.
+    # No Id is written here: FCollectionParameterBase::Id is protected and the struct's own
+    # constructor assigns one. An earlier attempt to set it by hand was a guess and failed.
     scalars = list(preserved_scalars) + [
         make_struct(
             unreal.CollectionScalarParameter,
             parameter_name=unreal.Name(name),
             default_value=value,
-            id=parameter_guid(name),
         )
         for name, value in SCALAR_PARAMETERS
     ]
@@ -233,7 +229,6 @@ def build_collection():
             unreal.CollectionVectorParameter,
             parameter_name=unreal.Name(name),
             default_value=value,
-            id=parameter_guid(name),
         )
         for name, value in VECTOR_PARAMETERS
     ]
@@ -256,33 +251,32 @@ def build_collection():
         f"{len(preserved_vectors) + len(VECTOR_PARAMETERS)}",
     )
 
-    # The map the material nodes will be wired from: whatever the collection ACTUALLY
-    # stored, not what this script intended to store. If UE reassigned an id, follow it.
-    parameter_ids = {}
-    for entry in final_scalars + final_vectors:
-        name = str(entry.get_editor_property("parameter_name"))
-        entry_id = entry.get_editor_property("id")
-        require(
-            guid_is_valid(entry_id),
-            f"Collection parameter '{name}' has a zero GUID; CollectionParameter nodes "
-            f"referencing it would compile to 'invalid parameter None'.",
-        )
-        parameter_ids[name] = entry_id
+    # Verify the NAMES round-tripped. The previous version only checked array lengths, which
+    # is why a collection full of parameters the materials could not resolve still passed.
+    stored_names = {str(entry.get_editor_property("parameter_name"))
+                    for entry in final_scalars + final_vectors}
+    missing = sorted((owned_scalars | owned_vectors) - stored_names)
+    require(not missing, f"Collection did not retain these parameter names: {missing}")
 
-    for name in list(owned_scalars) + list(owned_vectors):
-        require(name in parameter_ids, f"Collection lost parameter '{name}' after write-back")
+    # Id validity is only reported: the field is protected, so an unreadable id is a
+    # wrapper limitation, not evidence of a defect. See PY-UE-010.
+    unreadable = sum(
+        1 for entry in final_scalars + final_vectors
+        if guid_field_is_valid(entry, "id") is None
+    )
+    if unreadable:
+        log(f"Note: {unreadable} parameter id(s) are not readable from Python (protected field)")
 
     log(f"Collection ready: {len(final_scalars)} scalars, {len(final_vectors)} vectors")
-    return collection, parameter_ids
+    return collection
 
 
 class GraphBuilder:
     """Thin wrapper over MaterialEditingLibrary that caches one node per collection parameter."""
 
-    def __init__(self, material, collection, parameter_ids=None):
+    def __init__(self, material, collection):
         self.material = material
         self.collection = collection
-        self.parameter_ids = parameter_ids or {}
         self.collection_nodes = {}
         self.node_x = -1600
         self.node_y = -600
@@ -301,33 +295,18 @@ class GraphBuilder:
         if parameter_name in self.collection_nodes:
             return self.collection_nodes[parameter_name]
 
-        parameter_id = require(
-            self.parameter_ids.get(parameter_name),
-            f"No id known for collection parameter '{parameter_name}'",
-        )
-
         node = self.expression(unreal.MaterialExpressionCollectionParameter)
-        # Collection first, then the ID. The ID is the real link: the node's ParameterName is
-        # derived from it by looking the id up in the collection, so writing the name alone
-        # gets overwritten with None and the material compiles to the Default Material while
-        # every readback of "did the name stick" still passes.
         set_property(node, "collection", self.collection)
-        set_property(node, "parameter_id", parameter_id)
         set_property(node, "parameter_name", unreal.Name(parameter_name))
 
-        # Verify resolution, not storage: that the id survived AND the name UE derives from
-        # it is the one asked for. Checking only the name proves nothing -- it is the field
-        # this failure mode silently rewrites.
-        require(
-            guid_is_valid(node.get_editor_property("parameter_id")),
-            f"CollectionParameter '{parameter_name}' kept a zero id; it will not resolve.",
-        )
+        # Record, do not abort. Two materials failed to compile with "invalid parameter None"
+        # while a per-node assertion passed, so the useful output here is the FULL picture of
+        # which nodes resolved and which did not -- aborting on the first one hides the rest
+        # and the next run learns nothing new. main() refuses the success marker if any
+        # entry below is bad.
         resolved = str(node.get_editor_property("parameter_name"))
-        require(
-            resolved == parameter_name,
-            f"CollectionParameter resolved to '{resolved}', expected '{parameter_name}'. "
-            f"The id is not the one stored in the collection.",
-        )
+        node_id_valid = guid_field_is_valid(node, "parameter_id")
+        NODE_DIAGNOSTICS.append((package_path(self.material), parameter_name, resolved, node_id_valid))
         self.collection_nodes[parameter_name] = node
         return node
 
@@ -424,7 +403,7 @@ return saturate(-Parameters.TwoSidedSign);
 """
 
 
-def build_fill_material(collection, parameter_ids):
+def build_fill_material(collection):
     material = create_or_load(FILL_PATH, unreal.MaterialFactoryNew(), unreal.Material)
     unreal.MaterialEditingLibrary.delete_all_material_expressions(material)
 
@@ -436,7 +415,7 @@ def build_fill_material(collection, parameter_ids):
     set_property_optional(material, "used_with_instanced_static_meshes", True,
                           "HISM batches will prompt for usage on first apply")
 
-    builder = GraphBuilder(material, collection, parameter_ids)
+    builder = GraphBuilder(material, collection)
 
     base_tint = builder.expression(unreal.MaterialExpressionVectorParameter)
     set_property(base_tint, "parameter_name", unreal.Name("BaseColor"))
@@ -499,7 +478,7 @@ def build_fill_material(collection, parameter_ids):
     return material
 
 
-def build_outline_material(collection, parameter_ids):
+def build_outline_material(collection):
     material = create_or_load(OUTLINE_PATH, unreal.MaterialFactoryNew(), unreal.Material)
     unreal.MaterialEditingLibrary.delete_all_material_expressions(material)
 
@@ -510,7 +489,7 @@ def build_outline_material(collection, parameter_ids):
     set_property_optional(material, "used_with_instanced_static_meshes", True,
                           "HISM batches will prompt for usage on first apply")
 
-    builder = GraphBuilder(material, collection, parameter_ids)
+    builder = GraphBuilder(material, collection)
 
     builder.connect_property(
         builder.collection_parameter("InkColor"), "", unreal.MaterialProperty.MP_EMISSIVE_COLOR
@@ -622,14 +601,48 @@ def configure_project_settings(collection, fill, outline):
     return True
 
 
+def report_node_diagnostics():
+    """Print what every CollectionParameter node actually resolved to, then refuse the
+    success marker if any of them is wrong.
+
+    This exists because the last two runs produced assets that saved, validated and rendered
+    thumbnails while two materials silently fell back to the Default Material. A marker that
+    can print over broken materials is worse than no marker.
+    """
+    broken = [row for row in NODE_DIAGNOSTICS if row[2] != row[1]]
+
+    log(f"CollectionParameter nodes created: {len(NODE_DIAGNOSTICS)}, mis-resolved: {len(broken)}")
+    unreadable_ids = sum(1 for row in NODE_DIAGNOSTICS if row[3] is None)
+    if unreadable_ids:
+        log(f"  ({unreadable_ids} node id(s) not readable from Python; that alone is not a defect)")
+    zero_ids = [row for row in NODE_DIAGNOSTICS if row[3] is False]
+    if zero_ids:
+        log(f"  {len(zero_ids)} node(s) carry an invalid id even though the name resolved:")
+        for material, requested, _resolved, _valid in zero_ids[:10]:
+            log(f"    {material} :: {requested}")
+
+    for material, requested, resolved, _valid in broken:
+        unreal.log_error(
+            f"[CreateLineArtCoreAssets] {material} :: asked for '{requested}', node reports "
+            f"'{resolved}'"
+        )
+
+    require(
+        not broken,
+        f"{len(broken)} CollectionParameter node(s) did not resolve; the materials would fall "
+        f"back to the Default Material. The lines above name every one of them.",
+    )
+
+
 def main():
     require_editor_asset_mode()
+    NODE_DIAGNOSTICS.clear()
 
     unreal.AssetRegistryHelpers.get_asset_registry().scan_paths_synchronous([MATERIAL_ROOT], True)
 
-    collection, parameter_ids = build_collection()
-    fill = build_fill_material(collection, parameter_ids)
-    outline = build_outline_material(collection, parameter_ids)
+    collection = build_collection()
+    fill = build_fill_material(collection)
+    outline = build_outline_material(collection)
     character_ink = build_character_ink_material()
     paper = build_paper_instance(character_ink)
 
@@ -641,8 +654,10 @@ def main():
         log(f"Saved {path}")
 
     # Saving is not compiling. Materials save, render thumbnails and validate clean while
-    # still failing to compile and falling back to the Default Material at runtime.
-    log("Now check the log for 'Failed to compile Material' -- saving proves nothing about it")
+    # still failing to compile and falling back to the Default Material at runtime, so the
+    # marker is withheld until every collection node is known to resolve.
+    report_node_diagnostics()
+    log("Now also check the log for 'Failed to compile Material' -- saving proves nothing about it")
     log("LINEART_CORE_ASSETS_OK")
 
 
