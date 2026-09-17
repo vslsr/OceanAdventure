@@ -5,7 +5,7 @@
 ```
 玩法层        Plugins/GameFeatures/OceanAdventure     拥有玩家 Pawn，GAS 能力、输入、UI
 宿主/内容层   Plugins/GameFeatures/Raft | TopDownFeature | SimpleExperience
-通用框架层    Plugins/NavalCore | OceanCore | BuildingCore | CarryCore
+通用框架层    Plugins/NavalCore | OceanCore | BuildingCore | CarryCore | ScriptCore
 ```
 
 通用框架层只依赖 Engine 与其它通用插件，**不得**依赖 `LyraGame`、`GameplayAbilities`、
@@ -18,7 +18,26 @@
 | `BuildingCore` | 通用框架 | 与宿主无关的网格建造：格子、连通性、预览、复制 |
 | `NavalCore` | 通用框架 | 船只状态、承重浮力推力、舵权、"墙挡一切"的弹道规则、重武器 |
 | `CarryCore` | 通用框架 | 谁正扛着什么：世界实体的抬起 / 放下，不涉及背包 |
+| `ScriptCore` | 通用框架 | TypeScript 宿主：脚本 VM、脚本根发现、热重载、一条 JSON 事件通道 |
 | `Raft` | 宿主/内容 | 把上面几套框架落在一艘会浮的木筏上：可建造、可航行、可被打沉的移动平台 |
+
+---
+
+## ScriptCore
+
+`Plugins/ScriptCore/` · 模块 `ScriptCoreRuntime` · 依赖 Engine + `Projects`（PuerTS 为可选、编译期探测）
+
+**脚本在哪、什么时候跑、文件变了怎么办。除此之外什么都不管。**
+
+- `UScriptEnvSubsystem` — 持有 VM。地图加载完成时启动（不是子系统 `Initialize`——那时世界还不存在，
+  而脚本要绑的都是 World 子系统）；扫描项目与每个已启用插件的 `Content/Script/`；
+  编辑器里监视这些目录做热重载。控制台：`script.status` / `script.reload` / `script.eval`。
+- `UScriptEventBus` — 一条按名字分频道、载荷是 JSON 的松耦合通道。没有 UObject 的东西走这里。
+- `FScriptBackend` — VM 的接缝。装了 PuerTS 编进 `ScriptBackend_Puerts.cpp`，没装编进
+  `ScriptBackend_Null.cpp`（**启动即报错**，不做安静降级）。整个仓库只有前者认识 PuerTS。
+
+它不认识战斗、交互、GAS，也不认识任何 GameFeature——那些归玩法层自己暴露给脚本。
+详见 [`TypeScript-PuerTS.md`](TypeScript-PuerTS.md)。
 
 ---
 

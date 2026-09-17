@@ -47,3 +47,4 @@
 | --- | --- |
 | [`OceanCore-Terrain.md`](OceanCore-Terrain.md) | 台阶地形：5 条自动化测试 + 编辑器目视与行走验收 |
 | [`OceanAdventure-SkyLandPlayerControl.md`](OceanAdventure-SkyLandPlayerControl.md) | SkyLand 玩家控制迁移：脚本幂等 + 资产读回 + 手感目视验收 |
+| [`ScriptCore-PuerTS.md`](ScriptCore-PuerTS.md) | TypeScript 玩法层：VM 起没起、战斗与交互是否接管、热重载是否真的免重编、没装 PuerTS 时的降级 |

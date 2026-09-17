@@ -1,0 +1,15 @@
+{
+  "name": "@oceanadventure/feature-oceanadventure",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Gameplay rules for the Ocean Adventure feature, in TypeScript. Combat arithmetic and interaction feedback, calling down into the reflected C++ API.",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json --noEmit",
+    "build": "node ../../../ScriptCore/TypeScript/tools/build-bundle.mjs --project .",
+    "watch": "node ../../../ScriptCore/TypeScript/tools/build-bundle.mjs --project . --watch"
+  },
+  "dependencies": {
+    "@oceanadventure/script-framework": "*"
+  }
+}

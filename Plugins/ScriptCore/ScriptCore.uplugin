@@ -1,0 +1,20 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Script Core",
+	"Description": "Host-agnostic TypeScript runtime: it owns the script VM, the script roots, hot reload and one JSON event channel. It knows nothing about combat, interaction or GAS -- gameplay layers publish their own reflected API for scripts to call.",
+	"Category": "Scripting",
+	"EnabledByDefault": true,
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "ScriptCoreRuntime",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

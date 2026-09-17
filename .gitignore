@@ -82,3 +82,20 @@ Desktop.ini
 # Python bytecode cache
 __pycache__/
 *.pyc
+
+# Node tooling for the TypeScript scripts. The compiled bundles under
+# Plugins/**/Content/Script/ are committed on purpose -- the engine has no Node, so a
+# checkout without them has no scripts, and a game with no scripts plays on quietly with
+# every rule fallen back to its C++ default. `npm run check:dist` keeps them in step.
+/node_modules/
+**/node_modules/
+
+# PuerTS, supplied outside source control like the EOS SDK above: it carries prebuilt V8
+# binaries far too large for this repository. Tools/setup-puerts.mjs prints how to install it.
+/Plugins/Puerts/
+/Plugins/PuerTS/
+
+# Typings generated from live reflection by the editor. The hand-written ones under
+# Plugins/**/TypeScript/typings/ are committed instead, and checked against the C++ headers
+# by `npm run check:api`.
+/Plugins/**/TypeScript/typings/generated/

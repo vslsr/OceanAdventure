@@ -52,6 +52,18 @@ protected:
 	 */
 	bool CanCarryTarget(const UCarryableComponent* Carryable, FGameplayTag& OutFailReason) const;
 
+	/**
+	 * Gives a scripted interaction rule the last word on a lift that already passed every
+	 * C++ check. Only ever tightens: it is consulted on the success path, so a rule can
+	 * refuse a pickup but can never grant one the framework refused.
+	 *
+	 * Deliberately not server-only, unlike the damage rule. This ability is LocalPredicted,
+	 * so the client runs the same check to predict with; a rule that only existed on the
+	 * server would predict a pickup that then snaps back. The server still re-checks, so a
+	 * client running a tampered rule only misleads itself.
+	 */
+	bool AllowedByScriptRule(AActor* CarryActor, FGameplayTag& OutFailReason) const;
+
 	void BroadcastFailure(FGameplayTag FailReason, AActor* CarryTarget) const;
 
 private:

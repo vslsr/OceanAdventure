@@ -1,0 +1,11 @@
+{
+  "name": "@oceanadventure/script-framework",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Host-side TypeScript framework: the shape a script bundle takes, and the typings for the reflected engine API it calls.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --project tsconfig.json --noEmit"
+  }
+}

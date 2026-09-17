@@ -1,0 +1,8 @@
+{
+	"extends": "../../../ScriptCore/TypeScript/tsconfig.base.json",
+	"include": [
+		"src/**/*.ts",
+		"typings/**/*.d.ts",
+		"../../../ScriptCore/TypeScript/typings/**/*.d.ts"
+	]
+}
